@@ -1,0 +1,10 @@
+.pi/
+result
+result-*
+
+# Private credentials and decrypted secrets
+.age-keygen
+*.agekey
+keys.txt
+secrets/*.decrypted
+secrets/**/keys.txt
