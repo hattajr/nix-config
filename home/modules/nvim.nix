@@ -1,9 +1,9 @@
 { pkgs, ... }:
 
 let
-  # The Chezmoi setup builds Neovim from source. nixpkgs' unwrapped package
-  # provides the same source build without the wrapper derivation that tries to
-  # write rplugin.vim into a read-only Nix store output.
+  # The Chezmoi setup builds Neovim from source. Select nixpkgs' unwrapped
+  # source-built package explicitly; Home Manager may add its normal provider
+  # wrapper around this package when provider support is enabled.
   neovimSource = pkgs.neovim-unwrapped;
 in
 {
