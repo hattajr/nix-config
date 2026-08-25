@@ -26,6 +26,7 @@
     sops
     uv
   ] ++ lib.optionals pkgs.stdenv.isLinux [
+    gcc
     xclip
   ];
 }

@@ -20,7 +20,8 @@ export XDG_CACHE_HOME="$home_dir/.cache"
 export NIX_CONFIG="experimental-features = nix-command flakes"
 
 rm -rf "$home_dir"
-mkdir -p "$home_dir" "$XDG_CONFIG_HOME" "$XDG_DATA_HOME" "$XDG_STATE_HOME" "$XDG_CACHE_HOME"
+mkdir -p "$home_dir" "$XDG_CONFIG_HOME" "$XDG_DATA_HOME" "$XDG_STATE_HOME" "$XDG_CACHE_HOME" \
+  "$home_dir/.local/state/nix/profiles"
 chmod 700 "$home_dir"
 # The read-only checkout is usually owned by the host user, not container root.
 # Mark only this disposable source mount safe for Git's ownership check.
@@ -65,14 +66,15 @@ profile_bin="$home_dir/.nix-profile/bin"
 export PATH="$profile_bin:$PATH"
 
 printf '%s\n' 'docker-validation: checking managed tools and PATH'
-for tool in git nvim rg tmux zsh fzf sops age gh lazygit lazydocker; do
+for tool in git nvim rg tmux zsh fzf sops age gh lazygit lazydocker gcc; do
   command -v "$tool" >/dev/null 2>&1 || fail "managed tool is missing from PATH: $tool"
 done
 
 printf '%s\n' 'docker-validation: checking zsh startup and Git configuration'
 zsh -lic '[[ -n "$EDITOR" ]] && [[ "$EDITOR" = nvim ]] && alias n >/dev/null'
-git config --global --get core.editor | grep -Fx vim >/dev/null || fail 'Git core.editor was not configured'
-git config --global --get-regexp '^alias\.' >/dev/null || fail 'Git aliases were not configured'
+git_editor=$(git config --get core.editor || true)
+[ "$git_editor" = vim ] || fail "Git core.editor was not configured (value: $git_editor)"
+git config --get-regexp '^alias\.' >/dev/null || fail 'Git aliases were not configured'
 
 printf '%s\n' 'docker-validation: checking isolated tmux server'
 tmux -L hm-validation -f "$home_dir/.config/tmux/tmux.conf" new-session -d -s validation
