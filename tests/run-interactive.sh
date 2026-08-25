@@ -20,7 +20,7 @@ if docker container inspect "$container_name" >/dev/null 2>&1; then
 fi
 
 printf 'test-interactive: starting %s\n' "$container_name"
-printf '%s\n' 'test-interactive: Ctrl-D exits zsh and removes the disposable container'
+printf '%s\n' 'test-interactive: type exit or press Ctrl-D to stop zsh and remove the disposable container'
 
 set +e
 docker run --rm \
