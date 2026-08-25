@@ -71,8 +71,8 @@ for tool in git nvim rg tmux zsh fzf sops age gh lazygit lazydocker gcc ssh; do
 done
 
 printf '%s\n' 'docker-validation: checking OpenSSH MagicDNS aliases'
-ssh -G latte >/tmp/ssh-latte.conf
-ssh -G legion >/tmp/ssh-legion.conf
+ssh -G -F "$home_dir/.ssh/config" latte >/tmp/ssh-latte.conf
+ssh -G -F "$home_dir/.ssh/config" legion >/tmp/ssh-legion.conf
 for host in latte legion; do
   grep -Fx 'hostname '"$host" /tmp/ssh-"$host".conf >/dev/null || fail "SSH hostname is wrong for $host"
   grep -Fx 'user hattajr' /tmp/ssh-"$host".conf >/dev/null || fail "SSH user is wrong for $host"
