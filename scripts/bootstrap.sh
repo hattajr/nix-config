@@ -8,7 +8,7 @@
 # The script never prints, copies, or commits the identity contents.
 set -euo pipefail
 
-readonly REPOSITORY_URL="git@github.com:hattajr/nix-config.git"
+readonly REPOSITORY_URL="https://github.com/hattajr/nix-config.git"
 readonly DEFAULT_DESTINATION="${HOME}/src/nix-config"
 readonly AGE_IDENTITY_DEFAULT="${SOPS_AGE_KEY_FILE:-${XDG_CONFIG_HOME:-${HOME}/.config}/sops/age/keys.txt}"
 readonly HOSTS=(macbook latte legion espresso)
@@ -30,7 +30,7 @@ Host must be one of: macbook, latte, legion, espresso.
 The destination defaults to ~/src/nix-config.
 
 Before running:
-  1. Have an SSH key or other GitHub method ready for `gh auth login`.
+  1. The public repository is cloned over HTTPS; no GitHub login is required.
   2. If no age identity exists, bootstrap generates one locally and pauses
      so its public recipient can be added to the SOPS policy.
 EOF
@@ -84,19 +84,13 @@ ensure_flakes() {
 }
 
 ensure_tools() {
-  local packages=()
-  command -v git >/dev/null 2>&1 || packages+=(nixpkgs#git)
-  command -v gh >/dev/null 2>&1 || packages+=(nixpkgs#gh)
-  if ((${#packages[@]} == 0)); then
-    return 0
-  fi
+  command -v git >/dev/null 2>&1 && return 0
 
-  log "Installing missing tools into the user Nix profile: ${packages[*]}"
-  nix profile install --accept-flake-config "${packages[@]}" \
-    || fail 'could not install required Git/GitHub tools through Nix'
+  log 'Installing missing Git into the user Nix profile'
+  nix profile install --accept-flake-config nixpkgs#git \
+    || fail 'could not install Git through Nix'
   export PATH="${HOME}/.nix-profile/bin:${PATH}"
   command -v git >/dev/null 2>&1 || fail 'Git is unavailable after Nix installation'
-  command -v gh >/dev/null 2>&1 || fail 'GitHub CLI is unavailable after Nix installation'
 }
 
 verify_age_identity() {
@@ -127,15 +121,6 @@ verify_age_identity() {
   export SOPS_AGE_KEY_FILE="$identity"
 }
 
-verify_github_auth() {
-  log 'GitHub authentication is required before cloning the private repository'
-  if ! gh auth status >/dev/null 2>&1; then
-    gh auth login </dev/tty >/dev/tty 2>/dev/tty \
-      || fail 'gh auth login failed or was cancelled'
-  fi
-  gh auth status >/dev/null 2>&1 || fail 'GitHub CLI is not authenticated'
-}
-
 clone_repository() {
   local destination=$1
   if [ -e "$destination" ]; then
@@ -150,7 +135,7 @@ clone_repository() {
   fi
 
   mkdir -p "$(dirname "$destination")"
-  log "Cloning the private repository into $destination"
+  log "Cloning the public repository into $destination"
   git clone "$REPOSITORY_URL" "$destination" \
     || fail 'repository clone failed'
 }
@@ -201,7 +186,6 @@ main() {
   ensure_flakes
   ensure_tools
   verify_age_identity
-  verify_github_auth
   clone_repository "$destination"
   apply_home "$destination" "$host"
   log "Bootstrap complete for ${host}"
