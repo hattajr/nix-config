@@ -22,6 +22,7 @@ activation_package=$(nix build --no-link --print-out-paths \
   /source#homeConfigurations.docker-test.activationPackage)
 "$activation_package/activate"
 export PATH="$HOME/.nix-profile/bin:$HOME/.local/bin:$PATH"
+export PYTHON="$(command -v python3)"
 
 # Home Manager links the checked-in Neovim tree read-only. Make a disposable
 # writable copy so LazyVim can update lazy-lock.json and plugin state.
@@ -58,6 +59,8 @@ if [ "${INTERACTIVE_SMOKE:-0}" = 1 ]; then
       command -v nvim >/dev/null
       command -v pi >/dev/null
       command -v iconv >/dev/null
+      command -v python3 >/dev/null
+      test -x "$PYTHON"
       nvim --headless +"qa!"
       pi --version >/dev/null
       printf "%s\\n" "test-interactive: smoke passed (uid, HOME, UTF-8, iconv, nvim, pi)"
