@@ -8,7 +8,7 @@
     autosuggestion.enable = true;
     syntaxHighlighting.enable = true;
 
-    ohMyZsh = {
+    oh-my-zsh = {
       enable = true;
       theme = "robbyrussell";
       plugins = [ "git" ];
@@ -36,7 +36,7 @@
       pbcopy = "xclip -selection clipboard";
     };
 
-    initExtra = ''
+    initContent = ''
       setopt AUTO_CD INTERACTIVE_COMMENTS
 
       PROMPT='%{$fg[green]%}%n@%m%{$reset_color%} %(?:%{$fg[cyan]%}%1{➜%} :%{$fg[red]%}%1{➜%} ) %{$reset_color%}%~ $(git_prompt_info) '
