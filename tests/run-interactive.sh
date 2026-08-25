@@ -33,7 +33,7 @@ docker run --rm \
   --env NIX_CONFIG='experimental-features = nix-command flakes' \
   --env INTERACTIVE_SMOKE="${INTERACTIVE_SMOKE:-0}" \
   "$image_tag" \
-  bash -lc 'nix shell nixpkgs#coreutils nixpkgs#git nixpkgs#glibc.bin nixpkgs#glibcLocales nixpkgs#libiconv nixpkgs#util-linux nixpkgs#python3 nixpkgs#gcc nixpkgs#gnumake --command bash /source/tests/interactive-entrypoint.sh'
+  bash -lc 'nix shell nixpkgs#coreutils nixpkgs#git nixpkgs#glibc.bin nixpkgs#glibcLocales nixpkgs#libiconv nixpkgs#util-linux nixpkgs#python3 nixpkgs#gcc nixpkgs#gnumake nixpkgs#gnused --command bash /source/tests/interactive-entrypoint.sh'
 
 if [ "${INTERACTIVE_SMOKE:-0}" = 1 ]; then
   if docker container inspect "$container_name" >/dev/null 2>&1; then

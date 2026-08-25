@@ -45,26 +45,39 @@ command -v iconv >/dev/null || { printf '%s\n' 'test-interactive: iconv is missi
 [ "$(id -u)" -eq 0 ] || { printf '%s\n' 'test-interactive: setup unexpectedly lost root' >&2; exit 1; }
 
 chown -R 30033:1000 "$HOME"
+
+# Run the same application checks before opening the shell. Pi lazily installs
+# configured extensions on first use, so this catches native-module failures
+# during setup instead of surprising the user at the prompt.
+setpriv --reuid=30033 --regid=1000 --clear-groups \
+  zsh -lic '
+    test "$(id -u)" = 30033
+    test "$HOME" = /home/test
+    test "$LANG" = C.UTF-8
+    test "$LC_ALL" = C.UTF-8
+    for command_name in nvim pi tmux git lazygit lazydocker iconv python3 sed; do
+      command -v "$command_name" >/dev/null || {
+        printf "test-interactive: missing command: %s\\n" "$command_name" >&2
+        exit 1
+      }
+    done
+    test -x "$PYTHON"
+    nvim --headless +"qa!"
+    pi --version >/dev/null
+    lazygit --version >/dev/null
+    lazydocker --version >/dev/null
+    tmux -V >/dev/null
+    git --version >/dev/null
+  '
+
+printf '%s\n' 'test-interactive: application smoke passed (nvim, pi, tmux, git, lazygit, lazydocker)'
 printf '%s\n' 'test-interactive: Home Manager and Pi environment are ready'
 printf 'test-interactive: final shell runs as uid 30033 with HOME=%s\n' "$HOME"
 printf '%s\n' 'test-interactive: try nvim, pi, tmux, git, lazygit, or lazydocker'
 
 if [ "${INTERACTIVE_SMOKE:-0}" = 1 ]; then
-  exec setpriv --reuid=30033 --regid=1000 --clear-groups \
-    zsh -lic '
-      test "$(id -u)" = 30033
-      test "$HOME" = /home/test
-      test "$LANG" = C.UTF-8
-      test "$LC_ALL" = C.UTF-8
-      command -v nvim >/dev/null
-      command -v pi >/dev/null
-      command -v iconv >/dev/null
-      command -v python3 >/dev/null
-      test -x "$PYTHON"
-      nvim --headless +"qa!"
-      pi --version >/dev/null
-      printf "%s\\n" "test-interactive: smoke passed (uid, HOME, UTF-8, iconv, nvim, pi)"
-    '
+  printf '%s\n' 'test-interactive: smoke passed (uid, HOME, UTF-8, iconv, nvim, pi, tmux, git, lazygit, lazydocker)'
+  exit 0
 fi
 
 exec setpriv --reuid=30033 --regid=1000 --clear-groups zsh -l
