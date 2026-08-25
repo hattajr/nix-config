@@ -1,0 +1,5 @@
+# Multiline pastes must land in the editable line buffer instead of running one
+# line at a time. Readline only brackets pastes when this is on, and bash 5.0
+# (this box's system bash) defaults it to off - 5.1+ turns it on. Setting it
+# here covers every bash/readline prompt, local and on remote hosts.
+set enable-bracketed-paste on

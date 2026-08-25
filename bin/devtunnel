@@ -1,0 +1,142 @@
+#!/usr/bin/env bash
+# devtunnel — publish a localhost-only dev server on this remote Linux box to
+# your laptop's localhost, so a browser there can load it.
+#
+# Full rationale, and how an automation agent detects it needs this:
+#     devtunnel --help
+set -uo pipefail
+
+DEFAULT_REMOTE_PORT=8080
+DEFAULT_SSH_HOST="${DEVTUNNEL_HOST:-hattajr@mbp}"
+
+usage() {
+  cat <<'EOF'
+devtunnel — publish a dev server on THIS remote Linux box to YOUR LAPTOP's
+localhost, so a browser (and any browser-automation agent driving it) can load it.
+
+USAGE
+    devtunnel <local-port> [remote-port] [ssh-host]
+    devtunnel --help
+
+    devtunnel 5173                  # laptop:8080 -> thisbox:5173   (vite)
+    devtunnel 8137 9000             # laptop:9000 -> thisbox:8137
+    devtunnel 3000 3000 me@othermac
+
+WHY -R AND NOT -L
+    You (and any agent) are on the Linux box, so the tunnel must be PUSHED out
+    from here. `ssh -L` has to be launched from the laptop — the one side you
+    are not sitting on. Both produce an identical tunnel; only the initiating
+    side differs.
+
+WHY localhost ON THE LAPTOP, NEVER A TAILSCALE IP
+    localhost is a browser "secure context", so getUserMedia (mic/camera),
+    clipboard, service workers and WebCrypto all work without TLS.
+    http://100.x.y.z:PORT is NOT a secure context and silently disables them.
+
+    ssh -R binds the laptop's loopback only (sshd GatewayPorts=no default), so
+    this exposes your dev server to no network.
+
+────────────────────────────────────────────────────────────────────────────────
+FOR CLAUDE CODE / ANY BROWSER-AUTOMATION AGENT
+HOW TO DETECT YOU NEED THIS, *BEFORE* NAVIGATING ANYWHERE
+────────────────────────────────────────────────────────────────────────────────
+    Call mcp__claude-in-chrome__list_connected_browsers FIRST and read 2 fields:
+
+        [{"osPlatform":"macOS", "isLocal":false, ...}]    <-- browser is NOT here
+
+        isLocal:false      the Chrome you are driving is on another machine
+        osPlatform:macOS   while this dev box is Linux — confirms the split
+
+    If isLocal is false, a `localhost` / `127.0.0.1` URL you navigate to resolves
+    in THAT machine's network namespace, not this one. A dev server bound to
+    127.0.0.1 on this Linux box is unreachable from it, and you will see:
+
+        - "Frame with ID 0 is showing error page" from computer{screenshot}
+        - ERR_CONNECTION_REFUSED / "can't connect" in the tab
+        - tabs_context_mcp or navigate timing out
+
+    Do NOT debug the app, the container, or the MCP connection for these.
+    The control channel is fine: Claude Code reaches Chrome over Anthropic's
+    account-paired relay (both ends dial OUT on 443, nothing listens locally),
+    so DRIVING the browser always works — only what the browser can FETCH is
+    limited to the laptop's network. Two independent channels:
+
+        control    thisbox <-> Anthropic relay <-> laptop Chrome   (no setup)
+        page fetch resolved inside Chrome, on the LAPTOP's network (needs -R)
+
+    Fix by publishing the port, then verify from the laptop side BEFORE opening
+    a tab, so any failure is unambiguous:
+
+        devtunnel <local-port>
+        ssh <ssh-host> 'curl -sS -o /dev/null -w "%{http_code}\n" \
+            http://localhost:<remote-port>/'
+
+    Reuse ONE remote port (8080) across projects: Chrome extension site
+    permissions are per-origin and granted on the laptop, so approving
+    localhost:8080 once carries over to every later project.
+
+    Red herring: the `--chrome-native-host` process on this box is the
+    same-machine Chrome path and is unused in this setup. Not your mechanism.
+
+PREREQUISITES (one-time, per laptop)
+    - Tailscale (or any reachable name) on both boxes
+    - macOS: System Settings > General > Sharing > Remote Login = ON
+    - ssh-copy-id <ssh-host>       (key auth; this script never prompts)
+EOF
+  printf '\nDEFAULTS IN THIS INSTALL\n    remote-port %s\n    ssh-host    %s   (override: $DEVTUNNEL_HOST)\n' \
+    "$DEFAULT_REMOTE_PORT" "$DEFAULT_SSH_HOST"
+}
+
+case "${1:-}" in
+  --help | -h | help) usage; exit 0 ;;
+esac
+
+LOCAL_PORT="${1:-}"
+REMOTE_PORT="${2:-$DEFAULT_REMOTE_PORT}"
+SSH_HOST="${3:-$DEFAULT_SSH_HOST}"
+
+if [[ -z "$LOCAL_PORT" ]]; then
+  echo "usage: devtunnel <local-port> [remote-port=$DEFAULT_REMOTE_PORT] [ssh-host=$DEFAULT_SSH_HOST]" >&2
+  echo "       devtunnel --help    # why -R, and how an agent detects it needs this" >&2
+  exit 64
+fi
+
+# Non-interactive callers (agents, cron) must never block on a password prompt.
+SSH_OPTS=(-o ExitOnForwardFailure=yes
+  -o ServerAliveInterval=30
+  -o ServerAliveCountMax=3
+  -o ConnectTimeout=10)
+[[ -t 0 ]] || SSH_OPTS+=(-o BatchMode=yes)
+
+# --- preflight ---------------------------------------------------------------
+# A tunnel to a port nothing is listening on connects fine and then 502s, which
+# looks like an app bug. Say so up front instead.
+if command -v ss >/dev/null 2>&1 && ! ss -ltn "sport = :$LOCAL_PORT" 2>/dev/null | grep -q ":$LOCAL_PORT"; then
+  echo "  ! nothing listening on 127.0.0.1:$LOCAL_PORT yet — start your app, or the tunnel will 502"
+fi
+
+if ! ssh "${SSH_OPTS[@]}" -o BatchMode=yes "$SSH_HOST" true 2>/dev/null; then
+  echo "✗ cannot ssh to $SSH_HOST" >&2
+  echo "  on the Mac: System Settings → General → Sharing → Remote Login = ON" >&2
+  echo "  then authorize this box:  ssh-copy-id $SSH_HOST" >&2
+  echo "  and check the name resolves (Tailscale MagicDNS):  tailscale status" >&2
+  exit 1
+fi
+
+echo "▶ $SSH_HOST:$REMOTE_PORT  →  127.0.0.1:$LOCAL_PORT"
+echo "▶ open on $SSH_HOST:  http://localhost:$REMOTE_PORT"
+echo "  (Ctrl-C to close)"
+
+# --- supervise ---------------------------------------------------------------
+# The laptop sleeping, wifi flapping or a VPN re-handshake all kill the forward.
+# Reconnect instead of dying, and let sshd release a stale remote bind first.
+trap 'echo; echo "▪ tunnel closed"; exit 0' INT TERM
+
+attempt=0
+while :; do
+  ssh -N "${SSH_OPTS[@]}" -R "${REMOTE_PORT}:localhost:${LOCAL_PORT}" "$SSH_HOST"
+  rc=$?
+  attempt=$((attempt + 1))
+  echo "▪ tunnel dropped (rc=$rc); reconnecting in 3s … [$attempt]"
+  sleep 3
+done

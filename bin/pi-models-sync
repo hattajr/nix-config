@@ -1,0 +1,26 @@
+#!/usr/bin/env node
+
+const { chmodSync, existsSync, readFileSync, renameSync, statSync, writeFileSync } = require("node:fs");
+const { dirname, join } = require("node:path");
+const { homedir } = require("node:os");
+
+const settingsPath = process.argv[2] ?? join(homedir(), ".pi/agent/settings.json");
+const modelsPath = process.argv[3] ?? join(homedir(), ".pi/agent/scoped-models.json");
+
+if (!existsSync(settingsPath) || !existsSync(modelsPath)) process.exit(0);
+
+const models = JSON.parse(readFileSync(modelsPath, "utf8"));
+if (!Array.isArray(models) || models.some((model) => typeof model !== "string")) {
+  throw new Error(`Invalid scoped model list: ${modelsPath}`);
+}
+
+const settings = JSON.parse(readFileSync(settingsPath, "utf8"));
+if (JSON.stringify(settings.enabledModels) === JSON.stringify(models)) process.exit(0);
+
+settings.enabledModels = models;
+const mode = statSync(settingsPath).mode & 0o777;
+const temporaryPath = join(dirname(settingsPath), `.settings.json.${process.pid}.tmp`);
+writeFileSync(temporaryPath, `${JSON.stringify(settings, null, 2)}\n`, { mode });
+chmodSync(temporaryPath, mode);
+renameSync(temporaryPath, settingsPath);
+console.error(`Restored Pi scoped models from ${modelsPath}`);

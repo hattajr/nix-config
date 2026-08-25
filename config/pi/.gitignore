@@ -1,0 +1,17 @@
+# Secrets
+agent/auth.json
+
+# Pi runtime state
+agent/bin/
+agent/npm/
+agent/run-history.jsonl
+agent/sessions/
+agent/messenger/*.db
+agent/messenger/*.db-*
+agent/messenger/*.sqlite
+agent/messenger/*.sqlite-*
+agent/messenger/*.log
+
+# Local state
+agent/trust.json
+.trash/

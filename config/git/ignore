@@ -1,0 +1,29 @@
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Editor / IDE
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+.nvim.lua
+.helix/
+
+# Claude Code per-project overrides
+**/.claude/settings.local.json
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
+
+# Node
+node_modules/
+
+# Direnv / env
+.envrc.local
