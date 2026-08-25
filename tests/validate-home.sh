@@ -66,8 +66,17 @@ profile_bin="$home_dir/.nix-profile/bin"
 export PATH="$profile_bin:$PATH"
 
 printf '%s\n' 'docker-validation: checking managed tools and PATH'
-for tool in git nvim rg tmux zsh fzf sops age gh lazygit lazydocker gcc; do
+for tool in git nvim rg tmux zsh fzf sops age gh lazygit lazydocker gcc ssh; do
   command -v "$tool" >/dev/null 2>&1 || fail "managed tool is missing from PATH: $tool"
+done
+
+printf '%s\n' 'docker-validation: checking OpenSSH MagicDNS aliases'
+ssh -G latte >/tmp/ssh-latte.conf
+ssh -G legion >/tmp/ssh-legion.conf
+for host in latte legion; do
+  grep -Fx 'hostname '"$host" /tmp/ssh-"$host".conf >/dev/null || fail "SSH hostname is wrong for $host"
+  grep -Fx 'user hattajr' /tmp/ssh-"$host".conf >/dev/null || fail "SSH user is wrong for $host"
+  grep -Fx 'port 22' /tmp/ssh-"$host".conf >/dev/null || fail "SSH port is wrong for $host"
 done
 
 printf '%s\n' 'docker-validation: checking zsh startup and Git configuration'
