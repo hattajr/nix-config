@@ -4,7 +4,7 @@
 # Usage:
 #   ./scripts/bootstrap.sh [host] [destination]
 #
-# The age identity must be provisioned out of band before this script runs.
+# A missing age identity is generated locally during bootstrap.
 # The script never prints, copies, or commits the identity contents.
 set -euo pipefail
 
@@ -30,9 +30,9 @@ Host must be one of: macbook, latte, legion, espresso.
 The destination defaults to ~/src/nix-config.
 
 Before running:
-  1. Provision the machine's private age identity out of band.
-  2. Keep it at $SOPS_AGE_KEY_FILE or ~/.config/sops/age/keys.txt.
-  3. Have an SSH key or other GitHub method ready for `gh auth login`.
+  1. Have an SSH key or other GitHub method ready for `gh auth login`.
+  2. If no age identity exists, bootstrap generates one locally and pauses
+     so its public recipient can be added to the SOPS policy.
 EOF
 }
 
@@ -116,7 +116,8 @@ verify_age_identity() {
     recipient=$(nix shell --accept-flake-config nixpkgs#age --command age-keygen -y "$identity") \
       || fail 'generated age identity could not be read'
     printf 'nix-bootstrap: public age recipient: %s\n' "$recipient"
-    fail 'add this recipient to the SOPS policy, re-encrypt required files, push them, then rerun bootstrap'
+    printf 'nix-bootstrap: ACTION REQUIRED: add this recipient to the SOPS policy, re-encrypt required files, push them, then rerun bootstrap\n' >&2
+    exit 2
   fi
 
   [ -r "$identity" ] || fail 'age identity is not readable'

@@ -14,16 +14,27 @@ logfile="$workdir/commands.log"
 mkdir -p "$mockbin" "$home/.config/sops/age" "$home/src"
 : >"$logfile"
 export HOME="$home"
-export PATH="$mockbin:$PATH"
 export BOOTSTRAP_REPO_ROOT="$repo_root"
 export MOCK_LOG="$logfile"
+export MOCK_BIN="$mockbin"
 
-cat > "$mockbin/nix" <<'EOF'
+# The bootstrap gets an isolated PATH so a Git or gh binary supplied by the
+# container cannot make a deliberately missing mocked tool appear present.
+for command_name in bash env dirname mkdir chmod cp grep cat; do
+  command_path=$(command -v "$command_name")
+  ln -s "$command_path" "$mockbin/$command_name"
+done
+
+cat > "$mockbin/nix" <<'EOF_NIX'
 #!/usr/bin/env bash
 set -euo pipefail
 printf 'nix %s\n' "$*" >>"$MOCK_LOG"
 case "${1:-}" in
   profile)
+    if printf '%s\n' "$*" | grep -Fq 'nixpkgs#git'; then
+      cp "$MOCK_GIT_STUB" "$MOCK_BIN/git"
+      chmod +x "$MOCK_BIN/git"
+    fi
     if printf '%s\n' "$*" | grep -Fq 'nixpkgs#gh'; then
       cp "$MOCK_GH_STUB" "$MOCK_BIN/gh"
       chmod +x "$MOCK_BIN/gh"
@@ -39,18 +50,18 @@ case "${1:-}" in
   flake|eval) exit 0 ;;
   build)
     mkdir -p "$MOCK_ACTIVATION"
-    cat > "$MOCK_ACTIVATION/activate" <<'ACTIVATE'
+    cat > "$MOCK_ACTIVATION/activate" <<'EOF_ACTIVATE'
 #!/usr/bin/env bash
 printf 'activation\n' >>"$MOCK_LOG"
-ACTIVATE
+EOF_ACTIVATE
     chmod +x "$MOCK_ACTIVATION/activate"
     printf '%s\n' "$MOCK_ACTIVATION"
     ;;
   *) exit 0 ;;
 esac
-EOF
+EOF_NIX
 
-cat > "$mockbin/git" <<'EOF'
+cat > "$workdir/git.stub" <<'EOF_GIT'
 #!/usr/bin/env bash
 set -euo pipefail
 printf 'git %s\n' "$*" >>"$MOCK_LOG"
@@ -61,9 +72,9 @@ if [ "${1:-}" = clone ]; then
 elif [ "${1:-}" = -C ] && [ "${3:-}" = remote ] && [ "${4:-}" = get-url ]; then
   printf '%s\n' 'git@github.com:hattajr/nix-config.git'
 fi
-EOF
+EOF_GIT
 
-cat > "$mockbin/gh" <<'EOF'
+cat > "$workdir/gh.stub" <<'EOF_GH'
 #!/usr/bin/env bash
 set -euo pipefail
 printf 'gh %s\n' "$*" >>"$MOCK_LOG"
@@ -71,9 +82,9 @@ if [ "${MOCK_GH_AUTH:-yes}" = no ] && [ "${1:-}" = auth ] && [ "${2:-}" = status
   exit 1
 fi
 exit 0
-EOF
+EOF_GH
 
-cat > "$mockbin/age-keygen" <<'EOF'
+cat > "$mockbin/age-keygen" <<'EOF_AGE'
 #!/usr/bin/env bash
 set -euo pipefail
 printf 'age-keygen %s\n' "$*" >>"$MOCK_LOG"
@@ -84,16 +95,26 @@ fi
 [ "${1:-}" = -y ] || exit 0
 [ -s "${2:-}" ]
 printf '%s\n' 'age1mockrecipient'
-EOF
-chmod +x "$mockbin"/*
-cp "$mockbin/gh" "$workdir/gh.stub"
-export MOCK_BIN="$mockbin"
+EOF_AGE
+chmod +x "$mockbin/nix" "$mockbin/age-keygen" "$workdir/git.stub" "$workdir/gh.stub"
+export MOCK_GIT_STUB="$workdir/git.stub"
 export MOCK_GH_STUB="$workdir/gh.stub"
 
+install_mock_tool() {
+  cp "$workdir/$1.stub" "$mockbin/$1"
+  chmod +x "$mockbin/$1"
+}
+
+run_bootstrap() {
+  PATH="$mockbin" "$bootstrap" "$@"
+}
+
+install_mock_tool git
+install_mock_tool gh
 printf '%s\n' 'mock-age-private-key' >"$home/.config/sops/age/keys.txt"
 
 # Missing host must fail before authentication or clone.
-if printf '\n' | NIX_CONFIG_HOST= "$bootstrap" >/dev/null 2>&1; then
+if printf '\n' | NIX_CONFIG_HOST= run_bootstrap >/dev/null 2>&1; then
   printf '%s\n' 'bootstrap test: missing host unexpectedly succeeded' >&2
   exit 1
 fi
@@ -101,36 +122,80 @@ fi
 : >"$logfile"
 
 # Missing GitHub authentication must fail before clone.
-if MOCK_GH_AUTH=no "$bootstrap" latte "$home/src/auth-failure" </dev/null >/dev/null 2>&1; then
+if MOCK_GH_AUTH=no run_bootstrap latte "$home/src/auth-failure" </dev/null >/dev/null 2>&1; then
   printf '%s\n' 'bootstrap test: missing GitHub auth unexpectedly succeeded' >&2
   exit 1
 fi
 ! grep -q 'git clone' "$logfile" || { printf '%s\n' 'bootstrap test: auth failure reached clone' >&2; exit 1; }
 : >"$logfile"
 
-# An existing Git installation must not be replaced when only gh is missing.
-mv "$mockbin/gh" "$workdir/gh.hidden"
-printf 'n\n' | "$bootstrap" latte "$home/src/missing-gh" >/dev/null
-[ -d "$home/src/missing-gh/.git" ] || { printf '%s\n' 'bootstrap test: missing-gh clone did not occur' >&2; exit 1; }
-grep -Fq 'nix profile install --accept-flake-config nixpkgs#gh' "$logfile" || {
-  printf '%s\n' 'bootstrap test: missing-gh did not install gh' >&2
+# Existing Git + missing gh: install only gh, preserving existing Git.
+rm -f "$mockbin/gh"
+printf 'n\n' | run_bootstrap latte "$home/src/existing-git-missing-gh" >/dev/null
+[ -d "$home/src/existing-git-missing-gh/.git" ] || { printf '%s\n' 'bootstrap test: existing-git/missing-gh clone did not occur' >&2; exit 1; }
+grep -Fxq 'nix profile install --accept-flake-config nixpkgs#gh' "$logfile" || {
+  printf '%s\n' 'bootstrap test: existing-git/missing-gh did not install exactly gh' >&2
   exit 1
 }
-! grep -Fq 'nix profile install --accept-flake-config nixpkgs#git' "$logfile" || {
+! grep -Fq 'nixpkgs#git' "$logfile" || {
   printf '%s\n' 'bootstrap test: existing Git was unnecessarily replaced' >&2
   exit 1
 }
 : >"$logfile"
 
-# A missing age identity is generated after Nix is available, then the bootstrap
-# stops so the public recipient can be added to SOPS and pushed before cloning.
-identity_output=$(SOPS_AGE_KEY_FILE="$home/missing-identity" "$bootstrap" latte "$home/src/identity-generation" </dev/null 2>&1 || true)
+# Missing Git + missing gh: install both, then verify both become usable.
+rm -f "$mockbin/git" "$mockbin/gh"
+printf 'n\n' | run_bootstrap latte "$home/src/missing-git-missing-gh" >/dev/null
+[ -x "$mockbin/git" ] && [ -x "$mockbin/gh" ] || {
+  printf '%s\n' 'bootstrap test: missing tools were not made available after profile install' >&2
+  exit 1
+}
+[ -d "$home/src/missing-git-missing-gh/.git" ] || { printf '%s\n' 'bootstrap test: missing-tools clone did not occur' >&2; exit 1; }
+grep -Fxq 'nix profile install --accept-flake-config nixpkgs#git nixpkgs#gh' "$logfile" || {
+  printf '%s\n' 'bootstrap test: missing-tools did not install exactly git and gh' >&2
+  exit 1
+}
+: >"$logfile"
+
+# Existing Git + existing gh: do not mutate the Nix profile.
+printf 'n\n' | run_bootstrap latte "$home/src/both-tools-present" >/dev/null
+[ -d "$home/src/both-tools-present/.git" ] || { printf '%s\n' 'bootstrap test: both-tools-present clone did not occur' >&2; exit 1; }
+! grep -Fq 'nix profile install' "$logfile" || {
+  printf '%s\n' 'bootstrap test: both present tools unexpectedly triggered profile install' >&2
+  exit 1
+}
+: >"$logfile"
+
+# A missing age identity is generated after Nix is available. Generation must
+# create a mode-700 parent and mode-600 key, print only the public recipient,
+# return failure deliberately, and stop before GitHub authentication or clone.
+generated_identity="$home/generated/sops/age/keys.txt"
+set +e
+identity_output=$(SOPS_AGE_KEY_FILE="$generated_identity" run_bootstrap latte "$home/src/identity-generation" </dev/null 2>&1)
+identity_status=$?
+set -e
+[ "$identity_status" -ne 0 ] || {
+  printf '%s\n' 'bootstrap test: identity generation did not stop the bootstrap' >&2
+  exit 1
+}
 grep -Fq 'public age recipient: age1mockrecipient' <<<"$identity_output" || {
   printf '%s\n' 'bootstrap test: generated public recipient was not reported' >&2
   printf '%s\n' "$identity_output" >&2
   exit 1
 }
-[ "$(stat -c '%a' "$home/missing-identity")" = 600 ] || {
+grep -Fq 'ACTION REQUIRED: add this recipient to the SOPS policy' <<<"$identity_output" || {
+  printf '%s\n' 'bootstrap test: identity generation did not report the intentional action' >&2
+  exit 1
+}
+! grep -Fq 'nix-bootstrap: ERROR:' <<<"$identity_output" || {
+  printf '%s\n' 'bootstrap test: intentional SOPS pause was reported as an error' >&2
+  exit 1
+}
+[ "$(stat -c '%a' "$(dirname "$generated_identity")")" = 700 ] || {
+  printf '%s\n' 'bootstrap test: generated identity directory permissions were not 700' >&2
+  exit 1
+}
+[ "$(stat -c '%a' "$generated_identity")" = 600 ] || {
   printf '%s\n' 'bootstrap test: generated identity permissions were not 600' >&2
   exit 1
 }
@@ -138,20 +203,26 @@ grep -Fq 'public age recipient: age1mockrecipient' <<<"$identity_output" || {
   printf '%s\n' 'bootstrap test: generated private key leaked into output' >&2
   exit 1
 }
-! grep -q 'git clone' "$logfile" || { printf '%s\n' 'bootstrap test: identity generation reached clone' >&2; exit 1; }
+! grep -Fq 'mock-age-private-key' "$logfile" || {
+  printf '%s\n' 'bootstrap test: generated private key leaked into command logs' >&2
+  exit 1
+}
+! grep -q '^gh ' "$logfile" || { printf '%s\n' 'bootstrap test: identity generation reached GitHub authentication' >&2; exit 1; }
+! grep -q '^git clone' "$logfile" || { printf '%s\n' 'bootstrap test: identity generation reached clone' >&2; exit 1; }
+[ ! -e "$home/src/identity-generation" ] || { printf '%s\n' 'bootstrap test: identity generation created a checkout destination' >&2; exit 1; }
 : >"$logfile"
 
 # A valid identity and authenticated GitHub CLI may clone, then skip activation
 # when the user declines. The private key contents must never appear in logs.
 export MOCK_ACTIVATION="$workdir/activation"
-printf 'n\n' | "$bootstrap" latte "$home/src/nix-config" >/dev/null
+printf 'n\n' | run_bootstrap latte "$home/src/nix-config" >/dev/null
 [ -d "$home/src/nix-config/.git" ] || { printf '%s\n' 'bootstrap test: clone did not occur' >&2; exit 1; }
 ! grep -Fq 'mock-age-private-key' "$logfile" || { printf '%s\n' 'bootstrap test: private key leaked into logs' >&2; exit 1; }
 [ ! -e "$workdir/activation/activate" ] || { printf '%s\n' 'bootstrap test: activation ran after decline' >&2; exit 1; }
 
 # Rerunning against the existing checkout must not clone again.
 : >"$logfile"
-printf 'n\n' | "$bootstrap" latte "$home/src/nix-config" >/dev/null
+printf 'n\n' | run_bootstrap latte "$home/src/nix-config" >/dev/null
 ! grep -q 'git clone' "$logfile" || { printf '%s\n' 'bootstrap test: rerun recloned repository' >&2; exit 1; }
 
-printf '%s\n' 'bootstrap test: PASSED (host/auth/identity gates, clone, rerun, and log safety)'
+printf '%s\n' 'bootstrap test: PASSED (tool matrix, host/auth/identity gates, permissions, clone stop, rerun, and private-key log safety)'
