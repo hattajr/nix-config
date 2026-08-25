@@ -23,7 +23,13 @@ cat > "$mockbin/nix" <<'EOF'
 set -euo pipefail
 printf 'nix %s\n' "$*" >>"$MOCK_LOG"
 case "${1:-}" in
-  profile) exit 0 ;;
+  profile)
+    if printf '%s\n' "$*" | grep -Fq 'nixpkgs#gh'; then
+      cp "$MOCK_GH_STUB" "$MOCK_BIN/gh"
+      chmod +x "$MOCK_BIN/gh"
+    fi
+    exit 0
+    ;;
   shell)
     while [ "$#" -gt 0 ] && [ "$1" != --command ]; do shift; done
     [ "$1" = --command ] || exit 1
@@ -80,6 +86,9 @@ fi
 printf '%s\n' 'age1mockrecipient'
 EOF
 chmod +x "$mockbin"/*
+cp "$mockbin/gh" "$workdir/gh.stub"
+export MOCK_BIN="$mockbin"
+export MOCK_GH_STUB="$workdir/gh.stub"
 
 printf '%s\n' 'mock-age-private-key' >"$home/.config/sops/age/keys.txt"
 
@@ -99,11 +108,26 @@ fi
 ! grep -q 'git clone' "$logfile" || { printf '%s\n' 'bootstrap test: auth failure reached clone' >&2; exit 1; }
 : >"$logfile"
 
+# An existing Git installation must not be replaced when only gh is missing.
+mv "$mockbin/gh" "$workdir/gh.hidden"
+printf 'n\n' | "$bootstrap" latte "$home/src/missing-gh" >/dev/null
+[ -d "$home/src/missing-gh/.git" ] || { printf '%s\n' 'bootstrap test: missing-gh clone did not occur' >&2; exit 1; }
+grep -Fq 'nix profile install --accept-flake-config nixpkgs#gh' "$logfile" || {
+  printf '%s\n' 'bootstrap test: missing-gh did not install gh' >&2
+  exit 1
+}
+! grep -Fq 'nix profile install --accept-flake-config nixpkgs#git' "$logfile" || {
+  printf '%s\n' 'bootstrap test: existing Git was unnecessarily replaced' >&2
+  exit 1
+}
+: >"$logfile"
+
 # A missing age identity is generated after Nix is available, then the bootstrap
 # stops so the public recipient can be added to SOPS and pushed before cloning.
 identity_output=$(SOPS_AGE_KEY_FILE="$home/missing-identity" "$bootstrap" latte "$home/src/identity-generation" </dev/null 2>&1 || true)
 grep -Fq 'public age recipient: age1mockrecipient' <<<"$identity_output" || {
   printf '%s\n' 'bootstrap test: generated public recipient was not reported' >&2
+  printf '%s\n' "$identity_output" >&2
   exit 1
 }
 [ "$(stat -c '%a' "$home/missing-identity")" = 600 ] || {

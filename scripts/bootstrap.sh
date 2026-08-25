@@ -84,11 +84,16 @@ ensure_flakes() {
 }
 
 ensure_tools() {
-  command -v git >/dev/null 2>&1 && command -v gh >/dev/null 2>&1 && return
+  local packages=()
+  command -v git >/dev/null 2>&1 || packages+=(nixpkgs#git)
+  command -v gh >/dev/null 2>&1 || packages+=(nixpkgs#gh)
+  if ((${#packages[@]} == 0)); then
+    return 0
+  fi
 
-  log 'Installing Git and GitHub CLI into the user Nix profile'
-  nix profile install --accept-flake-config nixpkgs#git nixpkgs#gh \
-    || fail 'could not install Git and GitHub CLI through Nix'
+  log "Installing missing tools into the user Nix profile: ${packages[*]}"
+  nix profile install --accept-flake-config "${packages[@]}" \
+    || fail 'could not install required Git/GitHub tools through Nix'
   export PATH="${HOME}/.nix-profile/bin:${PATH}"
   command -v git >/dev/null 2>&1 || fail 'Git is unavailable after Nix installation'
   command -v gh >/dev/null 2>&1 || fail 'GitHub CLI is unavailable after Nix installation'
