@@ -78,8 +78,12 @@ ensure_nix() {
   command -v nix >/dev/null 2>&1 || fail 'Nix was installed but is not available in this shell'
 }
 
-ensure_tools() {
+ensure_flakes() {
+  # Keep flakes enabled for every Nix command in this bootstrap invocation.
   export NIX_CONFIG="${NIX_CONFIG:-experimental-features = nix-command flakes}"
+}
+
+ensure_tools() {
   command -v git >/dev/null 2>&1 && command -v gh >/dev/null 2>&1 && return
 
   log 'Installing Git and GitHub CLI into the user Nix profile'
@@ -92,18 +96,28 @@ ensure_tools() {
 
 verify_age_identity() {
   local identity=${SOPS_AGE_KEY_FILE:-$AGE_IDENTITY_DEFAULT}
-  [ -f "$identity" ] || fail "age identity is missing; provision it out of band at ${identity}"
   [ ! -d "$identity" ] || fail 'age identity path is a directory'
-  [ -r "$identity" ] || fail 'age identity is not readable'
 
-  command -v age-keygen >/dev/null 2>&1 || {
-    nix shell --accept-flake-config nixpkgs#age --command age-keygen -y "$identity" >/dev/null \
-      || fail 'age identity could not be validated'
-  }
-  if command -v age-keygen >/dev/null 2>&1; then
-    age-keygen -y "$identity" >/dev/null \
-      || fail 'age identity could not be validated'
+  if [ ! -f "$identity" ]; then
+    local identity_dir
+    local recipient
+    identity_dir=$(dirname "$identity")
+    mkdir -p "$identity_dir"
+    chmod 700 "$identity_dir"
+    log "No age identity found; generating one at ${identity}"
+    nix shell --accept-flake-config nixpkgs#age --command age-keygen -o "$identity" >/dev/null 2>&1 \
+      || fail 'could not generate the age identity'
+    chmod 600 "$identity"
+    recipient=$(nix shell --accept-flake-config nixpkgs#age --command age-keygen -y "$identity") \
+      || fail 'generated age identity could not be read'
+    printf 'nix-bootstrap: public age recipient: %s\n' "$recipient"
+    fail 'add this recipient to the SOPS policy, re-encrypt required files, push them, then rerun bootstrap'
   fi
+
+  [ -r "$identity" ] || fail 'age identity is not readable'
+  nix shell --accept-flake-config nixpkgs#age --command age-keygen -y "$identity" >/dev/null \
+    || fail 'age identity could not be validated'
+  chmod 600 "$identity"
   export SOPS_AGE_KEY_FILE="$identity"
 }
 
@@ -178,6 +192,7 @@ main() {
   esac
 
   ensure_nix
+  ensure_flakes
   ensure_tools
   verify_age_identity
   verify_github_auth

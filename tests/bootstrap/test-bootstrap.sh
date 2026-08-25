@@ -24,7 +24,12 @@ set -euo pipefail
 printf 'nix %s\n' "$*" >>"$MOCK_LOG"
 case "${1:-}" in
   profile) exit 0 ;;
-  shell) exec age-keygen "$@" ;;
+  shell)
+    while [ "$#" -gt 0 ] && [ "$1" != --command ]; do shift; done
+    [ "$1" = --command ] || exit 1
+    shift
+    exec "$@"
+    ;;
   flake|eval) exit 0 ;;
   build)
     mkdir -p "$MOCK_ACTIVATION"
@@ -66,6 +71,10 @@ cat > "$mockbin/age-keygen" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 printf 'age-keygen %s\n' "$*" >>"$MOCK_LOG"
+if [ "${1:-}" = -o ]; then
+  printf '%s\n' 'mock-age-private-key' >"${2:?missing output path}"
+  exit 0
+fi
 [ "${1:-}" = -y ] || exit 0
 [ -s "${2:-}" ]
 printf '%s\n' 'age1mockrecipient'
@@ -90,12 +99,22 @@ fi
 ! grep -q 'git clone' "$logfile" || { printf '%s\n' 'bootstrap test: auth failure reached clone' >&2; exit 1; }
 : >"$logfile"
 
-# A missing externally provisioned age identity must fail before GitHub auth or clone.
-if SOPS_AGE_KEY_FILE="$home/missing-identity" "$bootstrap" latte "$home/src/identity-failure" </dev/null >/dev/null 2>&1; then
-  printf '%s\n' 'bootstrap test: missing age identity unexpectedly succeeded' >&2
+# A missing age identity is generated after Nix is available, then the bootstrap
+# stops so the public recipient can be added to SOPS and pushed before cloning.
+identity_output=$(SOPS_AGE_KEY_FILE="$home/missing-identity" "$bootstrap" latte "$home/src/identity-generation" </dev/null 2>&1 || true)
+grep -Fq 'public age recipient: age1mockrecipient' <<<"$identity_output" || {
+  printf '%s\n' 'bootstrap test: generated public recipient was not reported' >&2
   exit 1
-fi
-! grep -q 'git clone' "$logfile" || { printf '%s\n' 'bootstrap test: identity failure reached clone' >&2; exit 1; }
+}
+[ "$(stat -c '%a' "$home/missing-identity")" = 600 ] || {
+  printf '%s\n' 'bootstrap test: generated identity permissions were not 600' >&2
+  exit 1
+}
+! grep -Fq 'mock-age-private-key' <<<"$identity_output" || {
+  printf '%s\n' 'bootstrap test: generated private key leaked into output' >&2
+  exit 1
+}
+! grep -q 'git clone' "$logfile" || { printf '%s\n' 'bootstrap test: identity generation reached clone' >&2; exit 1; }
 : >"$logfile"
 
 # A valid identity and authenticated GitHub CLI may clone, then skip activation
