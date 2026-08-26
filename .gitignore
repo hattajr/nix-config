@@ -8,3 +8,6 @@ result-*
 keys.txt
 secrets/*.decrypted
 secrets/**/keys.txt
+
+# Private planning material
+/PLAN/
