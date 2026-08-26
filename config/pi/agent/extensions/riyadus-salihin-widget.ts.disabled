@@ -1,0 +1,571 @@
+import { complete, type Model } from "@earendil-works/pi-ai";
+import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
+import { Text, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
+
+const MESSAGE_TYPE = "riyadus-salihin-startup";
+const STATUS_KEY = "riyadus-salihin";
+const MIN_HADITH_NUMBER = 1;
+const MAX_HADITH_NUMBER = 1896;
+const FETCH_TIMEOUT_MS = 10000;
+const SUMMARY_MIN_BULLETS = 1;
+const SUMMARY_CACHE_VERSION = "meaning-v2";
+const LOADING_SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+const LOADING_MESSAGES = ["Preparing the hadiths...", "Gathering wisdoms...", "Brewing your hadith..."];
+
+const SHOW_REASONS = new Set(["startup", "new"]);
+
+type SessionStartReason = "startup" | "reload" | "new" | "resume" | "fork";
+
+type Hadith = {
+  number: number;
+  narrator: string;
+  text: string;
+  url: string;
+  summaryBullets: string[];
+};
+
+type StartupHadithMessageDetails = {
+  hadiths: Hadith[];
+  summaryNote?: string;
+  generatedAt: number;
+};
+
+type SummaryRequestAuth = {
+  model: Model;
+  apiKey: string;
+  headers?: Record<string, string>;
+};
+
+type SummaryPayload = {
+  summaries?: Array<{
+    number?: number;
+    bullets?: unknown;
+  }>;
+};
+
+const summaryCache = new Map<string, string[]>();
+
+function shouldShowHadith(reason: SessionStartReason): boolean {
+  return SHOW_REASONS.has(reason);
+}
+
+function getSummaryCacheKey(number: number): string {
+  return `${SUMMARY_CACHE_VERSION}:${number}`;
+}
+
+function shouldSkipStartupMessage(ctx: ExtensionContext, reason: SessionStartReason): boolean {
+  if (reason !== "startup") {
+    return false;
+  }
+
+  return ctx.sessionManager.getBranch().some((entry) => entry.type === "custom" && entry.customType === MESSAGE_TYPE);
+}
+
+function getRandomSequentialPairStart(): number {
+  const maxStart = MAX_HADITH_NUMBER - 1;
+  return Math.floor(Math.random() * (maxStart - MIN_HADITH_NUMBER + 1)) + MIN_HADITH_NUMBER;
+}
+
+function pickRandomLoadingMessage(): string {
+  return LOADING_MESSAGES[Math.floor(Math.random() * LOADING_MESSAGES.length)]!;
+}
+
+function renderLoadingWidgetLine(ctx: ExtensionContext, frame: string, message: string): string {
+  return [
+    ctx.ui.theme.fg("dim", "riyadus-salihin:"),
+    ctx.ui.theme.fg("muted", frame),
+    ctx.ui.theme.fg("dim", message),
+  ].join(" ");
+}
+
+function startLoadingWidget(ctx: ExtensionContext): () => void {
+  let frameIndex = 0;
+  let tickCount = 0;
+  let message = pickRandomLoadingMessage();
+
+  const render = () => {
+    ctx.ui.setWidget(STATUS_KEY, [renderLoadingWidgetLine(ctx, LOADING_SPINNER_FRAMES[frameIndex]!, message)]);
+  };
+
+  render();
+
+  const timer = setInterval(() => {
+    frameIndex = (frameIndex + 1) % LOADING_SPINNER_FRAMES.length;
+    tickCount += 1;
+
+    if (tickCount % LOADING_SPINNER_FRAMES.length === 0) {
+      message = pickRandomLoadingMessage();
+    }
+
+    render();
+  }, 80);
+
+  return () => {
+    clearInterval(timer);
+    ctx.ui.setWidget(STATUS_KEY, undefined);
+  };
+}
+
+function escapeForRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function decodeHtmlEntities(value: string): string {
+  return value
+    .replace(/&#(\d+);/g, (_match, digits: string) => String.fromCodePoint(Number.parseInt(digits, 10)))
+    .replace(/&#x([\da-f]+);/gi, (_match, hex: string) => String.fromCodePoint(Number.parseInt(hex, 16)))
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&quot;/gi, '"')
+    .replace(/&apos;|&#39;/gi, "'")
+    .replace(/&ldquo;|&rdquo;/gi, '"')
+    .replace(/&lsquo;|&rsquo;/gi, "'")
+    .replace(/&ndash;/gi, "-")
+    .replace(/&mdash;/gi, "—")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">");
+}
+
+function htmlToText(html: string): string {
+  const text = decodeHtmlEntities(
+    html
+      .replace(/<br\s*\/?>/gi, "\n")
+      .replace(/<\/p>/gi, "\n\n")
+      .replace(/<\/div>/gi, "\n")
+      .replace(/<\/li>/gi, "\n")
+      .replace(/<li[^>]*>/gi, "• ")
+      .replace(/<[^>]+>/g, ""),
+  );
+
+  return text
+    .replace(/\r/g, "")
+    .split("\n")
+    .map((line) => line.replace(/[ \t]+/g, " ").trim())
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function extractClassBlock(html: string, className: string): string | null {
+  const escaped = escapeForRegex(className);
+  const pattern = new RegExp(
+    `<div[^>]*class=(?:"[^"]*\\b${escaped}\\b[^"]*"|'[^']*\\b${escaped}\\b[^']*'|${escaped})[^>]*>([\\s\\S]*?)<\\/div>`,
+    "i",
+  );
+  return html.match(pattern)?.[1]?.trim() ?? null;
+}
+
+function extractEnglishHadith(html: string, number: number): Hadith {
+  const container = html.match(
+    /<div[^>]*class=(?:"[^"]*\bactualHadithContainer\b[^"]*"|'[^']*\bactualHadithContainer\b[^']*'|actualHadithContainer)[^>]*>[\s\S]*?<!-- End hadith -->/i,
+  )?.[0] ?? html;
+
+  const narratorHtml = extractClassBlock(container, "hadith_narrated");
+  const textHtml = extractClassBlock(container, "text_details");
+
+  if (!narratorHtml || !textHtml) {
+    throw new Error(`Could not scrape hadith ${number} from sunnah.com`);
+  }
+
+  return {
+    number,
+    narrator: htmlToText(narratorHtml),
+    text: htmlToText(textHtml),
+    url: `https://sunnah.com/riyadussalihin:${number}`,
+    summaryBullets: [],
+  };
+}
+
+async function fetchHadith(number: number): Promise<Hadith> {
+  const url = `https://sunnah.com/riyadussalihin:${number}`;
+  const response = await fetch(url, {
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    headers: {
+      "User-Agent": "Mozilla/5.0 (compatible; pi-riyadus-salihin-widget/1.0)",
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to fetch hadith ${number}: ${response.status} ${response.statusText}`);
+  }
+
+  const html = await response.text();
+  return extractEnglishHadith(html, number);
+}
+
+function addWrappedLine(
+  lines: string[],
+  prefix: string,
+  text: string,
+  width: number,
+  continuationPrefix = "",
+  styleLine: (line: string) => string = (line) => line,
+): void {
+  const contentWidth = Math.max(20, width - visibleWidth(prefix));
+  const wrapped = wrapTextWithAnsi(text, contentWidth);
+
+  if (wrapped.length === 0) {
+    lines.push(truncateToWidth(prefix, width, ""));
+    return;
+  }
+
+  wrapped.forEach((line, index) => {
+    const nextPrefix = index === 0 ? prefix : continuationPrefix;
+    lines.push(truncateToWidth(`${nextPrefix}${styleLine(line)}`, width, ""));
+  });
+}
+
+function addWrappedParagraphs(
+  lines: string[],
+  text: string,
+  width: number,
+  prefix = "",
+  continuationPrefix = "",
+  styleLine: (line: string) => string = (line) => line,
+): void {
+  const paragraphs = text.split(/\n\n+/).map((part) => part.trim()).filter(Boolean);
+
+  paragraphs.forEach((paragraph, paragraphIndex) => {
+    if (paragraphIndex > 0) {
+      lines.push("");
+    }
+
+    addWrappedLine(lines, prefix, paragraph.replace(/\n+/g, " "), width, continuationPrefix, styleLine);
+  });
+}
+
+function addBulletList(lines: string[], theme: Theme, bullets: string[], width: number): void {
+  bullets.forEach((bullet) => {
+    addWrappedLine(lines, theme.fg("dim", "• "), bullet, width, theme.fg("dim", "  "), (line) => theme.fg("dim", line));
+  });
+}
+
+function getTextContent(blocks: Array<{ type: string; text?: string }>): string {
+  return blocks
+    .filter((block): block is { type: "text"; text: string } => block.type === "text" && typeof block.text === "string")
+    .map((block) => block.text)
+    .join("\n")
+    .trim();
+}
+
+function uniqueModels(models: Array<Model | undefined>): Model[] {
+  const seen = new Set<string>();
+  const unique: Model[] = [];
+
+  models.forEach((model) => {
+    if (!model) {
+      return;
+    }
+
+    const key = `${model.provider}/${model.id}`;
+    if (seen.has(key)) {
+      return;
+    }
+
+    seen.add(key);
+    unique.push(model);
+  });
+
+  return unique;
+}
+
+async function resolveSummaryModels(ctx: ExtensionContext): Promise<SummaryRequestAuth[]> {
+  const available = await ctx.modelRegistry.getAvailable();
+  const candidates = uniqueModels([
+    ctx.modelRegistry.find("google", "gemini-2.5-flash"),
+    ctx.modelRegistry.find("moonshotai", "kimi-k2.6"),
+    ctx.model,
+    ctx.modelRegistry.find("moonshotai", "kimi-k2.5"),
+    ...available,
+  ]);
+
+  const requests: SummaryRequestAuth[] = [];
+
+  for (const model of candidates) {
+    const auth = await ctx.modelRegistry.getApiKeyAndHeaders(model);
+    if (!auth.ok || !auth.apiKey) {
+      continue;
+    }
+
+    requests.push({
+      model,
+      apiKey: auth.apiKey,
+      headers: auth.headers,
+    });
+  }
+
+  return requests;
+}
+
+function buildSummaryPrompt(hadiths: Hadith[]): string {
+  const sections = hadiths
+    .map(
+      (hadith) =>
+        [`<hadith number="${hadith.number}">`, `<narrator>${hadith.narrator}</narrator>`, `<text>${hadith.text}</text>`, "</hadith>"].join(
+          "\n",
+        ),
+    )
+    .join("\n\n");
+
+  return [
+    "Create a concise meaning-focused digest for each hadith below.",
+    "Write every digest in natural Indonesian.",
+    "Prioritize the intended meaning, spiritual lesson, and tone over word-for-word phrasing.",
+    `Return ONLY valid JSON with this shape: {\"summaries\":[{\"number\":123,\"bullets\":[\"...\"]}]}`,
+    `Rules:\n- Write ${SUMMARY_MIN_BULLETS} or more bullets per hadith\n- Let the hadith itself determine the number of bullets\n- Prefer the fewest bullets needed\n- If a hadith is short or has one clear main teaching, write exactly 1 bullet\n- If a hadith contains multiple distinct points, use as many bullets as needed to cover them\n- A single-bullet digest must be one complete standalone sentence\n- When there are multiple bullets, each bullet must cover a different point\n- Capture the intrinsic meaning, not a literal translation\n- Use idiomatic Indonesian that sounds natural, not stiff or calqued from English\n- Preserve reverence, moral force, and nuance while staying faithful to the hadith\n- Clarify implied references only when necessary for natural Indonesian\n- Do not invent rulings, historical claims, or details not present in the hadith\n- Keep bullets short and plain\n- Keep each bullet under 12 words when possible; a single bullet may be a little longer if needed\n- Do not add numbering, commentary, or extra keys`,
+    "",
+    sections,
+  ].join("\n");
+}
+
+function extractJsonObject(text: string): string {
+  const trimmed = text.trim();
+  const fenceMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+  if (fenceMatch?.[1]) {
+    return fenceMatch[1].trim();
+  }
+
+  const firstBrace = trimmed.indexOf("{");
+  const lastBrace = trimmed.lastIndexOf("}");
+  if (firstBrace >= 0 && lastBrace > firstBrace) {
+    return trimmed.slice(firstBrace, lastBrace + 1);
+  }
+
+  throw new Error("Summary model did not return JSON");
+}
+
+function normalizeBullets(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .filter((item): item is string => typeof item === "string")
+    .map((item) => item.replace(/^[-•*]\s*/, "").replace(/[ \t]+/g, " ").trim())
+    .filter(Boolean);
+}
+
+function parseSummaryPayload(raw: string): Map<number, string[]> {
+  const json = extractJsonObject(raw);
+  const payload = JSON.parse(json) as SummaryPayload;
+  const summaries = new Map<number, string[]>();
+
+  payload.summaries?.forEach((entry) => {
+    if (typeof entry.number !== "number") {
+      return;
+    }
+
+    const bullets = normalizeBullets(entry.bullets);
+    if (bullets.length === 0) {
+      return;
+    }
+
+    summaries.set(entry.number, bullets);
+  });
+
+  return summaries;
+}
+
+async function summarizeHadiths(ctx: ExtensionContext, hadiths: Hadith[]): Promise<Map<number, string[]>> {
+  const cached = new Map<number, string[]>();
+  let missing = hadiths.filter((hadith) => {
+    const existing = summaryCache.get(getSummaryCacheKey(hadith.number));
+    if (existing) {
+      cached.set(hadith.number, existing);
+      return false;
+    }
+    return true;
+  });
+
+  if (missing.length === 0) {
+    return cached;
+  }
+
+  const requests = await resolveSummaryModels(ctx);
+  if (requests.length === 0) {
+    return cached;
+  }
+
+  for (const request of requests) {
+    if (missing.length === 0) {
+      break;
+    }
+
+    try {
+      const response = await complete(
+        request.model,
+        {
+          systemPrompt:
+            "You write concise, reverent, faithful hadith meaning digests for a tiny terminal startup card. Use natural Indonesian that conveys the intended meaning and nuance rather than literal word-for-word phrasing. Output only the JSON requested by the user message.",
+          messages: [
+            {
+              role: "user",
+              content: [{ type: "text", text: buildSummaryPrompt(missing) }],
+              timestamp: Date.now(),
+            },
+          ],
+        },
+        {
+          apiKey: request.apiKey,
+          headers: request.headers,
+          maxTokens: 700,
+          signal: ctx.signal,
+        },
+      );
+
+      const parsed = parseSummaryPayload(getTextContent(response.content));
+      if (parsed.size === 0) {
+        continue;
+      }
+
+      parsed.forEach((bullets, number) => {
+        summaryCache.set(getSummaryCacheKey(number), bullets);
+        cached.set(number, bullets);
+      });
+
+      missing = missing.filter((hadith) => !parsed.has(hadith.number));
+    } catch {
+      continue;
+    }
+  }
+
+  return cached;
+}
+
+function renderHadithMessage(theme: Theme, hadiths: Hadith[], width: number, summaryNote?: string): string[] {
+  const lines: string[] = [];
+
+  lines.push(truncateToWidth(theme.fg("dim", theme.bold("Riyad as-Salihin")), width, ""));
+  lines.push(truncateToWidth(theme.fg("dim", "Startup reading pair"), width, ""));
+
+  if (summaryNote) {
+    lines.push(truncateToWidth(theme.fg("dim", summaryNote), width, ""));
+  }
+
+  lines.push("");
+
+  hadiths.forEach((hadith, index) => {
+    if (index > 0) {
+      lines.push("");
+    }
+
+    const title = `${theme.fg("dim", theme.bold(`#${hadith.number}`))}${theme.fg("dim", `  ${hadith.url}`)}`;
+    lines.push(truncateToWidth(title, width, ""));
+    lines.push("");
+
+    if (hadith.summaryBullets.length > 0) {
+      lines.push(
+        truncateToWidth(theme.fg("dim", theme.bold(hadith.summaryBullets.length === 1 ? "Main point:" : "Key points:")), width, ""),
+      );
+
+      if (hadith.summaryBullets.length === 1) {
+        addWrappedParagraphs(lines, hadith.summaryBullets[0], width, theme.fg("dim", "→ "), theme.fg("dim", "  "), (line) => theme.fg("dim", line));
+      } else {
+        addBulletList(lines, theme, hadith.summaryBullets, width);
+      }
+
+      lines.push("");
+    }
+
+    addWrappedParagraphs(
+      lines,
+      hadith.narrator,
+      width,
+      theme.fg("dim", theme.bold("Narrated: ")),
+      theme.fg("dim", " ".repeat(10)),
+      (line) => theme.fg("dim", line),
+    );
+    lines.push("");
+    addWrappedParagraphs(lines, hadith.text, width, "", "", (line) => theme.fg("dim", line));
+  });
+
+  return lines;
+}
+
+async function showRandomHadithPair(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
+  const start = getRandomSequentialPairStart();
+  const hadiths = await Promise.all([fetchHadith(start), fetchHadith(start + 1)]);
+
+  let summaryNote: string | undefined;
+
+  try {
+    const summaries = await summarizeHadiths(ctx, hadiths);
+    hadiths.forEach((hadith) => {
+      hadith.summaryBullets = summaries.get(hadith.number) ?? [];
+    });
+
+    if (hadiths.some((hadith) => hadith.summaryBullets.length === 0)) {
+      summaryNote = "LLM digest unavailable for some items.";
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    summaryNote = `LLM digest unavailable: ${message}`;
+  }
+
+  const details: StartupHadithMessageDetails = {
+    hadiths,
+    summaryNote,
+    generatedAt: Date.now(),
+  };
+
+  pi.sendMessage({
+    customType: MESSAGE_TYPE,
+    content: `Riyad as-Salihin startup reading: #${hadiths[0]!.number} and #${hadiths[1]!.number}`,
+    display: true,
+    details,
+  });
+}
+
+export default function (pi: ExtensionAPI) {
+  let stopLoadingWidget: (() => void) | undefined;
+
+  const clearLoadingWidget = () => {
+    stopLoadingWidget?.();
+    stopLoadingWidget = undefined;
+  };
+
+  pi.registerMessageRenderer(MESSAGE_TYPE, (message, _options, theme) => {
+    const details = message.details as StartupHadithMessageDetails | undefined;
+
+    if (!details) {
+      return new Text(typeof message.content === "string" ? message.content : "Riyad as-Salihin", 0, 0);
+    }
+
+    return {
+      render: (width: number) => renderHadithMessage(theme, details.hadiths, width, details.summaryNote),
+      invalidate: () => {},
+    };
+  });
+
+  pi.on("context", async (event) => ({
+    messages: event.messages.filter((message) => (message as { customType?: string }).customType !== MESSAGE_TYPE),
+  }));
+
+  pi.on("session_shutdown", () => {
+    clearLoadingWidget();
+  });
+
+  pi.on("session_start", (event, ctx) => {
+    if (!ctx.hasUI) {
+      return;
+    }
+
+    clearLoadingWidget();
+
+    if (!shouldShowHadith(event.reason) || shouldSkipStartupMessage(ctx, event.reason)) {
+      ctx.ui.setWidget(STATUS_KEY, undefined);
+      return;
+    }
+
+    stopLoadingWidget = startLoadingWidget(ctx);
+
+    void showRandomHadithPair(pi, ctx)
+      .catch((error) => {
+        const message = error instanceof Error ? error.message : String(error);
+        ctx.ui.notify(`Riyad as-Salihin unavailable: ${message}`, "warning");
+      })
+      .finally(() => {
+        clearLoadingWidget();
+      });
+  });
+}
