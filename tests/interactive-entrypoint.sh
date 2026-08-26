@@ -80,4 +80,8 @@ if [ "${INTERACTIVE_SMOKE:-0}" = 1 ]; then
   exit 0
 fi
 
-exec setpriv --reuid=30033 --regid=1000 --clear-groups zsh -l
+# Keep the disposable shell interactive without terminal flow-control or
+# background-output stops. The shell does not need job control; tmux provides
+# its own session/pane control when requested.
+stty -ixon -tostop 2>/dev/null || true
+exec setpriv --reuid=30033 --regid=1000 --clear-groups zsh -l -i +m
