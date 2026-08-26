@@ -13,14 +13,42 @@ if ! command -v docker >/dev/null 2>&1; then
   exit 1
 fi
 
+cleanup() {
+  local status=$?
+  trap - EXIT INT TERM
+
+  if docker container inspect "$container_name" >/dev/null 2>&1; then
+    printf 'test-interactive: removing %s\n' "$container_name"
+    docker container rm -f "$container_name" >/dev/null 2>&1 || true
+  fi
+
+  # Closing an interactive TTY can be reported as SIGINT (130) even when the
+  # user is simply leaving the shell. Treat that as a graceful disposable-shell
+  # exit; real setup/application failures still return their original status.
+  if [ "$status" -eq 130 ]; then
+    printf '%s\n' 'test-interactive: shell stopped gracefully (container removed)'
+    status=0
+  fi
+  if [ "$status" -eq 0 ] && [ "${INTERACTIVE_SMOKE:-0}" = 1 ]; then
+    printf '%s\n' 'test-interactive: smoke passed (container removed)'
+  fi
+  exit "$status"
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+# A previous interrupted run must never block the next fully automated run.
 if docker container inspect "$container_name" >/dev/null 2>&1; then
-  printf 'test-interactive: container already exists: %s\n' "$container_name" >&2
-  printf 'test-interactive: remove it with: docker rm -f %s\n' "$container_name" >&2
-  exit 1
+  printf 'test-interactive: removing previous %s\n' "$container_name"
+  docker container rm -f "$container_name" >/dev/null 2>&1 || {
+    printf 'test-interactive: could not remove previous %s\n' "$container_name" >&2
+    exit 1
+  }
 fi
 
 printf 'test-interactive: starting %s\n' "$container_name"
-printf '%s\n' 'test-interactive: type exit or press Ctrl-D to stop zsh and remove the disposable container'
+printf '%s\n' 'test-interactive: type exit or press Ctrl-D to stop zsh; cleanup is automatic'
 
 set +e
 docker run --rm \
@@ -37,26 +65,4 @@ docker run --rm \
   bash -lc 'nix shell nixpkgs#coreutils nixpkgs#git nixpkgs#glibc.bin nixpkgs#glibcLocales nixpkgs#libiconv nixpkgs#util-linux nixpkgs#python3 nixpkgs#gcc nixpkgs#gnumake nixpkgs#gnused --command bash /source/tests/interactive-entrypoint.sh'
 docker_status=$?
 set -e
-
-# Docker normally removes the container itself via --rm. If the terminal sends
-# an interrupt while the interactive TTY is closing, wait for that result and
-# force-remove any leftover container before deciding what to return.
-if docker container inspect "$container_name" >/dev/null 2>&1; then
-  printf 'test-interactive: cleaning up %s\n' "$container_name"
-  docker container rm -f "$container_name" >/dev/null 2>&1 || true
-fi
-
-# Closing an interactive TTY can be reported as SIGINT (130) even when the
-# user is simply leaving the shell. Treat that as a graceful disposable-shell
-# exit; real setup/application failures still return their original status.
-if [ "$docker_status" -eq 130 ]; then
-  printf '%s\n' 'test-interactive: shell stopped gracefully (container removed)'
-  exit 0
-fi
-if [ "$docker_status" -ne 0 ]; then
-  exit "$docker_status"
-fi
-
-if [ "${INTERACTIVE_SMOKE:-0}" = 1 ]; then
-  printf '%s\n' 'test-interactive: smoke passed (container removed)'
-fi
+exit "$docker_status"
