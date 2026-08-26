@@ -9,10 +9,10 @@
 vim.g.lazyvim_python_lsp = "ty"
 
 -- Route the system clipboard (+/* registers) through OSC 52 so yanks reach the
--- local terminal's clipboard over ssh/mosh+tmux (same pipe tmux copy-mode uses).
--- Without this, Neovim would prefer a remote xclip/xsel/wl-copy and copies would
--- silently write to the server's (nonexistent) X clipboard. Paste reads back from
--- the register instead of querying the terminal, which mosh/many terminals block.
+-- local terminal's clipboard over SSH/tmux (the same transport tmux copy-mode
+-- uses). Without this, Neovim would prefer a remote xclip/xsel/wl-copy and
+-- copies would silently write to the server's (nonexistent) X clipboard. Paste
+-- reads back from the register instead of querying the terminal.
 local osc52 = require("vim.ui.clipboard.osc52")
 local function paste_from_reg(reg)
   return function()
