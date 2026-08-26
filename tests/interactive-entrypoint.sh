@@ -50,7 +50,7 @@ chown -R 30033:1000 "$HOME"
 # configured extensions on first use, so this catches native-module failures
 # during setup instead of surprising the user at the prompt.
 setpriv --reuid=30033 --regid=1000 --clear-groups \
-  zsh -lic '
+  zsh -lc '
     test "$(id -u)" = 30033
     test "$HOME" = /home/test
     test "$LANG" = C.UTF-8
@@ -62,7 +62,9 @@ setpriv --reuid=30033 --regid=1000 --clear-groups \
       }
     done
     test -x "$PYTHON"
-    nvim --headless +"qa!"
+    # Validate the Neovim executable without triggering asynchronous
+    # Lazy/Mason provisioning in a startup-and-exit smoke command.
+    nvim --clean --headless +"qa!"
     pi --version >/dev/null
     lazygit --version >/dev/null
     lazydocker --version >/dev/null
@@ -80,8 +82,7 @@ if [ "${INTERACTIVE_SMOKE:-0}" = 1 ]; then
   exit 0
 fi
 
-# Keep the disposable shell interactive without terminal flow-control or
-# background-output stops. The shell does not need job control; tmux provides
-# its own session/pane control when requested.
-stty -ixon -tostop 2>/dev/null || true
-exec setpriv --reuid=30033 --regid=1000 --clear-groups zsh -l -i +m
+# The preflight shell above is intentionally noninteractive so it cannot
+# steal Docker's foreground process group. The final login shell inherits the
+# Docker TTY and becomes interactive normally.
+exec setpriv --reuid=30033 --regid=1000 --clear-groups zsh -l
