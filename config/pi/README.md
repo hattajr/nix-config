@@ -81,12 +81,12 @@ After applying the dotfiles, reload Pi with `/reload`. To request a visual pass,
 
 Use Node.js `22.22.3` (or newer `22.x`). `.nvmrc` is pinned.
 
-Home Manager deploys the static configuration and custom agents, chains,
-extensions, skills, scripts, themes, and command wrappers into `~/.pi`.
-Install Pi separately, then run it normally:
+Home Manager installs the pinned Pi executable and deploys the static
+configuration and custom agents, chains, extensions, skills, scripts, themes,
+and command wrappers into `~/.pi`. Run it normally after Home Manager
+activation:
 
 ```bash
-npm install -g @earendil-works/pi-coding-agent
 pi
 # run /login if needed
 ```

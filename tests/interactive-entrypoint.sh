@@ -33,12 +33,6 @@ if [ -L "$XDG_CONFIG_HOME/nvim" ]; then
   chmod -R u+rwX "$XDG_CONFIG_HOME/nvim"
 fi
 
-if ! npm install --global --prefix "$HOME/.local" \
-  '@earendil-works/pi-coding-agent@0.84.2' >/tmp/pi-install.log 2>&1; then
-  cat /tmp/pi-install.log >&2
-  exit 1
-fi
-
 command -v nvim >/dev/null || { printf '%s\n' 'test-interactive: nvim is missing' >&2; exit 1; }
 command -v pi >/dev/null || { printf '%s\n' 'test-interactive: pi is missing' >&2; exit 1; }
 command -v iconv >/dev/null || { printf '%s\n' 'test-interactive: iconv is missing' >&2; exit 1; }

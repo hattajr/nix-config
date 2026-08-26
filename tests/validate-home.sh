@@ -63,10 +63,10 @@ second_snapshot=$(find "$home_dir" -mindepth 1 -maxdepth 3 -printf '%P\n' | sort
 
 profile_bin="$home_dir/.nix-profile/bin"
 [ -d "$profile_bin" ] || fail 'Home Manager profile bin directory was not created'
-export PATH="$profile_bin:$PATH"
+export PATH="$home_dir/.local/bin:$profile_bin:$PATH"
 
 printf '%s\n' 'docker-validation: checking managed tools and PATH'
-for tool in git nvim rg tmux zsh fzf sops age gh lazygit lazydocker gcc ssh; do
+for tool in git nvim rg tmux zsh fzf sops age gh lazygit lazydocker gcc ssh pi; do
   command -v "$tool" >/dev/null 2>&1 || fail "managed tool is missing from PATH: $tool"
 done
 
@@ -81,6 +81,18 @@ done
 
 printf '%s\n' 'docker-validation: checking zsh startup and Git configuration'
 zsh -lic '[[ -n "$EDITOR" ]] && [[ "$EDITOR" = nvim ]] && alias n >/dev/null'
+pi --version >/dev/null || fail 'managed Pi executable did not run'
+settings="$home_dir/.pi/agent/settings.json"
+[ -f "$settings" ] || fail 'Pi settings were not created'
+[ ! -L "$settings" ] || fail 'Pi settings remain a read-only Home Manager symlink'
+jq -e '.lastChangelogVersion == "0.0.0"' "$settings" >/dev/null || fail 'Pi changelog marker is missing'
+[ -f "$home_dir/.pi/agent/agents/planner.md" ] || fail 'Pi agents were not deployed'
+[ -f "$home_dir/.pi/agent/extensions/plan-autoloop.ts" ] || fail 'Pi extensions were not deployed'
+[ -x "$home_dir/.pi/agent/intercepted-commands/python" ] || fail 'Pi command wrappers were not deployed executable'
+jq '.enabledModels = []' "$settings" >"$settings.tmp"
+mv "$settings.tmp" "$settings"
+pi-models-sync >/dev/null 2>&1 || fail 'Pi model sync wrapper failed'
+[ "$(jq -c '.enabledModels' "$settings")" = "$(jq -c . "$home_dir/.pi/agent/scoped-models.json")" ] || fail 'Pi model sync did not restore scoped models'
 git_editor=$(git config --get core.editor || true)
 [ "$git_editor" = vim ] || fail "Git core.editor was not configured (value: $git_editor)"
 git config --get-regexp '^alias\.' >/dev/null || fail 'Git aliases were not configured'

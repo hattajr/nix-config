@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Pi's scoped-model selector can remove enabledModels when it decides that all
+# catalog models are enabled. Restore the versioned list before every launch.
+if command -v pi-models-sync >/dev/null 2>&1; then
+  pi-models-sync || printf 'warning: could not restore Pi scoped models\n' >&2
+fi
+
+# This wrapper lives in ~/.local/bin, which is intentionally first in PATH.
+# Find the real Pi executable in the remaining PATH entries.
+self="$HOME/.local/bin/pi"
+real_pi=''
+old_ifs=$IFS
+IFS=:
+for dir in $PATH; do
+  [ -n "$dir" ] || dir='.'
+  candidate="$dir/pi"
+  [ "$candidate" = "$self" ] && continue
+  if [ -x "$candidate" ]; then
+    real_pi="$candidate"
+    break
+  fi
+done
+IFS=$old_ifs
+
+if [ -z "$real_pi" ]; then
+  printf 'error: the pi executable was not found outside %s\n' "$self" >&2
+  exit 127
+fi
+
+exec "$real_pi" "$@"
