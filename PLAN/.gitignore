@@ -1,0 +1,3 @@
+# Keep planning material local; only this ignore file is versioned.
+*
+!.gitignore
