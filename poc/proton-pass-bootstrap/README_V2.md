@@ -24,7 +24,7 @@ contain none.
    ├─ install Git, pass-cli, Pi, Lumen, Node, and setup/session helpers
    ├─ install uv, lazydocker, fzf, and the other development tools
    ├─ install shell, SSH, tmux, Neovim, and static Pi configuration
-   └─ finish successfully even when no account is authenticated
+   └─ refresh PATH and enter managed zsh when an interactive terminal exists
                          │
                          ▼
 3. LOCAL CREDENTIAL STORE (required by pass-cli itself)
@@ -71,7 +71,9 @@ Ownership boundary:
    platform outputs target the `hattajr` account and its conventional home.
 3. **Activate Home Manager.** It installs Git, `proton-pass-cli`, Pi, Lumen,
    Node, `uv`, lazydocker, `fzf`, and the setup/session helpers. Activation
-   remains non-interactive and never contacts Proton Pass.
+   remains non-interactive and never contacts Proton Pass. After activation,
+   bootstrap refreshes the Home Manager profile path and enters managed zsh on
+   a real terminal; `NIX_CONFIG_START_SHELL=no` disables that final handoff.
 4. **Prepare Linux's credential store.** Proton Pass CLI defaults to the Linux
    kernel keyring, which requires neither D-Bus nor a graphical session. Remote
    shells can inherit a revoked keyring; `proton-pass-session` checks it and

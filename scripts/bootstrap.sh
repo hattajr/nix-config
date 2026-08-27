@@ -27,6 +27,7 @@ The checkout defaults to the repository containing this script.
 
 NIX_CONFIG_PLATFORM may override detection. NIX_CONFIG_APPLY=yes|no and
 NIX_CONFIG_SETUP=yes|no can answer prompts in non-interactive automation.
+NIX_CONFIG_START_SHELL=no disables entering the managed zsh after activation.
 Otherwise confirmation prompts read from /dev/tty.
 EOF
 }
@@ -130,6 +131,15 @@ apply_home() {
   return 0
 }
 
+refresh_home_path() {
+  local profile_bin="$HOME/.nix-profile/bin"
+  case ":$PATH:" in
+    *":$profile_bin:"*) ;;
+    *) export PATH="$profile_bin:$PATH" ;;
+  esac
+  hash -r
+}
+
 run_account_setup() {
   local setup="$HOME/.local/bin/nix-config-setup"
 
@@ -150,6 +160,30 @@ run_account_setup() {
   log 'Account setup skipped; resume later with nix-config-setup'
 }
 
+start_managed_shell() {
+  local start_shell=${NIX_CONFIG_START_SHELL:-yes}
+  local managed_zsh="$HOME/.nix-profile/bin/zsh"
+
+  if answer_is_no "$start_shell"; then
+    log "Managed shell ready; start it with: exec $managed_zsh -l"
+    return 0
+  fi
+  answer_is_yes "$start_shell" \
+    || fail "invalid NIX_CONFIG_START_SHELL value: $start_shell"
+
+  if [ ! -x "$managed_zsh" ]; then
+    log "Managed zsh is unavailable at $managed_zsh; open a new login session"
+    return 0
+  fi
+  if ! (: </dev/tty && : >/dev/tty) 2>/dev/null; then
+    log "Managed shell ready; start it with: exec $managed_zsh -l"
+    return 0
+  fi
+
+  log 'Entering the managed zsh login shell'
+  exec "$managed_zsh" -l </dev/tty >/dev/tty 2>&1
+}
+
 main() {
   case "${1:-}" in
     -h|--help) usage; return 0 ;;
@@ -160,10 +194,15 @@ main() {
   local destination=${1:-${NIX_CONFIG_REPOSITORY:-$DEFAULT_DESTINATION}}
 
   enable_nix_features
-  if apply_home "$destination" "$platform"; then
-    run_account_setup
+  if ! apply_home "$destination" "$platform"; then
+    log "Bootstrap finished without activating ${platform}"
+    return 0
   fi
+
+  refresh_home_path
+  run_account_setup
   log "Bootstrap complete for ${platform}"
+  start_managed_shell
 }
 
 main "$@"

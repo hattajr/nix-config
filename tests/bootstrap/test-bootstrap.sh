@@ -143,7 +143,7 @@ grep -Fq 'homeConfigurations.x86_64-linux.activationPackage' "$logfile" || {
 
 # Explicit ARM64 override builds and activates; account setup can be skipped.
 NIX_CONFIG_PLATFORM=aarch64-linux NIX_CONFIG_APPLY=yes NIX_CONFIG_SETUP=no \
-  run_bootstrap "$repo_root" >/dev/null
+  NIX_CONFIG_START_SHELL=no run_bootstrap "$repo_root" >/dev/null
 grep -Fq 'homeConfigurations.aarch64-linux.activationPackage' "$logfile" || {
   printf '%s\n' 'bootstrap test: ARM64 override did not select the ARM output' >&2
   exit 1
