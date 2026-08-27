@@ -32,7 +32,7 @@
       n = "nvim";
       dbui = "nvim -c 'Lazy load vim-dadbod-ui' -c DBUI";
       lzd = "lazydocker";
-    } // lib.optionalAttrs pkgs.stdenv.isLinux {
+    } // lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
       pbcopy = "xclip -selection clipboard";
     };
 

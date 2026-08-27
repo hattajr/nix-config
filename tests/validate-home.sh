@@ -3,7 +3,10 @@ set -euo pipefail
 
 source_root=/source
 home_dir=/home/test
-flake_ref="$source_root#homeConfigurations.docker-test"
+# path: includes newly added files during pre-commit validation; a plain Git
+# flake intentionally hides untracked files.
+flake_source="path:$source_root"
+flake_ref="$flake_source#homeConfigurations.docker-test"
 
 fail() {
   printf 'docker-validation: FAIL: %s\n' "$1" >&2
@@ -31,10 +34,19 @@ printf '%s\n' 'docker-validation: checking locked flake metadata and evaluation'
 # `nix flake check` treats Home Manager's configuration object as a generic
 # flake output and rejects its nested `type` attr. Show/eval validates the
 # locked flake and synthetic configuration without masking that limitation.
-nix flake metadata "$source_root" >/tmp/flake-metadata.txt
-nix flake show "$source_root" --json >/tmp/flake-show.json
+nix flake metadata "$flake_source" >/tmp/flake-metadata.txt
+nix flake show "$flake_source" --json >/tmp/flake-show.json
 activation_drv=$(nix eval --raw "$flake_ref.activationPackage.drvPath")
+darwin_arm_drv=$(nix eval --raw \
+  "$flake_source#homeConfigurations.aarch64-darwin.activationPackage.drvPath")
+linux_arm_drv=$(nix eval --raw \
+  "$flake_source#homeConfigurations.aarch64-linux.activationPackage.drvPath")
+linux_x86_drv=$(nix eval --raw \
+  "$flake_source#homeConfigurations.x86_64-linux.activationPackage.drvPath")
 printf '%s\n' "$activation_drv" >/tmp/activation.drv
+printf '%s\n' "$darwin_arm_drv" >/tmp/aarch64-darwin-activation.drv
+printf '%s\n' "$linux_arm_drv" >/tmp/aarch64-linux-activation.drv
+printf '%s\n' "$linux_x86_drv" >/tmp/x86_64-linux-activation.drv
 
 printf '%s\n' 'docker-validation: building activation package without checkout links'
 activation_package=$(nix build --no-link --print-out-paths "$flake_ref.activationPackage")
@@ -66,7 +78,7 @@ profile_bin="$home_dir/.nix-profile/bin"
 export PATH="$home_dir/.local/bin:$profile_bin:$PATH"
 
 printf '%s\n' 'docker-validation: checking managed tools and PATH'
-for tool in git nvim rg tmux zsh fzf sops age gh lazygit lazydocker gcc ssh pi; do
+for tool in git nvim rg tmux zsh fzf gh lazygit lazydocker uv node gcc ssh pi pass-cli lumen cloudflared keyctl; do
   command -v "$tool" >/dev/null 2>&1 || fail "managed tool is missing from PATH: $tool"
 done
 
@@ -89,6 +101,11 @@ jq -e '.lastChangelogVersion == "0.0.0"' "$settings" >/dev/null || fail 'Pi chan
 [ -f "$home_dir/.pi/agent/agents/planner.md" ] || fail 'Pi agents were not deployed'
 [ -f "$home_dir/.pi/agent/extensions/plan-autoloop.ts" ] || fail 'Pi extensions were not deployed'
 [ -x "$home_dir/.pi/agent/intercepted-commands/python" ] || fail 'Pi command wrappers were not deployed executable'
+[ -x "$home_dir/.local/bin/nix-config-setup" ] || fail 'account setup helper was not deployed'
+[ -x "$home_dir/.local/bin/proton-pass-session" ] || fail 'Proton Pass Linux session helper was not deployed'
+[ -f "$home_dir/.config/proton-pass/pi.env.example" ] || fail 'Proton Pass reference example was not deployed'
+[ ! -e "$home_dir/.config/proton-pass/pi.env" ] || fail 'Home Manager materialized the local Proton Pass reference file'
+[ ! -e "$home_dir/.pi/agent/auth.json" ] || fail 'Home Manager created or replaced Pi auth state'
 jq '.enabledModels = []' "$settings" >"$settings.tmp"
 mv "$settings.tmp" "$settings"
 pi-models-sync >/dev/null 2>&1 || fail 'Pi model sync wrapper failed'
@@ -106,18 +123,16 @@ tmux -L hm-validation kill-server
 printf '%s\n' 'docker-validation: checking Neovim headless startup'
 nvim --headless '+qa!'
 
-printf '%s\n' 'docker-validation: running fake SOPS/age authorization test'
-nix shell \
-  nixpkgs#age \
-  nixpkgs#sops \
-  nixpkgs#git \
-  nixpkgs#gawk \
-  nixpkgs#gnused \
-  --command sh "$source_root/tests/sops/fixtures/run-in-container.sh"
+printf '%s\n' 'docker-validation: running credential-free bootstrap and Proton Pass tests'
+BOOTSTRAP_REPO_ROOT="$source_root" "$source_root/tests/bootstrap/test-bootstrap.sh"
+BOOTSTRAP_REPO_ROOT="$source_root" "$source_root/tests/proton-pass/test-pi-wrapper.sh"
+BOOTSTRAP_REPO_ROOT="$source_root" "$source_root/tests/proton-pass/test-session-wrapper.sh"
+BOOTSTRAP_REPO_ROOT="$source_root" "$source_root/tests/proton-pass/test-setup.sh"
 
 printf '%s\n' 'docker-validation: checking repeatable activation generation'
 second_drv=$(nix eval --raw "$flake_ref.activationPackage.drvPath")
 second_package=$(nix build --no-link --print-out-paths "$flake_ref.activationPackage")
+[ "$activation_drv" = "$second_drv" ] || fail 'locked inputs produced a different activation derivation'
 [ "$activation_package" = "$second_package" ] || fail 'locked inputs produced different activation paths'
 
-printf '%s\n' 'docker-validation: PASSED (flake, activation, idempotence, PATH, zsh, Git, tmux, Neovim, and fake SOPS)'
+printf '%s\n' 'docker-validation: PASSED (flake, activation, idempotence, tools, bootstrap, and Proton Pass boundaries)'

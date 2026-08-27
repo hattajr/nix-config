@@ -11,8 +11,6 @@ inputs.home-manager.lib.homeManagerConfiguration {
   modules = [
     ../home/base.nix
     ../home/default.nix
-    ../profiles/docker.nix
-    inputs.sops-nix.homeManagerModules.sops
     {
       home.username = username;
       home.homeDirectory = homeDirectory;

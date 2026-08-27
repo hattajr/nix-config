@@ -45,7 +45,8 @@ Notes:
 - `/gh-create-issue [title]` — draft, review, and publish a GitHub issue for the current repo
 - `/telegram-notify [on|off|toggle|status|test]` — manage Telegram completion notifications for the parent session
 
-Telegram config lives in `~/.pi/agent/auth.json`:
+Telegram config lives in the extension-owned `~/.pi/agent/secrets.json`.
+Home Manager and the Proton Pass Pi launcher do not manage this file:
 
 ```json
 {
@@ -91,8 +92,12 @@ pi
 # run /login if needed
 ```
 
-Credentials remain runtime state in `~/.pi/agent/auth.json` and are not managed
-by Home Manager.
+Pi account/OAuth credentials remain per-machine runtime state in
+`~/.pi/agent/auth.json` and are not managed by Home Manager. Long-lived API
+keys can stay in Proton Pass: when `~/.config/proton-pass/pi.env` exists, the
+managed `pi` wrapper resolves its non-secret `pass://` references with
+`pass-cli run` and supplies the keys only through Pi's process environment.
+Run `nix-config-setup` after activation to configure this flow.
 
 If packages are missing:
 

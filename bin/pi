@@ -29,4 +29,30 @@ if [ -z "$real_pi" ]; then
   exit 127
 fi
 
+# API keys remain in Proton Pass. A local dotenv file contains only opaque
+# pass:// references; pass-cli resolves them into this Pi process environment.
+# Pi continues to own ~/.pi/agent/auth.json and its mutable OAuth sessions.
+pass_env=${PROTON_PASS_PI_ENV_FILE:-${XDG_CONFIG_HOME:-$HOME/.config}/proton-pass/pi.env}
+case "${PI_SKIP_PROTON_PASS:-}" in
+  1|true|TRUE|yes|YES) exec "$real_pi" "$@" ;;
+esac
+
+if [ -f "$pass_env" ]; then
+  if [ "$(uname -s)" = Linux ] && command -v keyctl >/dev/null 2>&1 \
+    && ! keyctl show >/dev/null 2>&1; then
+    if command -v proton-pass-session >/dev/null 2>&1; then
+      exec proton-pass-session "$self" "$@"
+    fi
+    printf 'error: the Linux kernel keyring is unavailable\n' >&2
+    printf 'hint: run proton-pass-session pi, or set PI_SKIP_PROTON_PASS=1\n' >&2
+    exit 1
+  fi
+  if ! command -v pass-cli >/dev/null 2>&1; then
+    printf 'error: %s exists but pass-cli is unavailable\n' "$pass_env" >&2
+    printf 'hint: set PI_SKIP_PROTON_PASS=1 to launch Pi with local OAuth only\n' >&2
+    exit 127
+  fi
+  exec pass-cli run --env-file "$pass_env" -- "$real_pi" "$@"
+fi
+
 exec "$real_pi" "$@"

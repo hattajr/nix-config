@@ -18,11 +18,14 @@ mkdir -p "$HOME" "$XDG_CONFIG_HOME" "$XDG_DATA_HOME" "$XDG_STATE_HOME" "$XDG_CAC
 chmod 700 "$HOME"
 git config --global --add safe.directory /source
 
+# path: includes newly added files during pre-commit validation; a plain Git
+# flake intentionally hides untracked files.
 activation_package=$(nix build --no-link --print-out-paths \
-  /source#homeConfigurations.docker-test.activationPackage)
+  path:/source#homeConfigurations.docker-test.activationPackage)
 "$activation_package/activate"
 export PATH="$HOME/.nix-profile/bin:$HOME/.local/bin:$PATH"
-export PYTHON="$(command -v python3)"
+PYTHON=$(command -v python3)
+export PYTHON
 
 # Home Manager links the checked-in Neovim tree read-only. Make a disposable
 # writable copy so LazyVim can update lazy-lock.json and plugin state.
@@ -43,6 +46,8 @@ chown -R 30033:1000 "$HOME"
 # Run the same application checks before opening the shell. Pi lazily installs
 # configured extensions on first use, so this catches native-module failures
 # during setup instead of surprising the user at the prompt.
+# The single-quoted script intentionally expands inside the target zsh.
+# shellcheck disable=SC2016
 setpriv --reuid=30033 --regid=1000 --clear-groups \
   zsh -lc '
     test "$(id -u)" = 30033

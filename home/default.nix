@@ -7,6 +7,7 @@
     ./modules/nvim.nix
     ./modules/packages.nix
     ./modules/pi.nix
+    ./modules/proton-pass.nix
     ./modules/shell.nix
     ./modules/ssh.nix
     ./modules/tmux.nix

@@ -2,12 +2,9 @@
 result
 result-*
 
-# Private credentials and decrypted secrets
-.age-keygen
-*.agekey
-keys.txt
-secrets/*.decrypted
-secrets/**/keys.txt
-
 # Private planning material
 /PLAN/
+/poc/*
+!/poc/proton-pass-bootstrap/
+/poc/proton-pass-bootstrap/*
+!/poc/proton-pass-bootstrap/README_V2.md

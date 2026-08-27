@@ -13,6 +13,8 @@ in
     defaultEditor = true;
     viAlias = false;
     vimAlias = false;
+    withPython3 = false;
+    withRuby = false;
   };
 
   # Preserve the historical vi/vim command names without invoking the

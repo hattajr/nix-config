@@ -1,5 +1,6 @@
 # Secrets
 agent/auth.json
+agent/secrets.json
 
 # Pi runtime state
 agent/bin/

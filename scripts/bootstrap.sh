@@ -1,17 +1,12 @@
 #!/usr/bin/env bash
-# Bootstrap a fresh host without importing credentials from the repository.
-#
-# Usage:
-#   ./scripts/bootstrap.sh [host] [destination]
-#
-# A missing age identity is generated locally during bootstrap.
-# The script never prints, copies, or commits the identity contents.
+# Build and activate the detected platform from an existing public checkout.
 set -euo pipefail
 
-readonly REPOSITORY_URL="https://github.com/hattajr/nix-config.git"
-readonly DEFAULT_DESTINATION="${HOME}/src/nix-config"
-readonly AGE_IDENTITY_DEFAULT="${SOPS_AGE_KEY_FILE:-${XDG_CONFIG_HOME:-${HOME}/.config}/sops/age/keys.txt}"
-readonly HOSTS=(macbook latte legion espresso)
+readonly PLATFORMS=(aarch64-darwin aarch64-linux x86_64-linux)
+SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+readonly SCRIPT_DIR
+DEFAULT_DESTINATION=$(dirname "$SCRIPT_DIR")
+readonly DEFAULT_DESTINATION
 
 log() {
   printf 'nix-bootstrap: %s\n' "$1"
@@ -24,147 +19,135 @@ fail() {
 
 usage() {
   cat <<'EOF'
-Usage: scripts/bootstrap.sh [host] [destination]
+Usage: scripts/bootstrap.sh [checkout]
 
-Host must be one of: macbook, latte, legion, espresso.
-The destination defaults to ~/src/nix-config.
+The platform is detected from the operating system and CPU architecture.
+Supported platforms: aarch64-darwin, aarch64-linux, x86_64-linux.
+The checkout defaults to the repository containing this script.
 
-Before running:
-  1. The public repository is cloned over HTTPS; no GitHub login is required.
-  2. If no age identity exists, bootstrap generates one locally and pauses
-     so its public recipient can be added to the SOPS policy.
+NIX_CONFIG_PLATFORM may override detection. NIX_CONFIG_APPLY=yes|no and
+NIX_CONFIG_SETUP=yes|no can answer prompts in non-interactive automation.
+Otherwise confirmation prompts read from /dev/tty.
 EOF
 }
 
-contains_host() {
+contains_platform() {
   local candidate=$1
-  local host
-  for host in "${HOSTS[@]}"; do
-    [ "$host" = "$candidate" ] && return 0
+  local platform
+  for platform in "${PLATFORMS[@]}"; do
+    [ "$platform" = "$candidate" ] && return 0
   done
   return 1
 }
 
-select_host() {
-  local selected=${1:-${NIX_CONFIG_HOST:-}}
+detect_platform() {
+  local selected=${NIX_CONFIG_PLATFORM:-}
+  local os arch
   if [ -z "$selected" ]; then
-    printf 'Select host [macbook/latte/legion/espresso]: ' >&2
-    IFS= read -r selected || true
+    os=$(uname -s)
+    arch=$(uname -m)
+    case "$os:$arch" in
+      Darwin:arm64|Darwin:aarch64) selected=aarch64-darwin ;;
+      Linux:arm64|Linux:aarch64) selected=aarch64-linux ;;
+      Linux:x86_64|Linux:amd64) selected=x86_64-linux ;;
+      *) fail "unsupported platform: $os/$arch" ;;
+    esac
   fi
-  contains_host "$selected" || fail "unknown or missing host: ${selected:-<empty>}"
+  contains_platform "$selected" || fail "unsupported platform override: $selected"
   printf '%s' "$selected"
 }
 
-ensure_nix() {
-  if command -v nix >/dev/null 2>&1; then
-    return
-  fi
-
-  command -v curl >/dev/null 2>&1 || fail 'Nix is missing and curl is unavailable'
-  log 'Nix is not installed; starting the official multi-user installer'
-  sh <(curl --proto '=https' --tlsv1.2 -L https://nixos.org/nix/install) --daemon \
-    || fail 'official Nix installer failed'
-
-  # The daemon installer normally creates this profile hook. Source whichever
-  # hook exists so this invocation can continue without opening a new shell.
-  if [ -f /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh ]; then
-    # shellcheck disable=SC1091
-    . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
-  fi
-  if [ -f "${HOME}/.nix-profile/etc/profile.d/nix.sh" ]; then
-    # shellcheck disable=SC1091
-    . "${HOME}/.nix-profile/etc/profile.d/nix.sh"
-  fi
-  command -v nix >/dev/null 2>&1 || fail 'Nix was installed but is not available in this shell'
+answer_is_yes() {
+  case "$1" in
+    y|Y|yes|YES|true|TRUE|1) return 0 ;;
+    *) return 1 ;;
+  esac
 }
 
-ensure_flakes() {
-  # Keep flakes enabled for every Nix command in this bootstrap invocation.
-  export NIX_CONFIG="${NIX_CONFIG:-experimental-features = nix-command flakes}"
+answer_is_no() {
+  case "$1" in
+    n|N|no|NO|false|FALSE|0) return 0 ;;
+    *) return 1 ;;
+  esac
 }
 
-ensure_tools() {
-  command -v git >/dev/null 2>&1 && return 0
+confirm() {
+  local prompt=$1
+  local default_answer=$2
+  local preset=${3:-}
+  local answer
 
-  log 'Installing missing Git into the user Nix profile'
-  nix profile install --accept-flake-config nixpkgs#git \
-    || fail 'could not install Git through Nix'
-  export PATH="${HOME}/.nix-profile/bin:${PATH}"
-  command -v git >/dev/null 2>&1 || fail 'Git is unavailable after Nix installation'
-}
-
-verify_age_identity() {
-  local identity=${SOPS_AGE_KEY_FILE:-$AGE_IDENTITY_DEFAULT}
-  [ ! -d "$identity" ] || fail 'age identity path is a directory'
-
-  if [ ! -f "$identity" ]; then
-    local identity_dir
-    local recipient
-    identity_dir=$(dirname "$identity")
-    mkdir -p "$identity_dir"
-    chmod 700 "$identity_dir"
-    log "No age identity found; generating one at ${identity}"
-    nix shell --accept-flake-config nixpkgs#age --command age-keygen -o "$identity" >/dev/null 2>&1 \
-      || fail 'could not generate the age identity'
-    chmod 600 "$identity"
-    recipient=$(nix shell --accept-flake-config nixpkgs#age --command age-keygen -y "$identity") \
-      || fail 'generated age identity could not be read'
-    printf 'nix-bootstrap: public age recipient: %s\n' "$recipient"
-    printf 'nix-bootstrap: ACTION REQUIRED: add this recipient to the SOPS policy, re-encrypt required files, push them, then rerun bootstrap\n' >&2
-    exit 2
+  if [ -n "$preset" ]; then
+    answer=$preset
+  elif [ -r /dev/tty ]; then
+    printf '%s' "$prompt" >/dev/tty
+    IFS= read -r answer </dev/tty || true
+  else
+    return 2
   fi
 
-  [ -r "$identity" ] || fail 'age identity is not readable'
-  nix shell --accept-flake-config nixpkgs#age --command age-keygen -y "$identity" >/dev/null \
-    || fail 'age identity could not be validated'
-  chmod 600 "$identity"
-  export SOPS_AGE_KEY_FILE="$identity"
+  [ -n "$answer" ] || answer=$default_answer
+  answer_is_yes "$answer" && return 0
+  answer_is_no "$answer" && return 1
+  fail "invalid yes/no answer: $answer"
 }
 
-clone_repository() {
-  local destination=$1
-  if [ -e "$destination" ]; then
-    [ -d "$destination/.git" ] || fail "destination exists but is not a Git repository: $destination"
-    local origin
-    origin=$(git -C "$destination" remote get-url origin 2>/dev/null) \
-      || fail "existing repository has no origin remote: $destination"
-    [ "$origin" = "$REPOSITORY_URL" ] \
-      || fail "existing repository origin is not $REPOSITORY_URL"
-    log "Using existing checkout at $destination"
-    return
+enable_nix_features() {
+  if [ -n "${NIX_CONFIG:-}" ]; then
+    export NIX_CONFIG="${NIX_CONFIG}
+experimental-features = nix-command flakes"
+  else
+    export NIX_CONFIG='experimental-features = nix-command flakes'
   fi
-
-  mkdir -p "$(dirname "$destination")"
-  log "Cloning the public repository into $destination"
-  git clone "$REPOSITORY_URL" "$destination" \
-    || fail 'repository clone failed'
 }
 
 apply_home() {
   local destination=$1
-  local host=$2
-  local flake_ref="$destination#homeConfigurations.${host}.activationPackage"
+  local platform=$2
+  local flake_ref="$destination#homeConfigurations.${platform}.activationPackage"
   local activation_package
+
+  command -v nix >/dev/null 2>&1 || fail 'Nix is required; run scripts/install.sh first'
+  [ -f "$destination/flake.nix" ] || fail "checkout has no flake.nix: $destination"
 
   nix flake metadata "$destination" >/dev/null \
     || fail 'flake metadata validation failed'
   nix eval --raw "$flake_ref.drvPath" >/dev/null \
-    || fail "host output is unavailable or invalid: $host"
+    || fail "platform output is unavailable or invalid: $platform"
 
-  printf 'Apply Home Manager configuration for %s now? [y/N] ' "$host" >&2
-  local answer
-  IFS= read -r answer || true
-  case "$answer" in
-    y|Y|yes|YES) ;;
-    *) log 'Activation skipped; checkout and identity setup are complete'; return 0 ;;
-  esac
+  if ! confirm "Apply Home Manager configuration for ${platform} now? [y/N] " no "${NIX_CONFIG_APPLY:-}"; then
+    log 'Activation skipped; rerun this command when ready'
+    return 1
+  fi
 
   activation_package=$(nix build --no-link --print-out-paths "$flake_ref") \
     || fail 'Home Manager activation package build failed'
   [ -x "$activation_package/activate" ] \
     || fail 'built activation package has no executable activate script'
-  log "Activating Home Manager host ${host}"
+
+  log "Activating Home Manager platform ${platform}"
   "$activation_package/activate" || fail 'Home Manager activation failed'
+  return 0
+}
+
+run_account_setup() {
+  local setup="$HOME/.local/bin/nix-config-setup"
+
+  if [ ! -x "$setup" ]; then
+    log "Account setup is available after opening a new shell: $setup"
+    return 0
+  fi
+
+  if confirm 'Home Manager activation complete. Configure application accounts now? [Y/n] ' yes "${NIX_CONFIG_SETUP:-}"; then
+    if [ "$(uname -s)" = Linux ] && [ -x "$HOME/.local/bin/proton-pass-session" ]; then
+      "$HOME/.local/bin/proton-pass-session" "$setup"
+    else
+      "$setup"
+    fi
+    return 0
+  fi
+
+  log 'Account setup skipped; resume later with nix-config-setup'
 }
 
 main() {
@@ -172,23 +155,15 @@ main() {
     -h|--help) usage; return 0 ;;
   esac
 
-  local host
-  host=$(select_host "${1:-}")
-  local destination=${2:-${NIX_CONFIG_REPOSITORY:-$DEFAULT_DESTINATION}}
-  local identity=${SOPS_AGE_KEY_FILE:-$AGE_IDENTITY_DEFAULT}
-  case "$identity" in
-    "$destination"|"$destination"/*)
-      fail 'the age identity must be provisioned outside the repository checkout'
-      ;;
-  esac
+  local platform
+  platform=$(detect_platform)
+  local destination=${1:-${NIX_CONFIG_REPOSITORY:-$DEFAULT_DESTINATION}}
 
-  ensure_nix
-  ensure_flakes
-  ensure_tools
-  verify_age_identity
-  clone_repository "$destination"
-  apply_home "$destination" "$host"
-  log "Bootstrap complete for ${host}"
+  enable_nix_features
+  if apply_home "$destination" "$platform"; then
+    run_account_setup
+  fi
+  log "Bootstrap complete for ${platform}"
 }
 
 main "$@"

@@ -9,16 +9,12 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
-    sops-nix = {
-      url = "github:Mic92/sops-nix";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
   };
 
   outputs = inputs:
     let
-      hosts = import ./hosts;
-      mkHome = host: import ./lib/mkHome.nix ({ inherit inputs; } // host);
+      platforms = import ./platforms;
+      mkHome = platform: import ./lib/mkHome.nix ({ inherit inputs; } // platform);
     in
     {
       homeConfigurations = {
@@ -28,6 +24,6 @@
           username = "test";
           homeDirectory = "/home/test";
         };
-      } // builtins.mapAttrs (_: host: mkHome host) hosts;
+      } // builtins.mapAttrs (_: platform: mkHome platform) platforms;
     };
 }

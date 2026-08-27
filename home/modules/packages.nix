@@ -5,11 +5,11 @@
   # these tools in the new configuration; project-specific versions can later
   # use per-project flakes or dev shells.
   home.packages = with pkgs; [
-    age
     bat
     bottom
     bun
     cargo
+    cloudflared
     deno
     dprint
     eza
@@ -20,13 +20,15 @@
     jq
     lazygit
     lazydocker
+    lumen
     nodejs
+    proton-pass-cli
     ripgrep
     rustc
-    sops
     uv
-  ] ++ lib.optionals pkgs.stdenv.isLinux [
+  ] ++ lib.optionals pkgs.stdenv.hostPlatform.isLinux [
     gcc
+    keyutils
     xclip
   ];
 }

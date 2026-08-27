@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# Run a command with a valid Linux kernel keyring session. Proton Pass CLI uses
+# the kernel keyring by default; D-Bus/Secret Service is optional, not required.
+set -euo pipefail
+
+if [ "$#" -eq 0 ]; then
+  set -- nix-config-setup
+fi
+
+if [ "$(uname -s)" = Darwin ]; then
+  exec "$@"
+fi
+
+command -v keyctl >/dev/null 2>&1 || {
+  printf 'error: keyctl is required for Proton Pass on Linux\n' >&2
+  exit 127
+}
+
+# Remote shells and containers can inherit a revoked session keyring. Create a
+# fresh session only in that case; keep a valid keyring so existing CLI keys
+# remain reachable. Kernel-backed keys survive shell sessions but not reboot.
+if ! keyctl show >/dev/null 2>&1; then
+  keyctl new_session proton-pass >/dev/null \
+    || { printf 'error: could not create a Linux keyring session\n' >&2; exit 1; }
+fi
+
+exec "$@"

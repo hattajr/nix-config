@@ -1,0 +1,311 @@
+#!/usr/bin/env bash
+# Resumable, post-activation account setup. Never run from Home Manager
+# activation itself: every login remains an explicit user action.
+set -euo pipefail
+
+config_dir=${XDG_CONFIG_HOME:-$HOME/.config}/proton-pass
+pass_env=$config_dir/pi.env
+pass_env_draft=$config_dir/pi.env.draft
+pass_env_example=$config_dir/pi.env.example
+pi_auth=${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/auth.json
+readonly REQUIRED_PI_ENV=(DEEPSEEK_API_KEY GEMINI_API_KEY MOONSHOT_API_KEY)
+
+log() {
+  printf 'nix-config-setup: %s\n' "$1"
+}
+
+fail() {
+  printf 'nix-config-setup: ERROR: %s\n' "$1" >&2
+  exit 1
+}
+
+usage() {
+  cat <<'EOF'
+Usage: nix-config-setup [--check]
+
+Without options, interactively configures Proton Pass and offers independent
+Pi, GitHub, Claude, and Cloudflare logins. Rerun safely at any time.
+
+--check  report current setup status without prompting or changing files
+EOF
+}
+
+has_tty() {
+  [ -r /dev/tty ] && [ -w /dev/tty ]
+}
+
+confirm() {
+  local prompt=$1
+  local default_answer=$2
+  local answer
+  has_tty || return 1
+  printf '%s' "$prompt" >/dev/tty
+  IFS= read -r answer </dev/tty || true
+  [ -n "$answer" ] || answer=$default_answer
+  case "$answer" in
+    y|Y|yes|YES) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+pass_logged_in() {
+  pass-cli info >/dev/null 2>&1
+}
+
+login_proton_pass() {
+  pass_logged_in && { log 'Proton Pass: already logged in'; return 0; }
+
+  log 'Proton Pass is not available in this session.'
+  has_tty || fail 'Proton Pass login needs a terminal'
+  printf 'Login method [i]nteractive, [p]ersonal access token, [s]kip: ' >/dev/tty
+  local method
+  IFS= read -r method </dev/tty || true
+
+  case "$method" in
+    s|S)
+      log 'Proton Pass login skipped'
+      return 1
+      ;;
+    ''|i|I|p|P) ;;
+    *) fail "unknown login method: $method" ;;
+  esac
+
+  if [ "$(uname -s)" = Linux ] \
+    && { ! command -v keyctl >/dev/null 2>&1 || ! keyctl show >/dev/null 2>&1; }; then
+    fail 'Linux kernel keyring is unavailable; rerun: proton-pass-session nix-config-setup'
+  fi
+
+  case "$method" in
+    ''|i|I)
+      pass-cli login --interactive \
+        || fail 'Proton Pass interactive login failed'
+      ;;
+    p|P)
+      local pat
+      printf 'Restricted, expiring Proton Pass PAT: ' >/dev/tty
+      IFS= read -rs pat </dev/tty
+      printf '\n' >/dev/tty
+      [ -n "$pat" ] || fail 'PAT cannot be empty'
+      PROTON_PASS_PERSONAL_ACCESS_TOKEN=$pat pass-cli login \
+        || { unset pat; fail 'Proton Pass PAT login failed'; }
+      unset pat
+      ;;
+  esac
+
+  pass_logged_in || fail 'Proton Pass login returned success but pass-cli info still fails'
+}
+
+validate_reference_file() {
+  local file=$1
+  [ -f "$file" ] || return 1
+  [ ! -L "$file" ] || return 1
+  grep -q 'REPLACE_' "$file" && return 1
+
+  local name line value
+  for name in "${REQUIRED_PI_ENV[@]}"; do
+    line=$(grep -E "^${name}=" "$file" | tail -n 1 || true)
+    [ -n "$line" ] || return 1
+    value=${line#*=}
+    case "$value" in
+      pass://*/*/*) ;;
+      *) return 1 ;;
+    esac
+  done
+  return 0
+}
+
+resolve_reference_file() {
+  local file=$1
+  validate_reference_file "$file" || return 1
+  pass-cli run --env-file "$file" -- node -e '
+    const required = ["DEEPSEEK_API_KEY", "GEMINI_API_KEY", "MOONSHOT_API_KEY"];
+    if (required.some((name) => !process.env[name])) process.exit(1);
+  ' >/dev/null
+}
+
+pi_api_key_conflicts() {
+  [ -f "$pi_auth" ] || return 1
+  node -e '
+    const fs = require("node:fs");
+    const managed = ["deepseek", "google", "moonshotai"];
+    try {
+      const auth = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+      const conflicts = managed.filter((name) => auth[name]?.type === "api_key");
+      if (conflicts.length) {
+        console.log(conflicts.join(", "));
+        process.exit(0);
+      }
+    } catch {}
+    process.exit(1);
+  ' "$pi_auth"
+}
+
+remove_shadowing_api_keys() {
+  local conflicts
+  conflicts=$(pi_api_key_conflicts) || return 0
+  log "Pi auth.json still has API-key entries that override Proton Pass: $conflicts"
+  log 'Use Pi /logout to remove those API-key providers; keep account/OAuth providers.'
+  if command -v pi >/dev/null 2>&1 && confirm 'Open Pi now to remove those entries with /logout? [Y/n] ' yes; then
+    PI_SKIP_PROTON_PASS=1 pi
+  fi
+  if conflicts=$(pi_api_key_conflicts); then
+    log "Still shadowed by local API-key entries: $conflicts"
+    return 1
+  fi
+  return 0
+}
+
+configure_pi_references() {
+  mkdir -p "$config_dir" || fail 'could not create Proton Pass config directory'
+  chmod 700 "$config_dir" || fail 'could not secure Proton Pass config directory'
+
+  if validate_reference_file "$pass_env"; then
+    chmod 600 "$pass_env" || fail 'could not secure Proton Pass reference file'
+    resolve_reference_file "$pass_env" \
+      || fail 'Pi references exist but Proton Pass could not resolve every field'
+    remove_shadowing_api_keys || return 1
+    log 'Pi API keys: Proton Pass references resolve successfully'
+    return 0
+  fi
+
+  [ -f "$pass_env_example" ] \
+    || fail "managed reference example is missing: $pass_env_example"
+
+  if [ ! -f "$pass_env_draft" ]; then
+    umask 077
+    cp "$pass_env_example" "$pass_env_draft" \
+      || fail 'could not create the Proton Pass reference draft'
+    chmod 600 "$pass_env_draft" \
+      || fail 'could not secure the Proton Pass reference draft'
+  fi
+
+  log "Pi API-key references need opaque Proton Pass IDs: $pass_env_draft"
+  log 'Lookup commands:'
+  printf '  pass-cli vault list --output json\n'
+  printf '  pass-cli item list --vault-name Development --output json\n'
+
+  if confirm 'Open the reference draft in your editor now? [Y/n] ' yes; then
+    "${VISUAL:-${EDITOR:-nvim}}" "$pass_env_draft"
+  fi
+
+  if ! validate_reference_file "$pass_env_draft"; then
+    log "References remain incomplete. Edit $pass_env_draft, then rerun nix-config-setup."
+    return 1
+  fi
+
+  resolve_reference_file "$pass_env_draft" \
+    || fail 'Proton Pass could not resolve every reference in the draft'
+  remove_shadowing_api_keys || return 1
+  mv -f "$pass_env_draft" "$pass_env" \
+    || fail 'could not enable the Proton Pass reference file'
+  chmod 600 "$pass_env" \
+    || fail 'could not secure the Proton Pass reference file'
+  log "Enabled Proton Pass-backed Pi launch through $pass_env"
+}
+
+pi_has_account_login() {
+  [ -f "$pi_auth" ] || return 1
+  node -e '
+    const fs = require("node:fs");
+    try {
+      const auth = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+      process.exit(Object.values(auth).some((entry) => entry && entry.type !== "api_key") ? 0 : 1);
+    } catch { process.exit(1); }
+  ' "$pi_auth"
+}
+
+offer_account_logins() {
+  if pi_has_account_login; then
+    log 'Pi account login: detected local OAuth state'
+  elif command -v pi >/dev/null 2>&1 && confirm 'Open Pi now to run /login for account providers? [y/N] ' no; then
+    PI_SKIP_PROTON_PASS=${PI_SKIP_PROTON_PASS:-0} pi
+  fi
+
+  if command -v gh >/dev/null 2>&1; then
+    if gh auth status >/dev/null 2>&1; then
+      log 'GitHub CLI: already authenticated'
+    elif confirm 'Authenticate GitHub CLI now? [y/N] ' no; then
+      gh auth login
+    fi
+  fi
+
+  if command -v claude >/dev/null 2>&1; then
+    if claude auth status >/dev/null 2>&1; then
+      log 'Claude: already authenticated'
+    elif confirm 'Authenticate Claude now? [y/N] ' no; then
+      claude auth login
+    fi
+  else
+    log 'Claude: CLI not installed by this configuration; skipped'
+  fi
+
+  if command -v cloudflared >/dev/null 2>&1; then
+    if [ -f "$HOME/.cloudflared/cert.pem" ]; then
+      log 'Cloudflare Tunnel: local certificate detected'
+    elif confirm 'Authenticate Cloudflare Tunnel now? [y/N] ' no; then
+      cloudflared tunnel login
+    fi
+  fi
+}
+
+check_status() {
+  local failed=0
+  if command -v pass-cli >/dev/null 2>&1 && pass_logged_in; then
+    log 'Proton Pass: ready'
+  else
+    log 'Proton Pass: not ready'
+    failed=1
+  fi
+
+  if validate_reference_file "$pass_env" && pass_logged_in \
+    && resolve_reference_file "$pass_env" && ! pi_api_key_conflicts >/dev/null; then
+    log 'Pi API-key references: ready'
+  else
+    log 'Pi API-key references: not ready'
+    failed=1
+  fi
+
+  if pi_has_account_login; then
+    log 'Pi account login: detected'
+  else
+    log 'Pi account login: not detected'
+  fi
+  if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
+    log 'GitHub CLI: authenticated'
+  else
+    log 'GitHub CLI: not authenticated'
+  fi
+  if command -v claude >/dev/null 2>&1 && claude auth status >/dev/null 2>&1; then
+    log 'Claude: authenticated'
+  else
+    log 'Claude: not authenticated or unavailable'
+  fi
+  if [ -f "$HOME/.cloudflared/cert.pem" ]; then
+    log 'Cloudflare Tunnel: authenticated'
+  else
+    log 'Cloudflare Tunnel: not authenticated'
+  fi
+  return "$failed"
+}
+
+main() {
+  case "${1:-}" in
+    -h|--help) usage; return 0 ;;
+    --check) check_status; return ;;
+    '') ;;
+    *) usage >&2; return 2 ;;
+  esac
+
+  command -v pass-cli >/dev/null 2>&1 || fail 'pass-cli is not installed'
+  command -v node >/dev/null 2>&1 || fail 'Node.js is not installed'
+  has_tty || fail 'interactive setup requires a terminal'
+
+  login_proton_pass || true
+  if pass_logged_in; then
+    configure_pi_references || true
+  fi
+  offer_account_logins
+  log 'Setup complete. Rerun nix-config-setup at any time.'
+}
+
+main "$@"
