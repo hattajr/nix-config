@@ -163,6 +163,7 @@ setpriv --reuid=30033 --regid=1000 --clear-groups test -w "$nvim_lockfile" \
 
 printf '%s\n' 'docker-validation: running credential-free bootstrap and Proton Pass tests'
 BOOTSTRAP_REPO_ROOT="$source_root" "$source_root/tests/bootstrap/test-bootstrap.sh"
+BRO_TEST_REPO_ROOT="$source_root" "$source_root/tests/bro/test-bro.sh"
 BOOTSTRAP_REPO_ROOT="$source_root" "$source_root/tests/proton-pass/test-pi-wrapper.sh"
 BOOTSTRAP_REPO_ROOT="$source_root" "$source_root/tests/proton-pass/test-session-wrapper.sh"
 BOOTSTRAP_REPO_ROOT="$source_root" "$source_root/tests/proton-pass/test-setup.sh"

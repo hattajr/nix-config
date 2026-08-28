@@ -9,10 +9,11 @@ log() { printf 'bro: %s\n' "$*"; }
 fail() { printf 'bro: ERROR: %s\n' "$*" >&2; exit 1; }
 usage() {
   cat <<'EOF'
-Usage: bro <health|apply|sync|auth> [--push]
+Usage: bro <health|apply|resume|sync|auth> [--push]
 
-  bro health        Check the local configuration and optional account setup.
-  bro apply         Build and activate this checkout; does not update Git.
+  bro health        Check core shell health and optional account setup.
+  bro apply         Build and activate, then refresh an interactive shell.
+  bro resume        Start a managed shell on the current concrete terminal.
   bro sync           Fast-forward from upstream, then apply.
   bro sync --push    As above, and explicitly push local commits after applying.
   bro auth          Interactively configure accounts and API keys.
@@ -78,6 +79,34 @@ apply() {
   "$package/activate"
 }
 
+resolve_terminal_device() {
+  local tty_name device
+  command -v ps >/dev/null 2>&1 || return 1
+  tty_name=$(ps -o tty= -p "$$" 2>/dev/null) || return 1
+  tty_name=${tty_name#"${tty_name%%[![:space:]]*}"}
+  tty_name=${tty_name%"${tty_name##*[![:space:]]}"}
+  case "$tty_name" in
+    ''|'?'|'??'|tty|/*|'.'|'..'|./*|../*|*/.|*/..|*/./*|*/../*) return 1 ;;
+  esac
+  [[ "$tty_name" =~ ^[[:alnum:]_.-]+(/[[:alnum:]_.-]+)*$ ]] || return 1
+  device=/dev/$tty_name
+  [ -c "$device" ] && [ -r "$device" ] && [ -w "$device" ] || return 1
+  printf '%s\n' "$device"
+}
+
+resume() {
+  local managed_zsh="$HOME/.nix-profile/bin/zsh" terminal_device
+  [ -x "$managed_zsh" ] || fail 'managed zsh is unavailable; run bro apply first'
+  terminal_device=$(resolve_terminal_device) || {
+    log 'SKIP: no concrete interactive terminal; configuration is active'
+    return 0
+  }
+  log 'starting a fresh managed zsh on the current terminal'
+  # Home Manager intentionally inherits the OS locale. Clear only an inherited
+  # process override; this never changes host locale configuration.
+  env -u LC_ALL "$managed_zsh" -l <"$terminal_device" >"$terminal_device" 2>&1
+}
+
 auth() {
   local setup=${HOME}/.local/bin/nix-config-setup
   local pass_session=${HOME}/.local/bin/proton-pass-session
@@ -89,24 +118,78 @@ auth() {
 }
 
 health() {
-  local repo=$1 target=$2 setup=${HOME}/.local/bin/nix-config-setup failed=0
-  command -v nix >/dev/null 2>&1 || { log 'FAIL: Nix is unavailable'; return 1; }
-  nix flake metadata "$repo" >/dev/null || { log 'FAIL: flake metadata validation failed'; return 1; }
-  nix eval --raw "$repo#homeConfigurations.$target.activationPackage.drvPath" >/dev/null \
-    || { log "FAIL: platform output is unavailable: $target"; return 1; }
-  log "OK: checkout and $target flake output"
+  local repo=$1 target=$2 setup=${HOME}/.local/bin/nix-config-setup
+  local core_failed=0 auth_failed=0 locale_output startup_file tmux_socket
+
+  command -v nix >/dev/null 2>&1 || { log 'CORE FAIL: Nix is unavailable'; core_failed=1; }
+  if nix flake metadata "$repo" >/dev/null; then
+    log 'OK: checkout metadata'
+  else
+    log 'CORE FAIL: flake metadata validation failed'; core_failed=1
+  fi
+  if nix eval --raw "$repo#homeConfigurations.$target.activationPackage.drvPath" >/dev/null; then
+    log "OK: $target flake output"
+  else
+    log "CORE FAIL: platform output is unavailable: $target"; core_failed=1
+  fi
+
+  locale_output=$(locale 2>&1) || {
+    log "CORE FAIL: current locale is invalid: ${locale_output//$'\n'/ }"
+    if env -u LC_ALL locale >/dev/null 2>&1; then
+      log 'CORE FAIL: inherited LC_ALL is the cause; bro apply in a terminal refreshes it'
+    fi
+    core_failed=1
+  }
+  [ -z "${LC_ALL:-}" ] || log 'CORE WARN: LC_ALL is set; managed shells inherit the OS locale'
+
+  for startup_file in "$HOME/.zshenv" "$HOME/.zprofile" "$HOME/.zshrc" "$HOME/.profile" "$HOME/.bash_profile" "$HOME/.bashrc"; do
+    if [ -f "$startup_file" ] && grep -Eq '^[[:space:]]*(export[[:space:]]+)?LC_ALL=' "$startup_file"; then
+      log "CORE FAIL: stale LC_ALL assignment in $startup_file"
+      core_failed=1
+    fi
+  done
+
+  if [ -x "$HOME/.nix-profile/bin/zsh" ] && env -u LC_ALL "$HOME/.nix-profile/bin/zsh" -lic 'exit' >/dev/null 2>&1; then
+    log 'OK: managed zsh startup'
+  else
+    log 'CORE FAIL: managed zsh startup'; core_failed=1
+  fi
+
+  if [ -x "$HOME/.nix-profile/bin/tmux" ] && [ -r "${XDG_CONFIG_HOME:-$HOME/.config}/tmux/tmux.conf" ]; then
+    tmux_socket="bro-health-$$"
+    if "$HOME/.nix-profile/bin/tmux" -L "$tmux_socket" -f "${XDG_CONFIG_HOME:-$HOME/.config}/tmux/tmux.conf" new-session -d -s health \
+      && "$HOME/.nix-profile/bin/tmux" -L "$tmux_socket" has-session -t health; then
+      "$HOME/.nix-profile/bin/tmux" -L "$tmux_socket" kill-server >/dev/null 2>&1 || true
+      log 'OK: managed tmux server'
+    else
+      "$HOME/.nix-profile/bin/tmux" -L "$tmux_socket" kill-server >/dev/null 2>&1 || true
+      log 'CORE FAIL: managed tmux server'; core_failed=1
+    fi
+  else
+    log 'CORE FAIL: managed tmux or configuration is unavailable'; core_failed=1
+  fi
+
+  if resolve_terminal_device >/dev/null; then
+    log 'OK: concrete interactive terminal'
+  elif [ -t 0 ] || [ -t 1 ] || [ -t 2 ]; then
+    log 'CORE FAIL: interactive shell has no usable concrete terminal'; core_failed=1
+  else
+    log 'CORE SKIP: no interactive terminal'
+  fi
+
   if [ -x "$setup" ]; then
     if "$setup" --check; then
       log 'OK: optional account setup check'
-      log 'AUTH: run bro auth to configure any optional missing accounts'
     else
-      log 'FAIL: configured account setup has errors; run bro auth'
-      failed=1
+      log 'AUTH FAIL: configured account setup has errors; run bro auth'
+      auth_failed=1
     fi
   else
-    log 'OPTIONAL: account setup is not installed yet; run bro apply first'
+    log 'AUTH OPTIONAL: account setup is not installed yet; run bro apply first'
   fi
-  return "$failed"
+
+  [ "$core_failed" -eq 0 ] || return 1
+  [ "$auth_failed" -eq 0 ] || return 1
 }
 
 sync() {
@@ -128,12 +211,18 @@ sync() {
 
 main() {
   local command=${1:-} repo target
-  case "$command" in health|apply|sync|auth) ;; -h|--help|'') usage; [ -n "$command" ] && exit 0 || exit 2 ;; *) usage >&2; exit 2;; esac
+  case "$command" in health|apply|resume|sync|auth) ;; -h|--help|'') usage; [ -n "$command" ] && exit 0 || exit 2 ;; *) usage >&2; exit 2;; esac
   shift
   local push=no
   if [ "$command" = sync ] && [ "${1:-}" = --push ]; then push=yes; shift; fi
   [ "$#" = 0 ] || { usage >&2; exit 2; }
   enable_nix_features; repo=$(checkout); target=$(platform)
-  case "$command" in apply) apply "$repo" "$target";; health) health "$repo" "$target";; sync) sync "$repo" "$target" "$push";; auth) auth;; esac
+  case "$command" in
+    apply) apply "$repo" "$target"; resume;;
+    resume) resume;;
+    health) health "$repo" "$target";;
+    sync) sync "$repo" "$target" "$push";;
+    auth) auth;;
+  esac
 }
 main "$@"
