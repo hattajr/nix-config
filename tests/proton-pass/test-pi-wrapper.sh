@@ -2,6 +2,7 @@
 set -euo pipefail
 
 repo_root=${BOOTSTRAP_REPO_ROOT:-$(CDPATH='' cd -- "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}
+python3_bin=$(PATH="/usr/bin:/bin:$PATH" command -v python3)
 workdir=$(mktemp -d)
 trap 'rm -rf "$workdir"' EXIT
 home="$workdir/home"
@@ -10,16 +11,21 @@ passbin="$workdir/passbin"
 supportbin="$workdir/supportbin"
 logfile="$workdir/commands.log"
 mkdir -p "$home/.local/bin" "$home/.config/proton-pass" "$home/.pi/agent" "$realbin" "$passbin" "$supportbin"
-for command_name in bash cat chmod env grep sha256sum rm uname; do
+for command_name in bash cat chmod env grep rm sha256sum uname; do
   ln -s "$(command -v "$command_name")" "$supportbin/$command_name"
 done
 : >"$logfile"
 cp "$repo_root/bin/pi" "$home/.local/bin/pi"
-chmod +x "$home/.local/bin/pi"
+cp "$repo_root/bin/proton-pass-pi-env" "$home/.local/bin/proton-pass-pi-env"
+chmod +x "$home/.local/bin/pi" "$home/.local/bin/proton-pass-pi-env"
 
 cat >"$realbin/pi" <<'EOF_PI'
 #!/usr/bin/env bash
-printf 'real-pi %s\n' "$*" >>"$TEST_LOG"
+tty_state=''
+for fd in 0 1 2; do
+  if [ -t "$fd" ]; then tty_state+='1'; else tty_state+='0'; fi
+done
+printf 'real-pi %s tty=%s key=%s\n' "$*" "$tty_state" "${DEEPSEEK_API_KEY:-no-api-key}" >>"$TEST_LOG"
 printf '%s\n' "${DEEPSEEK_API_KEY:-no-api-key}"
 EOF_PI
 chmod +x "$realbin/pi"
@@ -35,8 +41,8 @@ shift
 shift 2
 [ "${1:-}" = -- ] || exit 2
 shift
-export DEEPSEEK_API_KEY='resolved-test-key'
-exec "$@"
+[ "${1:-}" = bash ] || exit 2
+printf "export DEEPSEEK_API_KEY='resolved-test-key'\\n"
 EOF_PASS
 chmod +x "$passbin/pass-cli"
 
@@ -59,11 +65,40 @@ printf '%s\n' '{"openai-codex":{"type":"oauth","refresh":"preserve-me"}}' >"$hom
 chmod 600 "$home/.pi/agent/auth.json"
 auth_before=$(sha256sum "$home/.pi/agent/auth.json")
 
-# A configured reference file launches the real Pi through pass-cli run.
+# A configured reference file resolves the Pass environment before Pi starts.
 output=$(pi hello)
 [ "$output" = resolved-test-key ] || { printf '%s\n' 'pi wrapper test: Pass environment was not delivered' >&2; exit 1; }
-grep -Fq "pass-cli run --env-file $home/.config/proton-pass/pi.env -- $realbin/pi hello" "$logfile" || {
-  printf '%s\n' 'pi wrapper test: pass-cli run arguments are wrong' >&2
+grep -Fq "pass-cli run --env-file $home/.config/proton-pass/pi.env -- bash -c" "$logfile" || {
+  printf '%s\n' 'pi wrapper test: pass-cli resolution arguments are wrong' >&2
+  exit 1
+}
+
+# Regression: the real Pi must inherit the terminal's three descriptors, not
+# the pipes pass-cli gives to its own child command.
+: >"$logfile"
+"$python3_bin" - "$home/.local/bin/pi" <<'PY'
+import errno
+import os
+import pty
+import sys
+
+pid, master_fd = pty.fork()
+if pid == 0:
+    os.execv(sys.argv[1], [sys.argv[1], "pty"])
+while True:
+    try:
+        if not os.read(master_fd, 1024):
+            break
+    except OSError as error:
+        if error.errno == errno.EIO:
+            break
+        raise
+_, status = os.waitpid(pid, 0)
+if status != 0:
+    raise SystemExit(f"PTY Pi launch failed with status {status}")
+PY
+grep -Fq 'real-pi pty tty=111 key=resolved-test-key' "$logfile" || {
+  printf '%s\n' 'pi wrapper test: Pi did not receive TTY stdin/stdout/stderr and Pass key' >&2
   exit 1
 }
 [ "$auth_before" = "$(sha256sum "$home/.pi/agent/auth.json")" ] || {

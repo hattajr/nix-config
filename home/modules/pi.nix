@@ -89,6 +89,10 @@ in
       source = ../../bin/pi;
       executable = true;
     };
+    ".local/bin/proton-pass-pi-env" = {
+      source = ../../bin/proton-pass-pi-env;
+      executable = true;
+    };
     ".pi/.claude/settings.local.json".source = ../../config/pi/.claude/settings.local.json;
     ".claude/settings.local.json".source = ../../config/claude/settings.local.json;
   };

@@ -30,7 +30,8 @@ if [ -z "$real_pi" ]; then
 fi
 
 # API keys remain in Proton Pass. A local dotenv file contains only opaque
-# pass:// references; pass-cli resolves them into this Pi process environment.
+# pass:// references. Resolve them before directly exec'ing Pi: pass-cli pipes
+# a child command's descriptors, which would make Pi think it has no terminal.
 # Pi continues to own ~/.pi/agent/auth.json and its mutable OAuth sessions.
 pass_env=${PROTON_PASS_PI_ENV_FILE:-${XDG_CONFIG_HOME:-$HOME/.config}/proton-pass/pi.env}
 case "${PI_SKIP_PROTON_PASS:-}" in
@@ -52,7 +53,18 @@ if [ -f "$pass_env" ]; then
     printf 'hint: run bro auth to repair account setup\n' >&2
     exit 127
   fi
-  exec pass-cli run --env-file "$pass_env" -- "$real_pi" "$@"
+  if ! command -v proton-pass-pi-env >/dev/null 2>&1; then
+    printf 'error: proton-pass-pi-env is unavailable\n' >&2
+    printf 'hint: run bro auth to repair account setup\n' >&2
+    exit 127
+  fi
+  if pass_exports=$(proton-pass-pi-env "$pass_env"); then
+    :
+  else
+    exit $?
+  fi
+  eval "$pass_exports"
+  exec "$real_pi" "$@"
 fi
 
 exec "$real_pi" "$@"

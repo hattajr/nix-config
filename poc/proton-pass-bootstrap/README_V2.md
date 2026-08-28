@@ -43,7 +43,7 @@ contain none.
                          ▼
 5. PROTON PASS-BACKED PI LAUNCH (no auth.json writes)
    ├─ pi.env contains only opaque pass://SHARE_ID/ITEM_ID/FIELD references
-   ├─ the Pi wrapper runs pass-cli run --env-file pi.env -- <real-pi>
+   ├─ a helper resolves pass-cli references before the wrapper directly execs Pi
    ├─ API keys exist only in the launched Pi process environment
    └─ Pi remains the sole owner of local account/OAuth auth.json state
                          │
@@ -123,14 +123,10 @@ updates the local reference automatically.
 
 ## Pi authentication ownership: no merge
 
-The managed Pi wrapper runs:
-
-```text
-pass-cli run --env-file ~/.config/proton-pass/pi.env -- <real-pi>
-```
-
-Pi reads those API keys from its process environment. Proton Pass resolves them
-at launch, so no helper injects plaintext into `auth.json`, no `jq`/Node merge
+The managed Pi wrapper uses `pass-cli run --env-file` in a short-lived helper
+that resolves the references, then directly execs Pi. This preserves Pi's TTY
+stdin, stdout, and stderr while Pi reads the API keys from its process
+environment. No helper injects plaintext into `auth.json`, no `jq`/Node merge
 is needed, and no secret template is rendered to disk.
 
 Pi alone owns `~/.pi/agent/auth.json`, including account access tokens, refresh

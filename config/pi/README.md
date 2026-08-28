@@ -95,8 +95,9 @@ pi
 Pi account/OAuth credentials remain per-machine runtime state in
 `~/.pi/agent/auth.json` and are not managed by Home Manager. Long-lived API
 keys can stay in Proton Pass: when `~/.config/proton-pass/pi.env` exists, the
-managed `pi` wrapper resolves its non-secret `pass://` references with
-`pass-cli run` and supplies the keys only through Pi's process environment.
+managed `pi` wrapper resolves its non-secret `pass://` references before
+starting Pi directly, preserving Pi's terminal descriptors while supplying the
+keys through its process environment.
 Run `bro auth` after activation to configure this flow.
 
 If packages are missing:
@@ -107,10 +108,9 @@ pi install npm:pi-web-access
 pi install npm:@juicesharp/rpiv-ask-user-question
 ```
 
-Pi packages and extensions can be updated through Pi itself:
+Pi extensions can be updated through Pi itself:
 
 ```bash
-pi update --self
 pi update --extensions
 ```
 

@@ -37,10 +37,11 @@ you choose token login instead of interactive Proton login.
 ## Runtime boundary
 
 The wizard writes only mode-600 opaque references to
-`~/.config/proton-pass/pi.env`. The managed Pi launcher internally runs
-`pass-cli run --env-file` so API keys exist only in the Pi child process
-environment. Pi exclusively owns `~/.pi/agent/auth.json` for per-machine OAuth
-sessions. The wizard never writes or merges that file.
+`~/.config/proton-pass/pi.env`. The managed Pi launcher uses
+`pass-cli run --env-file` only in a short-lived helper to resolve references,
+then directly execs Pi with its terminal descriptors intact. API keys exist
+only in the Pi process environment. Pi exclusively owns
+`~/.pi/agent/auth.json` for per-machine OAuth sessions. The wizard never writes or merges that file.
 
 If `auth.json` contains old `deepseek`, `google`, or `moonshotai` API-key
 entries, the wizard offers to open Pi and directs the user through `/logout`;
