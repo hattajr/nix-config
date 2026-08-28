@@ -1,208 +1,92 @@
 #!/usr/bin/env bash
-# Build and activate the detected platform from an existing public checkout.
+# Activate a reviewed checkout and record it for the installed bro command.
 set -euo pipefail
 
-readonly PLATFORMS=(aarch64-darwin aarch64-linux x86_64-linux)
+readonly EXPECTED_ORIGIN=${NIX_CONFIG_REPOSITORY_URL:-https://github.com/hattajr/nix-config.git}
 SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-readonly SCRIPT_DIR
-DEFAULT_DESTINATION=$(dirname "$SCRIPT_DIR")
-readonly DEFAULT_DESTINATION
+readonly DEFAULT_DESTINATION=$(dirname "$SCRIPT_DIR")
 
-log() {
-  printf 'nix-bootstrap: %s\n' "$1"
-}
-
-fail() {
-  printf 'nix-bootstrap: ERROR: %s\n' "$1" >&2
-  exit 1
-}
-
+log() { printf 'nix-bootstrap: %s\n' "$*"; }
+fail() { printf 'nix-bootstrap: ERROR: %s\n' "$*" >&2; exit 1; }
 usage() {
   cat <<'EOF'
 Usage: scripts/bootstrap.sh [checkout]
 
-The platform is detected from the operating system and CPU architecture.
-Supported platforms: aarch64-darwin, aarch64-linux, x86_64-linux.
-The checkout defaults to the repository containing this script.
-
-NIX_CONFIG_PLATFORM may override detection. NIX_CONFIG_APPLY=yes|no and
-NIX_CONFIG_SETUP=yes|no can answer prompts in non-interactive automation.
-NIX_CONFIG_START_SHELL=no disables entering the managed zsh after activation.
-Otherwise confirmation prompts read from /dev/tty.
+Records a validated checkout, then runs bro apply followed by bro health.
+With a terminal, applying is prompted once and defaults to yes.
+Without a terminal set NIX_CONFIG_APPLY=yes to apply or NIX_CONFIG_APPLY=no to
+validate only. NIX_CONFIG_PLATFORM overrides platform detection.
 EOF
 }
+answer_is_yes() { case "$1" in y|Y|yes|YES|true|TRUE|1) return 0;; *) return 1;; esac; }
+answer_is_no() { case "$1" in n|N|no|NO|false|FALSE|0) return 0;; *) return 1;; esac; }
 
-contains_platform() {
-  local candidate=$1
-  local platform
-  for platform in "${PLATFORMS[@]}"; do
-    [ "$platform" = "$candidate" ] && return 0
-  done
-  return 1
-}
-
-detect_platform() {
-  local selected=${NIX_CONFIG_PLATFORM:-}
-  local os arch
-  if [ -z "$selected" ]; then
-    os=$(uname -s)
-    arch=$(uname -m)
-    case "$os:$arch" in
-      Darwin:arm64|Darwin:aarch64) selected=aarch64-darwin ;;
-      Linux:arm64|Linux:aarch64) selected=aarch64-linux ;;
-      Linux:x86_64|Linux:amd64) selected=x86_64-linux ;;
-      *) fail "unsupported platform: $os/$arch" ;;
-    esac
-  fi
-  contains_platform "$selected" || fail "unsupported platform override: $selected"
-  printf '%s' "$selected"
-}
-
-answer_is_yes() {
-  case "$1" in
-    y|Y|yes|YES|true|TRUE|1) return 0 ;;
-    *) return 1 ;;
-  esac
-}
-
-answer_is_no() {
-  case "$1" in
-    n|N|no|NO|false|FALSE|0) return 0 ;;
-    *) return 1 ;;
-  esac
-}
-
-confirm() {
-  local prompt=$1
-  local default_answer=$2
-  local preset=${3:-}
-  local answer
-
-  if [ -n "$preset" ]; then
-    answer=$preset
-  elif [ -r /dev/tty ]; then
-    printf '%s' "$prompt" >/dev/tty
-    IFS= read -r answer </dev/tty || true
+run_git() {
+  if command -v git >/dev/null 2>&1; then
+    git "$@"
   else
-    return 2
+    command -v nix >/dev/null 2>&1 || fail 'Git is missing and Nix is unavailable'
+    nix shell --accept-flake-config nixpkgs#git --command git "$@"
   fi
+}
 
-  [ -n "$answer" ] || answer=$default_answer
+validate_checkout() {
+  local repo=$1 origin
+  [ -d "$repo/.git" ] || fail "not a Git checkout: $repo"
+  origin=$(run_git -C "$repo" remote get-url origin 2>/dev/null || true)
+  case "$origin:$EXPECTED_ORIGIN" in
+    "$EXPECTED_ORIGIN:$EXPECTED_ORIGIN"|git@github.com:hattajr/nix-config.git:https://github.com/hattajr/nix-config.git) ;;
+    *) fail "checkout origin is not $EXPECTED_ORIGIN" ;;
+  esac
+}
+write_checkout_state() {
+  local repo=$1 state_dir state tmp
+  state_dir=${XDG_STATE_HOME:-$HOME/.local/state}/bro
+  state=$state_dir/checkout
+  mkdir -p "$state_dir" || fail 'could not create bro state directory'
+  chmod 700 "$state_dir" || fail 'could not secure bro state directory'
+  tmp=$(mktemp "$state_dir/.checkout.XXXXXX") || fail 'could not create bro state file'
+  printf '%s\n' "$(CDPATH='' cd -- "$repo" && pwd -P)" >"$tmp"
+  chmod 600 "$tmp"
+  mv -f "$tmp" "$state"
+}
+start_managed_shell() {
+  local managed_zsh="$HOME/.nix-profile/bin/zsh"
+  local start_shell=${NIX_CONFIG_START_SHELL:-yes}
+  answer_is_no "$start_shell" && { log "Managed shell ready; start it with: exec $managed_zsh -l"; return; }
+  answer_is_yes "$start_shell" || fail "invalid NIX_CONFIG_START_SHELL value: $start_shell"
+  [ -x "$managed_zsh" ] || { log "Managed shell ready; start it with: exec $managed_zsh -l"; return; }
+  [ -r /dev/tty ] && [ -w /dev/tty ] || { log "Managed shell ready; start it with: exec $managed_zsh -l"; return; }
+  log 'Entering the managed zsh login shell'
+  exec "$managed_zsh" -l </dev/tty >/dev/tty 2>&1
+}
+should_apply() {
+  local preset=${NIX_CONFIG_APPLY:-} answer
+  if [ -n "$preset" ]; then
+    answer_is_yes "$preset" && return 0
+    answer_is_no "$preset" && return 1
+    fail "invalid NIX_CONFIG_APPLY value: $preset"
+  fi
+  if [ ! -r /dev/tty ] || [ ! -w /dev/tty ]; then
+    log 'No terminal available; set NIX_CONFIG_APPLY=yes to activate or NIX_CONFIG_APPLY=no to validate only'
+    return 1
+  fi
+  printf 'Apply Home Manager configuration now? [Y/n] ' >/dev/tty
+  IFS= read -r answer </dev/tty || true
+  [ -z "$answer" ] && answer=yes
   answer_is_yes "$answer" && return 0
   answer_is_no "$answer" && return 1
   fail "invalid yes/no answer: $answer"
 }
-
-enable_nix_features() {
-  if [ -n "${NIX_CONFIG:-}" ]; then
-    export NIX_CONFIG="${NIX_CONFIG}
-experimental-features = nix-command flakes"
-  else
-    export NIX_CONFIG='experimental-features = nix-command flakes'
-  fi
-}
-
-apply_home() {
-  local destination=$1
-  local platform=$2
-  local flake_ref="$destination#homeConfigurations.${platform}.activationPackage"
-  local activation_package
-
-  command -v nix >/dev/null 2>&1 || fail 'Nix is required; run scripts/install.sh first'
-  [ -f "$destination/flake.nix" ] || fail "checkout has no flake.nix: $destination"
-
-  nix flake metadata "$destination" >/dev/null \
-    || fail 'flake metadata validation failed'
-  nix eval --raw "$flake_ref.drvPath" >/dev/null \
-    || fail "platform output is unavailable or invalid: $platform"
-
-  if ! confirm "Apply Home Manager configuration for ${platform} now? [y/N] " no "${NIX_CONFIG_APPLY:-}"; then
-    log 'Activation skipped; rerun this command when ready'
-    return 1
-  fi
-
-  activation_package=$(nix build --no-link --print-out-paths "$flake_ref") \
-    || fail 'Home Manager activation package build failed'
-  [ -x "$activation_package/activate" ] \
-    || fail 'built activation package has no executable activate script'
-
-  log "Activating Home Manager platform ${platform}"
-  "$activation_package/activate" || fail 'Home Manager activation failed'
-  return 0
-}
-
-refresh_home_path() {
-  local profile_bin="$HOME/.nix-profile/bin"
-  case ":$PATH:" in
-    *":$profile_bin:"*) ;;
-    *) export PATH="$profile_bin:$PATH" ;;
-  esac
-  hash -r
-}
-
-run_account_setup() {
-  local setup="$HOME/.local/bin/nix-config-setup"
-
-  if [ ! -x "$setup" ]; then
-    log "Account setup is available after opening a new shell: $setup"
-    return 0
-  fi
-
-  if confirm 'Home Manager activation complete. Configure application accounts now? [Y/n] ' yes "${NIX_CONFIG_SETUP:-}"; then
-    if [ "$(uname -s)" = Linux ] && [ -x "$HOME/.local/bin/proton-pass-session" ]; then
-      "$HOME/.local/bin/proton-pass-session" "$setup"
-    else
-      "$setup"
-    fi
-    return 0
-  fi
-
-  log 'Account setup skipped; resume later with nix-config-setup'
-}
-
-start_managed_shell() {
-  local start_shell=${NIX_CONFIG_START_SHELL:-yes}
-  local managed_zsh="$HOME/.nix-profile/bin/zsh"
-
-  if answer_is_no "$start_shell"; then
-    log "Managed shell ready; start it with: exec $managed_zsh -l"
-    return 0
-  fi
-  answer_is_yes "$start_shell" \
-    || fail "invalid NIX_CONFIG_START_SHELL value: $start_shell"
-
-  if [ ! -x "$managed_zsh" ]; then
-    log "Managed zsh is unavailable at $managed_zsh; open a new login session"
-    return 0
-  fi
-  if ! (: </dev/tty && : >/dev/tty) 2>/dev/null; then
-    log "Managed shell ready; start it with: exec $managed_zsh -l"
-    return 0
-  fi
-
-  log 'Entering the managed zsh login shell'
-  exec "$managed_zsh" -l </dev/tty >/dev/tty 2>&1
-}
-
 main() {
-  case "${1:-}" in
-    -h|--help) usage; return 0 ;;
-  esac
-
-  local platform
-  platform=$(detect_platform)
-  local destination=${1:-${NIX_CONFIG_REPOSITORY:-$DEFAULT_DESTINATION}}
-
-  enable_nix_features
-  if ! apply_home "$destination" "$platform"; then
-    log "Bootstrap finished without activating ${platform}"
-    return 0
-  fi
-
-  refresh_home_path
-  run_account_setup
-  log "Bootstrap complete for ${platform}"
+  case "${1:-}" in -h|--help) usage; exit 0;; esac
+  local repo=${1:-${NIX_CONFIG_REPOSITORY:-$DEFAULT_DESTINATION}}
+  validate_checkout "$repo"
+  write_checkout_state "$repo"
+  if ! should_apply; then log 'Bootstrap finished without activation'; return 0; fi
+  NIX_CONFIG_REPOSITORY_URL="$EXPECTED_ORIGIN" "$repo/scripts/bro" apply
+  NIX_CONFIG_REPOSITORY_URL="$EXPECTED_ORIGIN" "$repo/scripts/bro" health
+  log 'Bootstrap complete'
   start_managed_shell
 }
-
 main "$@"

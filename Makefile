@@ -2,6 +2,7 @@
 
 test:
 	@./tests/bootstrap/test-bootstrap.sh
+	@./tests/bro/test-bro.sh
 	@./tests/proton-pass/test-pi-wrapper.sh
 	@./tests/proton-pass/test-session-wrapper.sh
 	@./tests/proton-pass/test-setup.sh

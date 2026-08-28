@@ -6,6 +6,11 @@
   xdg.configFile."bottom/bottom.toml".source = ../../config/bottom/bottom.toml;
   home.file.".inputrc".source = ../../config/inputrc;
 
+  home.file.".local/bin/bro" = {
+    source = ../../bin/bro;
+    executable = true;
+  };
+
   home.file.".local/bin/devtunnel" = {
     source = ../../bin/devtunnel;
     executable = true;

@@ -22,7 +22,7 @@ export MOCK_BIN="$mockbin"
 export MOCK_ACTIVATION="$activation"
 
 # Isolate PATH so missing-tool cases are real within the test.
-for command_name in bash env dirname mkdir cp chmod grep cat mktemp rm; do
+for command_name in bash env dirname mkdir cp chmod grep cat mktemp rm mv; do
   command_path=$(command -v "$command_name")
   ln -s "$command_path" "$mockbin/$command_name"
 done
@@ -87,6 +87,10 @@ EOF_GIT
 chmod +x "$mockbin/nix" "$mockbin/uname" "$workdir/git.stub" "$workdir/bootstrap.stub"
 export MOCK_GIT_STUB="$workdir/git.stub"
 export MOCK_BOOTSTRAP_STUB="$workdir/bootstrap.stub"
+# Bootstrap validates its own checkout before activation, so Git is available
+# for these mocked bootstrap paths.
+cp "$MOCK_GIT_STUB" "$mockbin/git"
+chmod +x "$mockbin/git"
 
 install_mock_git() {
   cp "$MOCK_GIT_STUB" "$mockbin/git"
@@ -102,7 +106,7 @@ run_bootstrap() {
 }
 
 # Invalid platform overrides fail before Nix or activation work.
-if NIX_CONFIG_PLATFORM=unsupported run_bootstrap "$repo_root" >/dev/null 2>&1; then
+if NIX_CONFIG_PLATFORM=unsupported NIX_CONFIG_APPLY=yes run_bootstrap "$repo_root" >/dev/null 2>&1; then
   printf '%s\n' 'bootstrap test: unsupported platform unexpectedly succeeded' >&2
   exit 1
 fi
@@ -131,25 +135,32 @@ mv "$workdir/nix.stub" "$mockbin/nix"
 rm -f "$mockbin/curl"
 : >"$logfile"
 
-# Native Linux x86 detection validates the matching flake output but can decline activation.
+# Explicit no validates the checkout but does not invoke Nix or activate.
 NIX_CONFIG_APPLY=no run_bootstrap "$repo_root" >/dev/null
-grep -Fq 'homeConfigurations.x86_64-linux.activationPackage' "$logfile" || {
-  printf '%s\n' 'bootstrap test: Linux x86 platform was not auto-detected' >&2
-  exit 1
-}
-! grep -q '^nix build' "$logfile" || { printf '%s\n' 'bootstrap test: decline still built activation' >&2; exit 1; }
+! grep -q '^nix ' "$logfile" || { printf '%s\n' 'bootstrap test: decline reached Nix' >&2; exit 1; }
 ! grep -q '^activation$' "$logfile" || { printf '%s\n' 'bootstrap test: decline still activated Home Manager' >&2; exit 1; }
 : >"$logfile"
 
-# Explicit ARM64 override builds and activates; account setup can be skipped.
-NIX_CONFIG_PLATFORM=aarch64-linux NIX_CONFIG_APPLY=yes NIX_CONFIG_SETUP=no \
-  NIX_CONFIG_START_SHELL=no run_bootstrap "$repo_root" >/dev/null
+# Checkout validation also uses ephemeral Git on a fresh machine.
+rm -f "$mockbin/git"
+NIX_CONFIG_APPLY=no run_bootstrap "$repo_root" >/dev/null
+grep -Fq 'nix shell --accept-flake-config nixpkgs#git --command git -C' "$logfile" || {
+  printf '%s\n' 'bootstrap test: checkout validation did not use ephemeral Git' >&2
+  exit 1
+}
+install_mock_git
+: >"$logfile"
+
+# Explicit ARM64 override builds and activates, then runs noninteractive health.
+NIX_CONFIG_PLATFORM=aarch64-linux NIX_CONFIG_APPLY=yes \
+  run_bootstrap "$repo_root" >/dev/null
 grep -Fq 'homeConfigurations.aarch64-linux.activationPackage' "$logfile" || {
   printf '%s\n' 'bootstrap test: ARM64 override did not select the ARM output' >&2
   exit 1
 }
 grep -q '^nix build ' "$logfile" || { printf '%s\n' 'bootstrap test: approval did not build activation' >&2; exit 1; }
 grep -q '^activation$' "$logfile" || { printf '%s\n' 'bootstrap test: approval did not activate Home Manager' >&2; exit 1; }
+[ -r "$home/.local/state/bro/checkout" ] || { printf '%s\n' 'bootstrap test: checkout state was not written' >&2; exit 1; }
 : >"$logfile"
 
 # Stage zero auto-detects Linux x86, clones over public HTTPS, and passes the destination.

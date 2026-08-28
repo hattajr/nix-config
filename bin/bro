@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Durable entry point installed by Home Manager. The implementation stays in
+# the validated configuration checkout so updates take effect after bro sync.
+set -euo pipefail
+state_file="${XDG_STATE_HOME:-$HOME/.local/state}/bro/checkout"
+repo=${BRO_REPOSITORY:-}
+if [ -z "$repo" ] && [ -r "$state_file" ]; then repo=$(cat "$state_file"); fi
+[ -n "$repo" ] || { printf '%s\n' 'bro: ERROR: no installed checkout; rerun scripts/install.sh or set BRO_REPOSITORY' >&2; exit 1; }
+exec "$repo/scripts/bro" "$@"

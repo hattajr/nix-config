@@ -25,8 +25,10 @@ Supported platforms: aarch64-darwin, aarch64-linux, x86_64-linux.
 The destination defaults to ~/src/nix-config.
 
 NIX_CONFIG_PLATFORM may override detection for automation. NIX_CONFIG_REPOSITORY
-may set the destination. This script performs no interactive input, so it works
-when invoked through curl | sh.
+may set the destination. After cloning, bootstrap prompts once to apply the
+configuration; set NIX_CONFIG_APPLY=yes to apply unattended or
+NIX_CONFIG_APPLY=no to clone and validate only. Without a terminal, bootstrap
+fails closed unless one of those values is set.
 EOF
 }
 

@@ -1,0 +1,123 @@
+#!/usr/bin/env bash
+# Everyday management commands for this Nix configuration checkout.
+set -euo pipefail
+
+readonly EXPECTED_ORIGIN=${NIX_CONFIG_REPOSITORY_URL:-https://github.com/hattajr/nix-config.git}
+readonly STATE_FILE="${XDG_STATE_HOME:-$HOME/.local/state}/bro/checkout"
+
+log() { printf 'bro: %s\n' "$*"; }
+fail() { printf 'bro: ERROR: %s\n' "$*" >&2; exit 1; }
+usage() {
+  cat <<'EOF'
+Usage: bro <health|apply|sync> [--push]
+
+  bro health        Check the local configuration and optional account setup.
+  bro apply         Build and activate this checkout; does not update Git.
+  bro sync           Fast-forward from upstream, then apply.
+  bro sync --push    As above, and explicitly push local commits after applying.
+
+BRO_REPOSITORY overrides the installed checkout location.
+EOF
+}
+
+checkout() {
+  local candidate
+  if [ -n "${BRO_REPOSITORY:-}" ]; then candidate=$BRO_REPOSITORY
+  elif [ -r "$STATE_FILE" ]; then candidate=$(cat "$STATE_FILE")
+  else candidate=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
+  fi
+  [ -d "$candidate/.git" ] || fail "not a Git checkout: $candidate"
+  candidate=$(CDPATH='' cd -- "$candidate" && pwd -P)
+  local origin
+  origin=$(run_git -C "$candidate" remote get-url origin 2>/dev/null || true)
+  case "$origin:$EXPECTED_ORIGIN" in
+    "$EXPECTED_ORIGIN:$EXPECTED_ORIGIN"|git@github.com:hattajr/nix-config.git:https://github.com/hattajr/nix-config.git) ;;
+    *) fail "checkout origin is not $EXPECTED_ORIGIN" ;;
+  esac
+  printf '%s\n' "$candidate"
+}
+
+platform() {
+  local target=${NIX_CONFIG_PLATFORM:-}
+  if [ -z "$target" ]; then
+    case "$(uname -s):$(uname -m)" in
+      Darwin:arm64|Darwin:aarch64) target=aarch64-darwin ;;
+      Linux:arm64|Linux:aarch64) target=aarch64-linux ;;
+      Linux:x86_64|Linux:amd64) target=x86_64-linux ;;
+      *) fail "unsupported platform: $(uname -s)/$(uname -m)" ;;
+    esac
+  fi
+  case "$target" in
+    aarch64-darwin|aarch64-linux|x86_64-linux) printf '%s\n' "$target" ;;
+    *) fail "unsupported platform: $target" ;;
+  esac
+}
+
+enable_nix_features() {
+  export NIX_CONFIG="${NIX_CONFIG:+$NIX_CONFIG$'\n'}experimental-features = nix-command flakes"
+}
+
+run_git() {
+  if command -v git >/dev/null 2>&1; then
+    git "$@"
+  else
+    command -v nix >/dev/null 2>&1 || fail 'Git is missing and Nix is unavailable'
+    nix shell --accept-flake-config nixpkgs#git --command git "$@"
+  fi
+}
+
+apply() {
+  local repo=$1 target=$2 ref="$1#homeConfigurations.$2.activationPackage" package
+  command -v nix >/dev/null 2>&1 || fail 'Nix is required'
+  nix flake metadata "$repo" >/dev/null || fail 'flake metadata validation failed'
+  nix eval --raw "$ref.drvPath" >/dev/null || fail "platform output is unavailable or invalid: $target"
+  package=$(nix build --no-link --print-out-paths "$ref") || fail 'Home Manager activation package build failed'
+  [ -x "$package/activate" ] || fail 'built activation package has no executable activate script'
+  log "activating $target"
+  "$package/activate"
+}
+
+health() {
+  local repo=$1 target=$2 setup=${HOME}/.local/bin/nix-config-setup failed=0
+  command -v nix >/dev/null 2>&1 || { log 'FAIL: Nix is unavailable'; return 1; }
+  nix flake metadata "$repo" >/dev/null || { log 'FAIL: flake metadata validation failed'; return 1; }
+  nix eval --raw "$repo#homeConfigurations.$target.activationPackage.drvPath" >/dev/null \
+    || { log "FAIL: platform output is unavailable: $target"; return 1; }
+  log "OK: checkout and $target flake output"
+  if [ -x "$setup" ]; then
+    if "$setup" --check; then log 'OK: optional account setup check';
+    else log 'FAIL: configured account setup has errors'; failed=1; fi
+  else
+    log 'OPTIONAL: account setup is not installed yet'
+  fi
+  return "$failed"
+}
+
+sync() {
+  local repo=$1 target=$2 push=${3:-no} upstream ahead behind
+  [ -z "$(run_git -C "$repo" status --porcelain)" ] || fail 'working tree has changes'
+  upstream=$(run_git -C "$repo" rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null) || fail 'branch has no upstream'
+  run_git -C "$repo" fetch --prune || fail 'fetch failed'
+  ahead=$(run_git -C "$repo" rev-list --count "$upstream..HEAD")
+  behind=$(run_git -C "$repo" rev-list --count "HEAD..$upstream")
+  [ "$ahead" = 0 ] || [ "$behind" = 0 ] || fail 'branch diverged from upstream; resolve it manually'
+  if [ "$behind" != 0 ]; then run_git -C "$repo" merge --ff-only "$upstream" || fail 'fast-forward failed'; fi
+  apply "$repo" "$target"
+  if [ "$push" = yes ]; then
+    run_git -C "$repo" push || fail 'push failed'
+  elif [ "$ahead" != 0 ]; then
+    log 'local commits are ahead; use bro sync --push to publish them'
+  fi
+}
+
+main() {
+  local command=${1:-} repo target
+  case "$command" in health|apply|sync) ;; -h|--help|'') usage; [ -n "$command" ] && exit 0 || exit 2 ;; *) usage >&2; exit 2;; esac
+  shift
+  local push=no
+  if [ "$command" = sync ] && [ "${1:-}" = --push ]; then push=yes; shift; fi
+  [ "$#" = 0 ] || { usage >&2; exit 2; }
+  enable_nix_features; repo=$(checkout); target=$(platform)
+  case "$command" in apply) apply "$repo" "$target";; health) health "$repo" "$target";; sync) sync "$repo" "$target" "$push";; esac
+}
+main "$@"
