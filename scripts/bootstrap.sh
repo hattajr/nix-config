@@ -87,6 +87,7 @@ main() {
   NIX_CONFIG_REPOSITORY_URL="$EXPECTED_ORIGIN" "$repo/scripts/bro" apply
   NIX_CONFIG_REPOSITORY_URL="$EXPECTED_ORIGIN" "$repo/scripts/bro" health
   log 'Bootstrap complete'
+  log 'Next: run bro auth to configure accounts and API keys'
   start_managed_shell
 }
 main "$@"

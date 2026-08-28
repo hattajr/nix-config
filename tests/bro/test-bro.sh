@@ -61,4 +61,26 @@ grep -q 'use bro sync --push' <(BRO_GIT_MODE=sync PATH="$mockbin:$PATH" "$bro" s
 : >"$log"
 BRO_GIT_MODE=sync PATH="$mockbin:$PATH" "$bro" sync --push >/dev/null
 grep -Eq '^git .* push($| )' "$log" || { echo 'bro test: sync --push did not push' >&2; exit 1; }
-echo 'bro test: PASSED (apply safety, sync push boundary, dirty refusal, health)'
+
+auth_home="$work/auth-home"
+mkdir -p "$auth_home/.local/bin"
+cat >"$auth_home/.local/bin/nix-config-setup" <<'EOF'
+#!/bin/sh
+printf 'setup %s\n' "$*" >>"$BRO_LOG"
+EOF
+cat >"$auth_home/.local/bin/proton-pass-session" <<'EOF'
+#!/bin/sh
+printf 'proton %s\n' "$*" >>"$BRO_LOG"
+EOF
+chmod +x "$auth_home/.local/bin/nix-config-setup" "$auth_home/.local/bin/proton-pass-session"
+: >"$log"
+HOME="$auth_home" PATH="$mockbin:$PATH" "$bro" auth
+grep -Fq "proton $auth_home/.local/bin/nix-config-setup" "$log" || {
+  echo 'bro test: Linux auth did not use Proton Pass session' >&2
+  exit 1
+}
+rm "$auth_home/.local/bin/proton-pass-session"
+: >"$log"
+HOME="$auth_home" PATH="$mockbin:$PATH" "$bro" auth
+grep -q '^setup ' "$log" || { echo 'bro test: auth fallback did not run setup' >&2; exit 1; }
+echo 'bro test: PASSED (apply safety, sync push boundary, auth wrapper, dirty refusal, health)'

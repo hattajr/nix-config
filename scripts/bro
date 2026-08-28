@@ -9,12 +9,13 @@ log() { printf 'bro: %s\n' "$*"; }
 fail() { printf 'bro: ERROR: %s\n' "$*" >&2; exit 1; }
 usage() {
   cat <<'EOF'
-Usage: bro <health|apply|sync> [--push]
+Usage: bro <health|apply|sync|auth> [--push]
 
   bro health        Check the local configuration and optional account setup.
   bro apply         Build and activate this checkout; does not update Git.
   bro sync           Fast-forward from upstream, then apply.
   bro sync --push    As above, and explicitly push local commits after applying.
+  bro auth          Interactively configure accounts and API keys.
 
 BRO_REPOSITORY overrides the installed checkout location.
 EOF
@@ -77,6 +78,16 @@ apply() {
   "$package/activate"
 }
 
+auth() {
+  local setup=${HOME}/.local/bin/nix-config-setup
+  local pass_session=${HOME}/.local/bin/proton-pass-session
+  [ -x "$setup" ] || fail 'account setup is unavailable; run bro apply first'
+  if [ "$(uname -s)" = Linux ] && [ -x "$pass_session" ]; then
+    exec "$pass_session" "$setup"
+  fi
+  exec "$setup"
+}
+
 health() {
   local repo=$1 target=$2 setup=${HOME}/.local/bin/nix-config-setup failed=0
   command -v nix >/dev/null 2>&1 || { log 'FAIL: Nix is unavailable'; return 1; }
@@ -85,10 +96,15 @@ health() {
     || { log "FAIL: platform output is unavailable: $target"; return 1; }
   log "OK: checkout and $target flake output"
   if [ -x "$setup" ]; then
-    if "$setup" --check; then log 'OK: optional account setup check';
-    else log 'FAIL: configured account setup has errors'; failed=1; fi
+    if "$setup" --check; then
+      log 'OK: optional account setup check'
+      log 'AUTH: run bro auth to configure any optional missing accounts'
+    else
+      log 'FAIL: configured account setup has errors; run bro auth'
+      failed=1
+    fi
   else
-    log 'OPTIONAL: account setup is not installed yet'
+    log 'OPTIONAL: account setup is not installed yet; run bro apply first'
   fi
   return "$failed"
 }
@@ -112,12 +128,12 @@ sync() {
 
 main() {
   local command=${1:-} repo target
-  case "$command" in health|apply|sync) ;; -h|--help|'') usage; [ -n "$command" ] && exit 0 || exit 2 ;; *) usage >&2; exit 2;; esac
+  case "$command" in health|apply|sync|auth) ;; -h|--help|'') usage; [ -n "$command" ] && exit 0 || exit 2 ;; *) usage >&2; exit 2;; esac
   shift
   local push=no
   if [ "$command" = sync ] && [ "${1:-}" = --push ]; then push=yes; shift; fi
   [ "$#" = 0 ] || { usage >&2; exit 2; }
   enable_nix_features; repo=$(checkout); target=$(platform)
-  case "$command" in apply) apply "$repo" "$target";; health) health "$repo" "$target";; sync) sync "$repo" "$target" "$push";; esac
+  case "$command" in apply) apply "$repo" "$target";; health) health "$repo" "$target";; sync) sync "$repo" "$target" "$push";; auth) auth;; esac
 }
 main "$@"
