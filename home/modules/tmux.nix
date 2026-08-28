@@ -1,5 +1,16 @@
 { config, pkgs, ... }:
 
+let
+  # Dracula resolves custom widgets relative to its own scripts directory. Keep
+  # our shortcut widget inside the immutable plugin package so it works both
+  # through Home Manager and in a freshly started tmux server.
+  draculaWithKeys = pkgs.tmuxPlugins.dracula.overrideAttrs (old: {
+    postInstall = (old.postInstall or "") + ''
+      cp ${../../config/tmux/keys.sh} "$out/share/tmux-plugins/dracula/scripts/keys.sh"
+      chmod +x "$out/share/tmux-plugins/dracula/scripts/keys.sh"
+    '';
+  });
+in
 {
   programs.tmux = {
     enable = true;
@@ -13,7 +24,18 @@
 
     plugins = with pkgs.tmuxPlugins; [
       sensible
-      dracula
+      {
+        plugin = draculaWithKeys;
+        # Home Manager runs plugin configuration immediately before the plugin.
+        # Dracula must see these settings before its startup script builds the
+        # status line.
+        extraConfig = ''
+          set -g @dracula-plugins "custom:keys.sh git cpu-usage ram-usage"
+          set -g @dracula-custom-plugin-colors "gray white"
+          set -g @dracula-show-left-icon "#h:#S"
+          set-option -g renumber-windows on
+        '';
+      }
     ];
 
     extraConfig = ''
@@ -30,12 +52,6 @@
       unbind C-b
       bind C-Space send-prefix
       set -g repeat-time 2500
-
-      # Dracula status configuration. Home Manager installs the plugin natively.
-      set -g @dracula-plugins "custom:../../../keys.sh git cpu-usage ram-usage"
-      set -g @dracula-custom-plugin-colors "gray white"
-      set -g @dracula-show-left-icon "#h:#S"
-      set-option -g renumber-windows on
 
       bind '"' split-window -v -c "#{pane_current_path}"
       bind % split-window -h -c "#{pane_current_path}"

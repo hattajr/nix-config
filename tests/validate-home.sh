@@ -142,6 +142,10 @@ printf '%s\n' 'docker-validation: checking isolated tmux server'
 tmux -L hm-validation -f "$home_dir/.config/tmux/tmux.conf" new-session -d -s validation
 # A separate socket proves this test did not attach to a host or shared server.
 tmux -L hm-validation has-session -t validation
+status_right=$(tmux -L hm-validation show-options -gv status-right)
+case "$status_right" in
+  *'keys.sh not found!'*) fail 'tmux shortcut status widget was not installed with Dracula' ;;
+esac
 tmux -L hm-validation kill-server
 
 printf '%s\n' 'docker-validation: checking Neovim headless startup'
