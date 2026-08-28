@@ -36,6 +36,8 @@ set -euo pipefail
 printf 'pass-cli %s\n' "$*" >>"$TEST_LOG"
 [ "${1:-}" = run ] || exit 2
 shift
+[ "${1:-}" = --no-masking ] || exit 2
+shift
 [ "${1:-}" = --env-file ] || exit 2
 [ -f "${2:-}" ] || exit 2
 shift 2
@@ -68,7 +70,7 @@ auth_before=$(sha256sum "$home/.pi/agent/auth.json")
 # A configured reference file resolves the Pass environment before Pi starts.
 output=$(pi hello)
 [ "$output" = resolved-test-key ] || { printf '%s\n' 'pi wrapper test: Pass environment was not delivered' >&2; exit 1; }
-grep -Fq "pass-cli run --env-file $home/.config/proton-pass/pi.env -- bash -c" "$logfile" || {
+grep -Fq "pass-cli run --no-masking --env-file $home/.config/proton-pass/pi.env -- bash -c" "$logfile" || {
   printf '%s\n' 'pi wrapper test: pass-cli resolution arguments are wrong' >&2
   exit 1
 }

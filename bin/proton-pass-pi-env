@@ -18,10 +18,12 @@ while IFS= read -r line || [ -n "$line" ]; do
   names+=("${BASH_REMATCH[1]}")
 done <"$pass_env"
 
-# %q makes output safe for the launcher's eval while retaining arbitrary key
-# values. This Bash process is the only pass-cli child whose descriptors may
-# be piped; Pi itself never is.
-exec pass-cli run --env-file "$pass_env" -- bash -c '
+# pass-cli masks resolved values by default, which would make these export
+# statements invalid; --no-masking is safe here because stdout is captured by
+# the launcher rather than displayed. %q makes that captured output safe for
+# eval while retaining arbitrary key values. This Bash process is the only
+# pass-cli child whose descriptors may be piped; Pi itself never is.
+exec pass-cli run --no-masking --env-file "$pass_env" -- bash -c '
   for name; do
     if [[ ! -v $name ]]; then
       printf "error: Proton Pass did not resolve %s\\n" "$name" >&2
