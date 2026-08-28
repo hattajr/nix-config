@@ -12,5 +12,5 @@ The legacy titles `llm-gemini` and `llm-moonshot` remain valid aliases.
 
 Only the three field values are secret. The wizard reads secret-free vault/item
 summaries, creates opaque references from the discovered IDs, and verifies each
-field without displaying its value. If an item is recreated, rerun
-`nix-config-setup`; do not copy IDs or edit `pi.env` manually.
+field without displaying its value. If an item is recreated, rerun `bro auth`;
+do not copy IDs or edit `pi.env` manually.

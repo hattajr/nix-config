@@ -82,14 +82,16 @@ Ownership boundary:
    kernel keyring, which requires neither D-Bus nor a graphical session. Remote
    shells can inherit a revoked keyring; `proton-pass-session` checks it and
    runs `keyctl new_session` only when needed. Kernel keys do not survive a
-   reboot, so rerun login/setup afterward. D-Bus/GNOME Keyring remains an
+   reboot, so rerun `bro auth` afterward. D-Bus/GNOME Keyring remains an
    optional persistent desktop backend, not a bootstrap prerequisite.
-5. **Run the account wizard.** `nix-config-setup` handles interactive Proton
-   login directly, including a hidden restricted-PAT prompt for headless use.
+5. **Run the account wizard.** `bro auth` launches the setup helper in the
+   correct Proton Pass session and handles interactive login, including a
+   hidden restricted-PAT prompt for headless use.
    Users do not set environment variables or invoke raw login commands.
 6. **Discover optional Pi keys.** The wizard checks `Development` for exact
-   item titles `llm-deepseek`, `llm-gemini`, and `llm-moonshot`, each with a
-   hidden `API Key` field. Existing valid references are preserved; prepared
+   item titles `llm-deepseek`, `llm-google`, and `llm-moonshotai`, each with a
+   hidden `API Key` field. The older `llm-gemini` and `llm-moonshot` titles
+   remain valid aliases. Existing valid references are preserved; prepared
    items are found automatically; missing providers offer configure, don't-use,
    and skip-for-now choices. No editor, opaque ID, or reference entry is needed.
 7. **Run account logins after activation.** The same wizard detects Git
@@ -138,7 +140,7 @@ removed once through Pi `/logout`, because Pi gives auth-file entries priority
 over environment variables. The setup helper detects and reports this conflict;
 it does not edit `auth.json`.
 
-When Proton Pass setup needs repair, rerun `nix-config-setup`. The wizard can
+When Proton Pass setup needs repair, rerun `bro auth`. The wizard can
 open Pi with local OAuth only when an account login or API-key cleanup requires
 it; users do not need to manage bypass environment variables.
 

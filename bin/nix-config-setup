@@ -102,7 +102,7 @@ login_proton_pass() {
   if [ "$(uname -s)" = Linux ] \
     && { ! command -v keyctl >/dev/null 2>&1 || ! keyctl show >/dev/null 2>&1; }; then
     warn 'The Linux kernel keyring is unavailable in this shell.'
-    warn 'Exit and rerun nix-config-setup through proton-pass-session.'
+    warn 'Exit and run bro auth to repair the Proton Pass session.'
     STATUS_PROTON='needs a kernel-keyring session'
     return 1
   fi
@@ -570,7 +570,7 @@ print_summary() {
   printf '  %-22s %s\n' 'GitHub CLI' "$STATUS_GITHUB"
   printf '  %-22s %s\n' 'Cloudflare Tunnel' "$STATUS_CLOUDFLARED"
   printf '  %-22s %s\n' 'Wrangler' "$STATUS_WRANGLER"
-  printf '\n  Rerun nix-config-setup whenever you want to finish a skipped item.\n'
+  printf '\n  Rerun bro auth whenever you want to finish a skipped item.\n'
 }
 
 check_status() {

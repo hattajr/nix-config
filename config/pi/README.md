@@ -97,7 +97,7 @@ Pi account/OAuth credentials remain per-machine runtime state in
 keys can stay in Proton Pass: when `~/.config/proton-pass/pi.env` exists, the
 managed `pi` wrapper resolves its non-secret `pass://` references with
 `pass-cli run` and supplies the keys only through Pi's process environment.
-Run `nix-config-setup` after activation to configure this flow.
+Run `bro auth` after activation to configure this flow.
 
 If packages are missing:
 
