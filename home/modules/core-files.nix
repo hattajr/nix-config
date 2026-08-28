@@ -1,10 +1,24 @@
 { ... }:
 
 {
-  # Shared, non-secret user files. Package ownership stays in the package
-  # module; these declarations only install configuration and helpers.
-  xdg.configFile."bottom/bottom.toml".source = ../../config/bottom/bottom.toml;
-  home.file.".inputrc".source = ../../config/inputrc;
+  # Prefer Home Manager's native application modules when they can represent
+  # the complete configuration. Home Manager also owns these packages.
+  programs.bottom = {
+    enable = true;
+    settings = {
+      flags = { };
+      row = [
+        { child = [ { type = "cpu"; } ]; }
+        { child = [ { type = "mem"; } ]; }
+        { child = [ { type = "proc"; default = true; } ]; }
+      ];
+    };
+  };
+
+  programs.readline = {
+    enable = true;
+    variables.enable-bracketed-paste = "on";
+  };
 
   home.file.".local/bin/bro" = {
     source = ../../bin/bro;

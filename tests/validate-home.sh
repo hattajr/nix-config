@@ -89,7 +89,7 @@ profile_bin="$home_dir/.nix-profile/bin"
 export PATH="$home_dir/.local/bin:$profile_bin:$PATH"
 
 printf '%s\n' 'docker-validation: checking managed tools and PATH'
-for tool in git nvim rg tmux zsh fzf gh lazygit lazydocker uv node gcc g++ make python3 pkg-config ssh pi pass-cli lumen cloudflared wrangler keyctl setpriv; do
+for tool in btm git nvim rg tmux zsh fzf gh lazygit lazydocker uv node gcc g++ make python3 pkg-config ssh pi pass-cli lumen cloudflared wrangler keyctl setpriv; do
   command -v "$tool" >/dev/null 2>&1 || fail "managed tool is missing from PATH: $tool"
 done
 
@@ -104,6 +104,12 @@ done
 
 printf '%s\n' 'docker-validation: checking zsh startup and Git configuration'
 zsh -lic '[[ -n "$EDITOR" ]] && [[ "$EDITOR" = nvim ]] && alias n >/dev/null'
+[ -f "$home_dir/.inputrc" ] || fail 'native Readline config was not deployed'
+grep -Fx 'set enable-bracketed-paste on' "$home_dir/.inputrc" >/dev/null \
+  || fail 'Readline bracketed paste was not enabled'
+[ -f "$XDG_CONFIG_HOME/bottom/bottom.toml" ] || fail 'native bottom config was not deployed'
+grep -F 'type = "proc"' "$XDG_CONFIG_HOME/bottom/bottom.toml" >/dev/null \
+  || fail 'bottom process layout was not configured'
 pi --version >/dev/null || fail 'managed Pi executable did not run'
 settings="$home_dir/.pi/agent/settings.json"
 [ -f "$settings" ] || fail 'Pi settings were not created'
@@ -111,6 +117,8 @@ settings="$home_dir/.pi/agent/settings.json"
 jq -e '.lastChangelogVersion == "0.0.0"' "$settings" >/dev/null || fail 'Pi changelog marker is missing'
 [ -f "$home_dir/.pi/agent/agents/planner.md" ] || fail 'Pi agents were not deployed'
 [ -f "$home_dir/.pi/agent/extensions/plan-autoloop.ts" ] || fail 'Pi extensions were not deployed'
+[ -f "$home_dir/.pi/agent/extensions/plans-at-autocomplete.ts" ] \
+  || fail 'Pi PLANS autocomplete extension was not deployed'
 [ -x "$home_dir/.pi/agent/intercepted-commands/python" ] || fail 'Pi command wrappers were not deployed executable'
 [ -x "$home_dir/.local/bin/nix-config-setup" ] || fail 'account setup helper was not deployed'
 [ -x "$home_dir/.local/bin/proton-pass-session" ] || fail 'Proton Pass Linux session helper was not deployed'

@@ -6,7 +6,6 @@
   # use per-project flakes or dev shells.
   home.packages = with pkgs; [
     bat
-    bottom
     bun
     cargo
     cloudflared
@@ -14,7 +13,6 @@
     dprint
     eza
     fd
-    fzf
     gh
     gnumake
     go

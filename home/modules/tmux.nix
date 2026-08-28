@@ -40,8 +40,7 @@
       bind '"' split-window -v -c "#{pane_current_path}"
       bind % split-window -h -c "#{pane_current_path}"
 
-      # Generic tmux clipboard forwarding. The terminal decides whether OSC 52
-      # is accepted; no transport-specific selector override is required.
+      # Generic tmux clipboard forwarding over supported terminals and SSH.
       set -g set-clipboard on
       set -ga terminal-features ",xterm*:clipboard"
       set -g mouse on
@@ -65,10 +64,14 @@
       bind -r J resize-pane -D
       bind -r H resize-pane -L
       bind -r L resize-pane -R
-      bind -r k select-pane -U
-      bind -r j select-pane -D
-      bind -r h select-pane -L
-      bind -r l select-pane -R
+      unbind k
+      unbind j
+      unbind h
+      unbind l
+      bind k select-pane -U
+      bind j select-pane -D
+      bind h select-pane -L
+      bind l select-pane -R
 
       set -g status on
       unbind Up

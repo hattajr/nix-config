@@ -4,6 +4,8 @@
   programs.zsh = {
     enable = true;
     enableCompletion = true;
+    autocd = true;
+    setOptions = [ "INTERACTIVE_COMMENTS" ];
 
     autosuggestion.enable = true;
     syntaxHighlighting.enable = true;
@@ -37,8 +39,6 @@
     };
 
     initContent = ''
-      setopt AUTO_CD INTERACTIVE_COMMENTS
-
       PROMPT='%{$fg[green]%}%n@%m%{$reset_color%} %(?:%{$fg[cyan]%}%1{➜%} :%{$fg[red]%}%1{➜%} ) %{$reset_color%}%~ $(git_prompt_info) '
 
       # tmux helper; tmux itself is configured by the dedicated tmux module.
