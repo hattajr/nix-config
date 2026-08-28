@@ -4,7 +4,4 @@ result-*
 
 # Private planning material
 /PLAN/
-/poc/*
-!/poc/proton-pass-bootstrap/
-/poc/proton-pass-bootstrap/*
-!/poc/proton-pass-bootstrap/README_V2.md
+/poc/
