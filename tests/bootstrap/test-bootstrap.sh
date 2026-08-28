@@ -3,6 +3,8 @@
 set -euo pipefail
 
 repo_root=${BOOTSTRAP_REPO_ROOT:-$(CDPATH='' cd -- "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}
+python3_path=$(command -v python3)
+system_bash=$(command -v bash)
 install_script="$repo_root/scripts/install.sh"
 bootstrap="$repo_root/scripts/bootstrap.sh"
 [ -x "$install_script" ] || { printf '%s\n' 'bootstrap test: install script is not executable' >&2; exit 1; }
@@ -22,7 +24,7 @@ export MOCK_BIN="$mockbin"
 export MOCK_ACTIVATION="$activation"
 
 # Isolate PATH so missing-tool cases are real within the test.
-for command_name in bash env dirname mkdir cp chmod grep cat mktemp rm mv; do
+for command_name in bash env dirname mkdir cp chmod grep cat mktemp rm mv ps tty; do
   command_path=$(command -v "$command_name")
   ln -s "$command_path" "$mockbin/$command_name"
 done
@@ -139,6 +141,10 @@ rm -f "$mockbin/curl"
 NIX_CONFIG_APPLY=no run_bootstrap "$repo_root" >/dev/null
 ! grep -q '^nix ' "$logfile" || { printf '%s\n' 'bootstrap test: decline reached Nix' >&2; exit 1; }
 ! grep -q '^activation$' "$logfile" || { printf '%s\n' 'bootstrap test: decline still activated Home Manager' >&2; exit 1; }
+if NIX_CONFIG_APPLY=invalid run_bootstrap "$repo_root" >/dev/null 2>&1; then
+  printf '%s\n' 'bootstrap test: invalid apply preset unexpectedly succeeded' >&2
+  exit 1
+fi
 : >"$logfile"
 
 # Checkout validation also uses ephemeral Git on a fresh machine.
@@ -161,6 +167,86 @@ grep -Fq 'homeConfigurations.aarch64-linux.activationPackage' "$logfile" || {
 grep -q '^nix build ' "$logfile" || { printf '%s\n' 'bootstrap test: approval did not build activation' >&2; exit 1; }
 grep -q '^activation$' "$logfile" || { printf '%s\n' 'bootstrap test: approval did not activate Home Manager' >&2; exit 1; }
 [ -r "$home/.local/state/bro/checkout" ] || { printf '%s\n' 'bootstrap test: checkout state was not written' >&2; exit 1; }
+
+# A piped installer with a controlling PTY hands managed zsh the concrete
+# terminal device, never the /dev/tty alias rejected by tmux.
+mkdir -p "$home/.nix-profile/bin"
+shell_log="$workdir/managed-shell.log"
+cat >"$home/.nix-profile/bin/zsh" <<'EOF_ZSH'
+#!/usr/bin/env bash
+printf 'managed-tty=%s\n' "$(tty)" >>"$MOCK_SHELL_LOG"
+EOF_ZSH
+chmod +x "$home/.nix-profile/bin/zsh"
+export BOOTSTRAP_UNDER_TEST="$bootstrap" BOOTSTRAP_CHECKOUT="$repo_root" MOCK_SHELL_LOG="$shell_log" SYSTEM_BASH="$system_bash"
+"$python3_path" <<'PY_PTY'
+import errno
+import os
+import pty
+import sys
+
+pid, fd = pty.fork()
+if pid == 0:
+    os.environ.pop("NIX_CONFIG_APPLY", None)
+    os.environ["PATH"] = os.environ["MOCK_BIN"]
+    shell = os.environ["SYSTEM_BASH"]
+    os.execv(shell, ["bash", "-c", 'printf "" | "$BOOTSTRAP_UNDER_TEST" "$BOOTSTRAP_CHECKOUT"'])
+os.write(fd, b"\n")
+while True:
+    try:
+        if not os.read(fd, 4096):
+            break
+    except OSError as error:
+        if error.errno == errno.EIO:
+            break
+        raise
+_, status = os.waitpid(pid, 0)
+if not os.WIFEXITED(status) or os.WEXITSTATUS(status) != 0:
+    sys.exit(1)
+PY_PTY
+grep -Eq '^managed-tty=/dev/.+' "$shell_log" || { printf '%s\n' 'bootstrap test: managed shell did not receive a concrete terminal' >&2; exit 1; }
+! grep -Fxq 'managed-tty=/dev/tty' "$shell_log" || { printf '%s\n' 'bootstrap test: managed shell received the /dev/tty alias' >&2; exit 1; }
+
+# An explicit shell opt-out never launches managed zsh.
+: >"$shell_log"
+NIX_CONFIG_APPLY=yes NIX_CONFIG_START_SHELL=no run_bootstrap "$repo_root" >/dev/null
+[ ! -s "$shell_log" ] || { printf '%s\n' 'bootstrap test: shell opt-out launched managed shell' >&2; exit 1; }
+
+# With no controlling terminal, explicit activation succeeds without launching a shell.
+: >"$shell_log"
+"$python3_path" <<'PY_NO_TTY'
+import os
+import subprocess
+import sys
+
+environment = os.environ.copy()
+environment["NIX_CONFIG_APPLY"] = "yes"
+environment["PATH"] = environment["MOCK_BIN"]
+result = subprocess.run(
+    [environment["BOOTSTRAP_UNDER_TEST"], environment["BOOTSTRAP_CHECKOUT"]],
+    env=environment,
+    stdin=subprocess.DEVNULL,
+    stdout=subprocess.PIPE,
+    stderr=subprocess.STDOUT,
+    start_new_session=True,
+    text=True,
+)
+if result.returncode != 0 or "Managed shell ready" not in result.stdout:
+    sys.exit(1)
+
+environment.pop("NIX_CONFIG_APPLY", None)
+result = subprocess.run(
+    [environment["BOOTSTRAP_UNDER_TEST"], environment["BOOTSTRAP_CHECKOUT"]],
+    env=environment,
+    stdin=subprocess.DEVNULL,
+    stdout=subprocess.PIPE,
+    stderr=subprocess.STDOUT,
+    start_new_session=True,
+    text=True,
+)
+if result.returncode == 0 or "No terminal available" not in result.stdout:
+    sys.exit(1)
+PY_NO_TTY
+[ ! -s "$shell_log" ] || { printf '%s\n' 'bootstrap test: no-TTY bootstrap launched managed shell' >&2; exit 1; }
 : >"$logfile"
 
 # Stage zero auto-detects Linux x86, clones over public HTTPS, and passes the destination.

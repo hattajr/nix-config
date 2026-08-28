@@ -50,30 +50,54 @@ write_checkout_state() {
   chmod 600 "$tmp"
   mv -f "$tmp" "$state"
 }
+resolve_terminal_device() {
+  local tty_name device
+  command -v ps >/dev/null 2>&1 || return 1
+  tty_name=$(ps -o tty= -p "$$" 2>/dev/null) || return 1
+  tty_name=${tty_name#"${tty_name%%[![:space:]]*}"}
+  tty_name=${tty_name%"${tty_name##*[![:space:]]}"}
+  case "$tty_name" in
+    ''|'?'|'??'|tty|/*|'.'|'..'|./*|../*|*/.|*/..|*/./*|*/../*) return 1 ;;
+  esac
+  [[ "$tty_name" =~ ^[[:alnum:]_.-]+(/[[:alnum:]_.-]+)*$ ]] || return 1
+  device=/dev/$tty_name
+  [ -c "$device" ] && [ -r "$device" ] && [ -w "$device" ] || return 1
+  printf '%s\n' "$device"
+}
 start_managed_shell() {
   local managed_zsh="$HOME/.nix-profile/bin/zsh"
   local start_shell=${NIX_CONFIG_START_SHELL:-yes}
+  local terminal_device
   answer_is_no "$start_shell" && { log "Managed shell ready; start it with: exec $managed_zsh -l"; return; }
   answer_is_yes "$start_shell" || fail "invalid NIX_CONFIG_START_SHELL value: $start_shell"
   [ -x "$managed_zsh" ] || { log "Managed shell ready; start it with: exec $managed_zsh -l"; return; }
-  [ -r /dev/tty ] && [ -w /dev/tty ] || { log "Managed shell ready; start it with: exec $managed_zsh -l"; return; }
+  terminal_device=$(resolve_terminal_device) \
+    || { log "Managed shell ready; start it with: exec $managed_zsh -l"; return; }
   log 'Entering the managed zsh login shell'
-  exec "$managed_zsh" -l </dev/tty >/dev/tty 2>&1
+  exec "$managed_zsh" -l <"$terminal_device" >"$terminal_device" 2>&1
 }
 should_apply() {
-  local preset=${NIX_CONFIG_APPLY:-} answer
+  local preset=${NIX_CONFIG_APPLY:-} answer terminal_device
   if [ -n "$preset" ]; then
     answer_is_yes "$preset" && return 0
     answer_is_no "$preset" && return 1
     fail "invalid NIX_CONFIG_APPLY value: $preset"
   fi
-  if [ ! -r /dev/tty ] || [ ! -w /dev/tty ]; then
+  if ! command -v ps >/dev/null 2>&1; then
+    log 'Cannot detect a terminal because ps is unavailable; set NIX_CONFIG_APPLY=yes or NIX_CONFIG_APPLY=no'
+    return 2
+  fi
+  terminal_device=$(resolve_terminal_device) || {
     log 'No terminal available; set NIX_CONFIG_APPLY=yes to activate or NIX_CONFIG_APPLY=no to validate only'
+    return 2
+  }
+  printf 'Apply Home Manager configuration now? [Y/n] ' >"$terminal_device"
+  if IFS= read -r answer <"$terminal_device"; then
+    [ -z "$answer" ] && answer=yes
+  else
+    log 'Input closed; activation cancelled'
     return 1
   fi
-  printf 'Apply Home Manager configuration now? [Y/n] ' >/dev/tty
-  IFS= read -r answer </dev/tty || true
-  [ -z "$answer" ] && answer=yes
   answer_is_yes "$answer" && return 0
   answer_is_no "$answer" && return 1
   fail "invalid yes/no answer: $answer"
@@ -81,9 +105,19 @@ should_apply() {
 main() {
   case "${1:-}" in -h|--help) usage; exit 0;; esac
   local repo=${1:-${NIX_CONFIG_REPOSITORY:-$DEFAULT_DESTINATION}}
+  local apply_status
   validate_checkout "$repo"
   write_checkout_state "$repo"
-  if ! should_apply; then log 'Bootstrap finished without activation'; return 0; fi
+  if should_apply; then
+    :
+  else
+    apply_status=$?
+    if [ "$apply_status" -eq 1 ]; then
+      log 'Bootstrap finished without activation'
+      return 0
+    fi
+    return "$apply_status"
+  fi
   NIX_CONFIG_REPOSITORY_URL="$EXPECTED_ORIGIN" "$repo/scripts/bro" apply
   NIX_CONFIG_REPOSITORY_URL="$EXPECTED_ORIGIN" "$repo/scripts/bro" health
   log 'Bootstrap complete'
