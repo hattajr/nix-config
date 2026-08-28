@@ -42,8 +42,24 @@ esac
 EOF
 chmod +x "$mockbin/git" "$mockbin/nix"
 export BRO_LOG="$log" BRO_ACTIVATION="$work/activation" BRO_REPOSITORY="$checkout"
-PATH="$mockbin:$PATH" "$bro" apply >/dev/null
+apply_home="$work/apply-home"
+mkdir -p "$apply_home/.nix-profile/bin" "$apply_home/.config/tmux"
+printf '%s\n' '# test configuration' >"$apply_home/.config/tmux/tmux.conf"
+cat >"$apply_home/.nix-profile/bin/tmux" <<'EOF'
+#!/bin/sh
+printf 'tmux %s\n' "$*" >>"$BRO_LOG"
+EOF
+chmod +x "$apply_home/.nix-profile/bin/tmux"
+HOME="$apply_home" PATH="$mockbin:$PATH" "$bro" apply >/dev/null
 grep -q '^activation$' "$log"
+grep -Fq "tmux source-file $apply_home/.config/tmux/tmux.conf" "$log" || {
+  echo 'bro test: apply did not reload an active managed tmux server' >&2
+  exit 1
+}
+grep -q 'reloaded active tmux configuration' <(HOME="$apply_home" PATH="$mockbin:$PATH" "$bro" apply) || {
+  echo 'bro test: apply did not report tmux configuration reload' >&2
+  exit 1
+}
 ! grep -Eq '^git .* (fetch|push)($| )' "$log" || { echo 'bro test: apply used Git network operation' >&2; exit 1; }
 : >"$log"
 printf dirty >"$checkout/dirty"

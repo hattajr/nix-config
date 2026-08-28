@@ -76,6 +76,16 @@ apply() {
   [ -x "$package/activate" ] || fail 'built activation package has no executable activate script'
   log "activating $target"
   "$package/activate"
+
+  # Home Manager updates the configuration link, but an already-running tmux
+  # server keeps its previous status-line/plugin state until it is reloaded.
+  # Do not start a server merely to reload it.
+  local tmux_binary="$HOME/.nix-profile/bin/tmux"
+  local tmux_config="${XDG_CONFIG_HOME:-$HOME/.config}/tmux/tmux.conf"
+  if [ -x "$tmux_binary" ] && [ -r "$tmux_config" ] \
+    && "$tmux_binary" source-file "$tmux_config" >/dev/null 2>&1; then
+    log 'reloaded active tmux configuration'
+  fi
 }
 
 auth() {
