@@ -10,7 +10,6 @@
     btop
     bun
     cargo
-    chromium
     cloudflared
     claude-code
     deno
@@ -18,7 +17,6 @@
     eza
     fd
     gh
-    google-chrome
     gnumake
     go
     jq
@@ -36,7 +34,9 @@
     uv
     wrangler
   ] ++ lib.optionals pkgs.stdenv.hostPlatform.isLinux [
+    chromium
     gcc
+    google-chrome
     keyutils
     util-linuxMinimal
     xclip
