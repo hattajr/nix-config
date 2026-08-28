@@ -26,9 +26,12 @@ The legacy titles `llm-gemini` and `llm-moonshot` are also recognized. Keep
 the wizard open while adding a missing item, then choose retry. It finds the
 item automatically and validates the field without displaying its value.
 
-GitHub CLI, Pi account providers, Cloudflare Tunnel, and Wrangler use their own
-interactive OAuth/browser login flows; no additional secret needs to be stored
-in Proton Pass. Git author name and email are not secrets and can be entered
+Claude Code, GitHub CLI, Pi account providers, Cloudflare Tunnel, and Wrangler use
+their own interactive OAuth/browser login flows; no additional secret needs to be stored
+in Proton Pass. On Linux, the wizard also installs Tailscale through its official
+installer when absent, starts `tailscaled` with `sudo` when needed, and runs
+`tailscale up` for browser authentication. It asks for the sudo password
+interactively; Tailscale is not managed on macOS. Git author name and email are not secrets and can be entered
 directly in the wizard; they are stored in the writable
 `~/.config/git/identity` include rather than Home Manager's read-only Git
 configuration. A Proton Pass personal access token is needed only when

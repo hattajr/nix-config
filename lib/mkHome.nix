@@ -3,6 +3,8 @@
 let
   pkgs = import inputs.nixpkgs {
     inherit system;
+    config.allowUnfreePredicate = pkg:
+      builtins.elem (inputs.nixpkgs.lib.getName pkg) [ "google-chrome" ];
   };
 in
 inputs.home-manager.lib.homeManagerConfiguration {

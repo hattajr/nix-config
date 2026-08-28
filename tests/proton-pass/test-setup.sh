@@ -113,6 +113,36 @@ EOF_ITEMS
 esac
 EOF_PASS
 
+cat >"$mockbin/tailscale" <<'EOF_TAILSCALE'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'tailscale %s\n' "$*" >>"$TEST_LOG"
+case "${1:-}" in
+  status)
+    [ "${2:-}" = --json ] || exit 2
+    if [ -f "$TEST_STATE/tailscale" ]; then
+      printf '%s\n' '{"BackendState":"Running"}'
+    else
+      printf '%s\n' '{"BackendState":"NeedsLogin"}'
+    fi
+    ;;
+  up) touch "$TEST_STATE/tailscale" ;;
+  *) exit 2 ;;
+esac
+EOF_TAILSCALE
+
+cat >"$mockbin/claude" <<'EOF_CLAUDE'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'claude %s\n' "$*" >>"$TEST_LOG"
+[ "${1:-}" = auth ] || exit 2
+case "${2:-}" in
+  status) [ -f "$TEST_STATE/claude" ] ;;
+  login) touch "$TEST_STATE/claude" ;;
+  *) exit 2 ;;
+esac
+EOF_CLAUDE
+
 cat >"$mockbin/gh" <<'EOF_GH'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -153,7 +183,7 @@ cat >"$mockbin/nvim" <<'EOF_NVIM'
 printf '%s\n' 'setup test: editor must not be opened' >&2
 exit 99
 EOF_NVIM
-chmod +x "$mockbin/pass-cli" "$mockbin/gh" "$mockbin/cloudflared" \
+chmod +x "$mockbin/pass-cli" "$mockbin/tailscale" "$mockbin/claude" "$mockbin/gh" "$mockbin/cloudflared" \
   "$mockbin/wrangler" "$mockbin/pi" "$mockbin/nvim"
 
 export HOME="$home"
@@ -162,7 +192,7 @@ export PI_CODING_AGENT_DIR="$home/.pi/agent"
 export TEST_LOG="$logfile"
 export TEST_STATE="$state"
 export PATH="$mockbin:$system_path"
-touch "$state/gh" "$state/wrangler"
+touch "$state/tailscale" "$state/claude" "$state/gh" "$state/wrangler"
 
 # Match Home Manager: XDG's Git config is a read-only managed symlink that
 # includes a separate writable identity file.
@@ -188,6 +218,8 @@ chmod 600 "$home/.config/proton-pass/pi.env"
 output=$("$repo_root/bin/nix-config-setup" --check)
 grep -Eq 'DeepSeek API key +ready' <<<"$output" || { printf '%s\n' 'setup test: DeepSeek status is wrong' >&2; exit 1; }
 grep -Eq 'Pi account login +ready' <<<"$output" || { printf '%s\n' 'setup test: OAuth status is wrong' >&2; exit 1; }
+grep -Eq 'Claude Code +ready' <<<"$output" || { printf '%s\n' 'setup test: Claude Code status is wrong' >&2; exit 1; }
+grep -Eq 'Tailscale +ready' <<<"$output" || { printf '%s\n' 'setup test: Tailscale status is wrong' >&2; exit 1; }
 grep -Eq 'GitHub CLI +ready' <<<"$output" || { printf '%s\n' 'setup test: GitHub status is wrong' >&2; exit 1; }
 grep -Eq 'Cloudflare Tunnel +ready' <<<"$output" || { printf '%s\n' 'setup test: cloudflared status is wrong' >&2; exit 1; }
 grep -Eq 'Wrangler +ready' <<<"$output" || { printf '%s\n' 'setup test: Wrangler status is wrong' >&2; exit 1; }
@@ -250,10 +282,12 @@ grep -q '^GEMINI_API_KEY=' "$home/.config/proton-pass/pi.env" || { printf '%s\n'
 # Missing account state is handled inside the wizard: direct values for Git,
 # and each service's own login command for authentication.
 rm -f "$home/.pi/agent/auth.json" "$home/.config/git/identity" \
-  "$home/.cloudflared/cert.pem" "$state/gh" "$state/wrangler"
-account_input=$'s\n\nWizard User\n\nwizard@example.com\n\ny\ny\n'
+  "$home/.cloudflared/cert.pem" "$state/tailscale" "$state/claude" "$state/gh" "$state/wrangler"
+account_input=$'s\n\n\nWizard User\n\nwizard@example.com\n\ny\ny\n'
 account_output=$(run_pty "$account_input")
 grep -Fq 'Pi account login       skipped for now' <<<"$account_output" || { printf '%s\n' 'setup test: Pi login skip was not summarized' >&2; exit 1; }
+grep -Fq 'Claude Code            ready' <<<"$account_output" || { printf '%s\n' 'setup test: Claude Code login was not completed' >&2; exit 1; }
+grep -Fq 'Tailscale              ready' <<<"$account_output" || { printf '%s\n' 'setup test: Tailscale login was not completed' >&2; exit 1; }
 grep -Fq 'Git identity           ready (Wizard User <wizard@example.com>)' <<<"$account_output" || { printf '%s\n' 'setup test: Git identity was not collected' >&2; exit 1; }
 [ -L "$home/.config/git/config" ] || { printf '%s\n' 'setup test: managed Git config symlink was replaced' >&2; exit 1; }
 [ "$(git config --file "$home/.config/git/identity" user.name)" = 'Wizard User' ] || { printf '%s\n' 'setup test: Git name was not written to the identity include' >&2; exit 1; }
@@ -261,6 +295,8 @@ grep -Fq 'Git identity           ready (Wizard User <wizard@example.com>)' <<<"$
 grep -Fq 'GitHub CLI             ready' <<<"$account_output" || { printf '%s\n' 'setup test: GitHub login was not completed' >&2; exit 1; }
 grep -Fq 'Cloudflare Tunnel      ready' <<<"$account_output" || { printf '%s\n' 'setup test: cloudflared login was not completed' >&2; exit 1; }
 grep -Fq 'Wrangler               ready' <<<"$account_output" || { printf '%s\n' 'setup test: Wrangler login was not completed' >&2; exit 1; }
+grep -Fq 'claude auth login' "$logfile" || { printf '%s\n' 'setup test: Claude Code login command did not run' >&2; exit 1; }
+grep -Fq 'tailscale up' "$logfile" || { printf '%s\n' 'setup test: Tailscale login command did not run' >&2; exit 1; }
 grep -Fq 'gh auth login' "$logfile" || { printf '%s\n' 'setup test: GitHub login command did not run' >&2; exit 1; }
 grep -Fq 'cloudflared tunnel login' "$logfile" || { printf '%s\n' 'setup test: cloudflared login command did not run' >&2; exit 1; }
 grep -Fq 'wrangler login' "$logfile" || { printf '%s\n' 'setup test: Wrangler login command did not run' >&2; exit 1; }

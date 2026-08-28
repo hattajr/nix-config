@@ -15,6 +15,8 @@ readonly PROVIDER_ITEM_ALIASES=('' llm-gemini llm-moonshot)
 STATUS_PROTON='not configured'
 STATUS_PI_KEYS='not configured'
 STATUS_PI_LOGIN='not configured'
+STATUS_CLAUDE='not configured'
+STATUS_TAILSCALE='not configured'
 STATUS_GIT_IDENTITY='not configured'
 STATUS_GITHUB='not configured'
 STATUS_CLOUDFLARED='not configured'
@@ -45,8 +47,8 @@ usage() {
 Usage: nix-config-setup [--check]
 
 Without options, opens an editor-free setup wizard for optional Proton Pass
-API keys, Pi account login, Git identity, GitHub CLI, Cloudflare Tunnel, and
-Wrangler. It is safe to rerun: ready accounts and references are preserved.
+API keys, Pi and Claude Code account login, Tailscale, Git identity, GitHub CLI,
+Cloudflare Tunnel, and Wrangler. It is safe to rerun: ready accounts and references are preserved.
 
 --check  report current setup status without prompting or changing files
 EOF
@@ -397,6 +399,83 @@ pi_has_account_login() {
   ' "$pi_auth"
 }
 
+configure_claude() {
+  section 'Claude Code account login'
+  if ! command -v claude >/dev/null 2>&1; then
+    STATUS_CLAUDE='unavailable; Claude Code is not installed'
+    warn "$STATUS_CLAUDE"
+    return
+  fi
+  if claude auth status >/dev/null 2>&1; then
+    STATUS_CLAUDE=ready
+    log 'Claude Code is already authenticated.'
+    return
+  fi
+  ask_optional 'Authenticate Claude Code now?' yes
+  case "$CHOICE" in
+    yes)
+      if claude auth login && claude auth status >/dev/null 2>&1; then
+        STATUS_CLAUDE=ready
+      else
+        STATUS_CLAUDE='login not completed'
+        warn 'Claude Code authentication is still incomplete.'
+      fi
+      ;;
+    no) STATUS_CLAUDE='not used' ;;
+    skip) STATUS_CLAUDE='skipped for now' ;;
+  esac
+}
+
+tailscale_running() {
+  command -v tailscale >/dev/null 2>&1 \
+    && tailscale status --json 2>/dev/null | jq -e '.BackendState == "Running"' >/dev/null 2>&1
+}
+
+install_tailscale() {
+  command -v curl >/dev/null 2>&1 || {
+    warn 'Tailscale installation requires curl, which is not installed.'
+    return 1
+  }
+  log 'Tailscale is missing; the official installer will request sudo if needed.'
+  sudo -v || return 1
+  curl -fsSL https://tailscale.com/install.sh | sh
+}
+
+configure_tailscale() {
+  section 'Tailscale'
+  if [ "$(uname -s)" != Linux ]; then
+    STATUS_TAILSCALE='not managed (Linux only)'
+    return
+  fi
+  if ! command -v tailscale >/dev/null 2>&1; then
+    if ! install_tailscale; then
+      STATUS_TAILSCALE='installation not completed'
+      warn 'Tailscale installation is incomplete.'
+      return
+    fi
+  fi
+  if ! tailscale status --json >/dev/null 2>&1; then
+    log 'Starting the Tailscale daemon; sudo may request your password.'
+    if ! sudo systemctl enable --now tailscaled; then
+      STATUS_TAILSCALE='daemon is not running'
+      warn 'Could not start tailscaled.'
+      return
+    fi
+  fi
+  if tailscale_running; then
+    STATUS_TAILSCALE=ready
+    log 'Tailscale is connected.'
+    return
+  fi
+  log 'Tailscale needs authentication; follow the browser link or instructions.'
+  if tailscale up && tailscale_running; then
+    STATUS_TAILSCALE=ready
+  else
+    STATUS_TAILSCALE='login not completed'
+    warn 'Tailscale authentication is still incomplete.'
+  fi
+}
+
 configure_pi_login() {
   section 'Pi account login'
   if ! command -v pi >/dev/null 2>&1 || ! command -v node >/dev/null 2>&1; then
@@ -566,6 +645,8 @@ print_summary() {
   done
   printf '  %-22s %s\n' 'Pi API injection' "$STATUS_PI_KEYS"
   printf '  %-22s %s\n' 'Pi account login' "$STATUS_PI_LOGIN"
+  printf '  %-22s %s\n' 'Claude Code' "$STATUS_CLAUDE"
+  printf '  %-22s %s\n' 'Tailscale' "$STATUS_TAILSCALE"
   printf '  %-22s %s\n' 'Git identity' "$STATUS_GIT_IDENTITY"
   printf '  %-22s %s\n' 'GitHub CLI' "$STATUS_GITHUB"
   printf '  %-22s %s\n' 'Cloudflare Tunnel' "$STATUS_CLOUDFLARED"
@@ -618,6 +699,24 @@ check_status() {
     printf '  %-22s %s\n' 'Pi account login' ready
   else
     printf '  %-22s %s\n' 'Pi account login' 'not configured (optional)'
+  fi
+  if ! command -v claude >/dev/null 2>&1; then
+    printf '  %-22s %s\n' 'Claude Code' 'unavailable; Claude Code is not installed'
+  elif claude auth status >/dev/null 2>&1; then
+    printf '  %-22s %s\n' 'Claude Code' ready
+  else
+    printf '  %-22s %s\n' 'Claude Code' 'not authenticated (optional)'
+  fi
+  if [ "$(uname -s)" != Linux ]; then
+    printf '  %-22s %s\n' 'Tailscale' 'not managed (Linux only)'
+  elif ! command -v tailscale >/dev/null 2>&1; then
+    printf '  %-22s %s\n' 'Tailscale' 'not installed'
+  elif tailscale_running; then
+    printf '  %-22s %s\n' 'Tailscale' ready
+  elif tailscale status --json >/dev/null 2>&1; then
+    printf '  %-22s %s\n' 'Tailscale' 'not authenticated (optional)'
+  else
+    printf '  %-22s %s\n' 'Tailscale' 'daemon is not running'
   fi
   if command -v git >/dev/null 2>&1; then
     name=$(git config --global --includes --get user.name 2>/dev/null || true)
@@ -676,6 +775,8 @@ main() {
   fi
 
   configure_pi_login
+  configure_claude
+  configure_tailscale
   configure_git_identity
   configure_github
   configure_cloudflared
