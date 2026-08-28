@@ -24,6 +24,7 @@
     lumen
     nodejs
     pkg-config
+    procps
     proton-pass-cli
     python3
     ripgrep

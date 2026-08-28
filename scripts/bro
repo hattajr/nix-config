@@ -9,11 +9,10 @@ log() { printf 'bro: %s\n' "$*"; }
 fail() { printf 'bro: ERROR: %s\n' "$*" >&2; exit 1; }
 usage() {
   cat <<'EOF'
-Usage: bro <health|apply|resume|sync|auth> [--push]
+Usage: bro <health|apply|sync|auth> [--push]
 
   bro health        Check core shell health and optional account setup.
-  bro apply         Build and activate, then refresh an interactive shell.
-  bro resume        Start a managed shell on the current concrete terminal.
+  bro apply         Build and activate this checkout; does not update Git.
   bro sync           Fast-forward from upstream, then apply.
   bro sync --push    As above, and explicitly push local commits after applying.
   bro auth          Interactively configure accounts and API keys.
@@ -79,34 +78,6 @@ apply() {
   "$package/activate"
 }
 
-resolve_terminal_device() {
-  local tty_name device
-  command -v ps >/dev/null 2>&1 || return 1
-  tty_name=$(ps -o tty= -p "$$" 2>/dev/null) || return 1
-  tty_name=${tty_name#"${tty_name%%[![:space:]]*}"}
-  tty_name=${tty_name%"${tty_name##*[![:space:]]}"}
-  case "$tty_name" in
-    ''|'?'|'??'|tty|/*|'.'|'..'|./*|../*|*/.|*/..|*/./*|*/../*) return 1 ;;
-  esac
-  [[ "$tty_name" =~ ^[[:alnum:]_.-]+(/[[:alnum:]_.-]+)*$ ]] || return 1
-  device=/dev/$tty_name
-  [ -c "$device" ] && [ -r "$device" ] && [ -w "$device" ] || return 1
-  printf '%s\n' "$device"
-}
-
-resume() {
-  local managed_zsh="$HOME/.nix-profile/bin/zsh" terminal_device
-  [ -x "$managed_zsh" ] || fail 'managed zsh is unavailable; run bro apply first'
-  terminal_device=$(resolve_terminal_device) || {
-    log 'SKIP: no concrete interactive terminal; configuration is active'
-    return 0
-  }
-  log 'starting a fresh managed zsh on the current terminal'
-  # Home Manager intentionally inherits the OS locale. Clear only an inherited
-  # process override; this never changes host locale configuration.
-  env -u LC_ALL "$managed_zsh" -l <"$terminal_device" >"$terminal_device" 2>&1
-}
-
 auth() {
   local setup=${HOME}/.local/bin/nix-config-setup
   local pass_session=${HOME}/.local/bin/proton-pass-session
@@ -169,14 +140,6 @@ health() {
     log 'CORE FAIL: managed tmux or configuration is unavailable'; core_failed=1
   fi
 
-  if resolve_terminal_device >/dev/null; then
-    log 'OK: concrete interactive terminal'
-  elif [ -t 0 ] || [ -t 1 ] || [ -t 2 ]; then
-    log 'CORE FAIL: interactive shell has no usable concrete terminal'; core_failed=1
-  else
-    log 'CORE SKIP: no interactive terminal'
-  fi
-
   if [ -x "$setup" ]; then
     if "$setup" --check; then
       log 'OK: optional account setup check'
@@ -211,15 +174,14 @@ sync() {
 
 main() {
   local command=${1:-} repo target
-  case "$command" in health|apply|resume|sync|auth) ;; -h|--help|'') usage; [ -n "$command" ] && exit 0 || exit 2 ;; *) usage >&2; exit 2;; esac
+  case "$command" in health|apply|sync|auth) ;; -h|--help|'') usage; [ -n "$command" ] && exit 0 || exit 2 ;; *) usage >&2; exit 2;; esac
   shift
   local push=no
   if [ "$command" = sync ] && [ "${1:-}" = --push ]; then push=yes; shift; fi
   [ "$#" = 0 ] || { usage >&2; exit 2; }
   enable_nix_features; repo=$(checkout); target=$(platform)
   case "$command" in
-    apply) apply "$repo" "$target"; resume;;
-    resume) resume;;
+    apply) apply "$repo" "$target";;
     health) health "$repo" "$target";;
     sync) sync "$repo" "$target" "$push";;
     auth) auth;;

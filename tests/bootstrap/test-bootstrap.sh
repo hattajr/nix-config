@@ -19,6 +19,7 @@ activation="$workdir/activation"
 mkdir -p "$mockbin" "$home/src"
 : >"$logfile"
 export HOME="$home"
+export XDG_STATE_HOME="$home/.local/state"
 export MOCK_LOG="$logfile"
 export MOCK_BIN="$mockbin"
 export MOCK_ACTIVATION="$activation"
@@ -50,6 +51,22 @@ case "${1:-}" in
     cat >"$MOCK_ACTIVATION/activate" <<'EOF_ACTIVATE'
 #!/usr/bin/env bash
 printf 'activation\n' >>"$MOCK_LOG"
+mkdir -p "$HOME/.nix-profile/bin" "$HOME/.config/tmux"
+if [ ! -x "$HOME/.nix-profile/bin/zsh" ]; then
+  cat >"$HOME/.nix-profile/bin/zsh" <<'EOF_ZSH'
+#!/usr/bin/env bash
+exit 0
+EOF_ZSH
+  chmod +x "$HOME/.nix-profile/bin/zsh"
+fi
+if [ ! -x "$HOME/.nix-profile/bin/tmux" ]; then
+  cat >"$HOME/.nix-profile/bin/tmux" <<'EOF_TMUX'
+#!/usr/bin/env bash
+exit 0
+EOF_TMUX
+  chmod +x "$HOME/.nix-profile/bin/tmux"
+fi
+: >"$HOME/.config/tmux/tmux.conf"
 EOF_ACTIVATE
     chmod +x "$MOCK_ACTIVATION/activate"
     printf '%s\n' "$MOCK_ACTIVATION"
@@ -86,7 +103,11 @@ elif [ "${1:-}" = -C ] && [ "${3:-}" = remote ] && [ "${4:-}" = get-url ]; then
 fi
 EOF_GIT
 
-chmod +x "$mockbin/nix" "$mockbin/uname" "$workdir/git.stub" "$workdir/bootstrap.stub"
+cat >"$mockbin/locale" <<'EOF_LOCALE'
+#!/usr/bin/env bash
+printf '%s\n' 'LANG=C.UTF-8' 'LC_CTYPE="C.UTF-8"' 'LC_ALL='
+EOF_LOCALE
+chmod +x "$mockbin/nix" "$mockbin/uname" "$mockbin/locale" "$workdir/git.stub" "$workdir/bootstrap.stub"
 export MOCK_GIT_STUB="$workdir/git.stub"
 export MOCK_BOOTSTRAP_STUB="$workdir/bootstrap.stub"
 # Bootstrap validates its own checkout before activation, so Git is available
@@ -174,6 +195,7 @@ mkdir -p "$home/.nix-profile/bin"
 shell_log="$workdir/managed-shell.log"
 cat >"$home/.nix-profile/bin/zsh" <<'EOF_ZSH'
 #!/usr/bin/env bash
+[ "${1:-}" = -lic ] && exit 0
 printf 'managed-tty=%s\n' "$(tty)" >>"$MOCK_SHELL_LOG"
 EOF_ZSH
 chmod +x "$home/.nix-profile/bin/zsh"

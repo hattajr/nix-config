@@ -110,7 +110,6 @@
   ];
 
   home.sessionVariables = {
-    TERM = "xterm-256color";
     COLORTERM = "truecolor";
     EDITOR = "nvim";
     VISUAL = "nvim";
