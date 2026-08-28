@@ -67,18 +67,29 @@ activate() {
 printf '%s\n' 'docker-validation: first disposable activation'
 activate first
 
+nvim_lockfile="$XDG_STATE_HOME/nvim/lazy/lazy-lock.json"
+nvim_baseline="$XDG_STATE_HOME/nvim/lazy/managed-lazy-lock.json"
+[ -f "$nvim_lockfile" ] || fail 'activation did not seed the writable Lazy lockfile'
+[ -f "$nvim_baseline" ] || fail 'activation did not record the managed Lazy baseline'
+# Simulate a harmless Lazy update. Activation must not discard a user-modified
+# operational lockfile, even when the repository baseline is redeployed.
+printf '\n' >>"$nvim_lockfile"
+user_lock_hash=$(nix hash file "$nvim_lockfile")
+
 printf '%s\n' 'docker-validation: second activation and idempotence check'
-first_snapshot=$(find "$home_dir" -mindepth 1 -maxdepth 3 -printf '%P\n' | sort)
+first_snapshot=$(find "$home_dir" -mindepth 1 -maxdepth 4 -printf '%P\n' | sort)
 activate second
-second_snapshot=$(find "$home_dir" -mindepth 1 -maxdepth 3 -printf '%P\n' | sort)
+second_snapshot=$(find "$home_dir" -mindepth 1 -maxdepth 4 -printf '%P\n' | sort)
 [ "$first_snapshot" = "$second_snapshot" ] || fail 'second activation changed the managed file layout'
+[ "$(nix hash file "$nvim_lockfile")" = "$user_lock_hash" ] \
+  || fail 'second activation discarded a user-modified Lazy lockfile'
 
 profile_bin="$home_dir/.nix-profile/bin"
 [ -d "$profile_bin" ] || fail 'Home Manager profile bin directory was not created'
 export PATH="$home_dir/.local/bin:$profile_bin:$PATH"
 
 printf '%s\n' 'docker-validation: checking managed tools and PATH'
-for tool in git nvim rg tmux zsh fzf gh lazygit lazydocker uv node gcc ssh pi pass-cli lumen cloudflared keyctl; do
+for tool in git nvim rg tmux zsh fzf gh lazygit lazydocker uv node gcc g++ make python3 pkg-config ssh pi pass-cli lumen cloudflared wrangler keyctl setpriv; do
   command -v "$tool" >/dev/null 2>&1 || fail "managed tool is missing from PATH: $tool"
 done
 
@@ -113,6 +124,11 @@ pi-models-sync >/dev/null 2>&1 || fail 'Pi model sync wrapper failed'
 git_editor=$(git config --get core.editor || true)
 [ "$git_editor" = vim ] || fail "Git core.editor was not configured (value: $git_editor)"
 git config --get-regexp '^alias\.' >/dev/null || fail 'Git aliases were not configured'
+[ -L "$XDG_CONFIG_HOME/git/config" ] || fail 'Git declarative config is not a managed symlink'
+# Home Manager intentionally emits a literal tilde for Git to expand.
+# shellcheck disable=SC2088
+git config --get-all include.path | grep -Fx '~/.config/git/identity' >/dev/null \
+  || fail 'Git writable identity include was not configured'
 
 printf '%s\n' 'docker-validation: checking isolated tmux server'
 tmux -L hm-validation -f "$home_dir/.config/tmux/tmux.conf" new-session -d -s validation
@@ -121,7 +137,29 @@ tmux -L hm-validation has-session -t validation
 tmux -L hm-validation kill-server
 
 printf '%s\n' 'docker-validation: checking Neovim headless startup'
-nvim --headless '+qa!'
+[ "$(jq -c . "$XDG_CONFIG_HOME/nvim/lazy-lock.json")" = "$(jq -c . "$nvim_lockfile")" ] \
+  || fail 'seeded Lazy lockfile does not match the managed lockfile'
+# Run as an ordinary user so store-backed config writes and permission errors
+# cannot be hidden by root's elevated access.
+chown 30033:1000 "$home_dir"
+chown -R 30033:1000 "$XDG_DATA_HOME" "$XDG_STATE_HOME" "$XDG_CACHE_HOME"
+set +e
+nvim_output=$(setpriv --reuid=30033 --regid=1000 --clear-groups \
+  env HOME="$HOME" XDG_CONFIG_HOME="$XDG_CONFIG_HOME" \
+  XDG_DATA_HOME="$XDG_DATA_HOME" XDG_STATE_HOME="$XDG_STATE_HOME" \
+  XDG_CACHE_HOME="$XDG_CACHE_HOME" PATH="$PATH" \
+  NIX_CONFIG_TEST_NO_PLUGIN_INSTALL=1 nvim --headless '+qa!' 2>&1)
+nvim_status=$?
+set -e
+[ "$nvim_status" -eq 0 ] || { printf '%s\n' "$nvim_output" >&2; fail 'Neovim headless startup failed'; }
+if grep -Eiq 'E5113|Permission denied' <<<"$nvim_output"; then
+  printf '%s\n' "$nvim_output" >&2
+  fail 'Neovim attempted to write read-only managed configuration'
+fi
+[ -f "$nvim_lockfile" ] || fail 'Neovim removed its writable Lazy lockfile'
+[ ! -L "$nvim_lockfile" ] || fail 'Neovim Lazy lockfile is still a read-only symlink'
+setpriv --reuid=30033 --regid=1000 --clear-groups test -w "$nvim_lockfile" \
+  || fail 'Neovim Lazy lockfile is not writable by the user'
 
 printf '%s\n' 'docker-validation: running credential-free bootstrap and Proton Pass tests'
 BOOTSTRAP_REPO_ROOT="$source_root" "$source_root/tests/bootstrap/test-bootstrap.sh"

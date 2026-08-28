@@ -100,15 +100,15 @@ grep -Fq "proton-pass-session $home/.local/bin/pi repaired-keyring" "$logfile" |
 rm -f "$supportbin/keyctl" "$supportbin/proton-pass-session"
 : >"$logfile"
 
-# A configured file fails closed when pass-cli is missing and explains bypass.
+# A configured file fails closed when pass-cli is missing and directs setup repair.
 rm -f "$passbin/pass-cli"
 set +e
 missing_output=$(pi 2>&1)
 missing_status=$?
 set -e
 [ "$missing_status" -eq 127 ] || { printf '%s\n' 'pi wrapper test: missing pass-cli did not fail' >&2; exit 1; }
-grep -Fq 'PI_SKIP_PROTON_PASS=1' <<<"$missing_output" || {
-  printf '%s\n' 'pi wrapper test: missing pass-cli did not explain OAuth bypass' >&2
+grep -Fq 'run nix-config-setup' <<<"$missing_output" || {
+  printf '%s\n' 'pi wrapper test: missing pass-cli did not direct setup repair' >&2
   exit 1
 }
 ! grep -q '^real-pi ' "$logfile" || { printf '%s\n' 'pi wrapper test: missing pass-cli still started Pi' >&2; exit 1; }

@@ -5,6 +5,11 @@
     enable = true;
 
     # Identity is intentionally host/user-specific and is not invented here.
+    # Keep it writable while the generated XDG Git config remains declarative.
+    includes = [
+      { path = "~/.config/git/identity"; }
+    ];
+
     settings = {
       core = {
         editor = "vim";

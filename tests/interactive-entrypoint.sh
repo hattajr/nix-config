@@ -27,15 +27,6 @@ export PATH="$HOME/.nix-profile/bin:$HOME/.local/bin:$PATH"
 PYTHON=$(command -v python3)
 export PYTHON
 
-# Home Manager links the checked-in Neovim tree read-only. Make a disposable
-# writable copy so LazyVim can update lazy-lock.json and plugin state.
-if [ -L "$XDG_CONFIG_HOME/nvim" ]; then
-  cp -rL "$XDG_CONFIG_HOME/nvim" "$XDG_CONFIG_HOME/nvim.mutable"
-  rm "$XDG_CONFIG_HOME/nvim"
-  mv "$XDG_CONFIG_HOME/nvim.mutable" "$XDG_CONFIG_HOME/nvim"
-  chmod -R u+rwX "$XDG_CONFIG_HOME/nvim"
-fi
-
 command -v nvim >/dev/null || { printf '%s\n' 'test-interactive: nvim is missing' >&2; exit 1; }
 command -v pi >/dev/null || { printf '%s\n' 'test-interactive: pi is missing' >&2; exit 1; }
 command -v iconv >/dev/null || { printf '%s\n' 'test-interactive: iconv is missing' >&2; exit 1; }

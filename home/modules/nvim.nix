@@ -1,4 +1,4 @@
-{ pkgs, ... }:
+{ lib, pkgs, ... }:
 
 let
   # The Chezmoi setup builds Neovim from source. Select nixpkgs' unwrapped
@@ -25,6 +25,31 @@ in
   # Keep the LazyVim source tree in Git while allowing Neovim's mutable state
   # and downloaded plugins to live under XDG_DATA_HOME.
   xdg.configFile."nvim".source = ../../config/nvim;
+
+  # Lazy must write its operational lockfile, while the versioned source is a
+  # read-only Nix-store symlink. Seed a regular state copy on activation. A
+  # baseline lets repository updates propagate unless Lazy changed the state
+  # copy locally, in which case the user's operational lock is preserved.
+  home.activation.nvimLockfile = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
+    state_home="''${XDG_STATE_HOME:-$HOME/.local/state}"
+    lock_dir="$state_home/nvim/lazy"
+    lockfile="$lock_dir/lazy-lock.json"
+    baseline="$lock_dir/managed-lazy-lock.json"
+    temporary="$lock_dir/lazy-lock.json.tmp.$$"
+    baseline_temporary="$lock_dir/managed-lazy-lock.json.tmp.$$"
+    mkdir -p "$lock_dir"
+
+    if [ ! -f "$lockfile" ] || [ -L "$lockfile" ] \
+      || { [ -f "$baseline" ] && ${pkgs.diffutils}/bin/cmp -s "$lockfile" "$baseline"; }; then
+      cp ${../../config/nvim/lazy-lock.json} "$temporary"
+      chmod 0644 "$temporary"
+      mv -f "$temporary" "$lockfile"
+    fi
+
+    cp ${../../config/nvim/lazy-lock.json} "$baseline_temporary"
+    chmod 0644 "$baseline_temporary"
+    mv -f "$baseline_temporary" "$baseline"
+  '';
 
   # Dependencies used directly by the configuration or by editor tooling.
   # General CLI tools (git, fd, ripgrep, lazygit, node, etc.) remain in the

@@ -5,13 +5,29 @@ set -euo pipefail
 
 config_dir=${XDG_CONFIG_HOME:-$HOME/.config}/proton-pass
 pass_env=$config_dir/pi.env
-pass_env_draft=$config_dir/pi.env.draft
-pass_env_example=$config_dir/pi.env.example
+git_identity_file=${XDG_CONFIG_HOME:-$HOME/.config}/git/identity
 pi_auth=${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/auth.json
-readonly REQUIRED_PI_ENV=(DEEPSEEK_API_KEY GEMINI_API_KEY MOONSHOT_API_KEY)
+readonly PROVIDER_LABELS=(DeepSeek Gemini Moonshot)
+readonly PROVIDER_ENV_NAMES=(DEEPSEEK_API_KEY GEMINI_API_KEY MOONSHOT_API_KEY)
+readonly PROVIDER_ITEM_TITLES=(llm-deepseek llm-gemini llm-moonshot)
+
+STATUS_PROTON='not configured'
+STATUS_PI_KEYS='not configured'
+STATUS_PI_LOGIN='not configured'
+STATUS_GIT_IDENTITY='not configured'
+STATUS_GITHUB='not configured'
+STATUS_CLOUDFLARED='not configured'
+STATUS_WRANGLER='not configured'
+PROVIDER_STATUS=('not configured' 'not configured' 'not configured')
+CONFIGURED_REFERENCES=('' '' '')
+CHOICE=''
 
 log() {
-  printf 'nix-config-setup: %s\n' "$1"
+  printf '  %s\n' "$1"
+}
+
+warn() {
+  printf '  ! %s\n' "$1" >&2
 }
 
 fail() {
@@ -19,12 +35,17 @@ fail() {
   exit 1
 }
 
+section() {
+  printf '\n== %s ==\n' "$1"
+}
+
 usage() {
   cat <<'EOF'
 Usage: nix-config-setup [--check]
 
-Without options, interactively configures Proton Pass and offers independent
-Pi, GitHub, Claude, and Cloudflare logins. Rerun safely at any time.
+Without options, opens an editor-free setup wizard for optional Proton Pass
+API keys, Pi account login, Git identity, GitHub CLI, Cloudflare Tunnel, and
+Wrangler. It is safe to rerun: ready accounts and references are preserved.
 
 --check  report current setup status without prompting or changing files
 EOF
@@ -34,93 +55,230 @@ has_tty() {
   [ -r /dev/tty ] && [ -w /dev/tty ]
 }
 
-confirm() {
+ask_optional() {
   local prompt=$1
-  local default_answer=$2
+  local default_answer=${2:-yes}
   local answer
-  has_tty || return 1
-  printf '%s' "$prompt" >/dev/tty
-  IFS= read -r answer </dev/tty || true
-  [ -n "$answer" ] || answer=$default_answer
-  case "$answer" in
-    y|Y|yes|YES) return 0 ;;
+  while true; do
+    case "$default_answer" in
+      yes) printf '%s [Y/n/s] ' "$prompt" >/dev/tty ;;
+      no) printf '%s [y/N/s] ' "$prompt" >/dev/tty ;;
+      *) printf '%s [y/n/S] ' "$prompt" >/dev/tty ;;
+    esac
+    IFS= read -r answer </dev/tty || true
+    [ -n "$answer" ] || answer=$default_answer
+    case "$answer" in
+      y|Y|yes|YES) CHOICE=yes; return 0 ;;
+      n|N|no|NO) CHOICE=no; return 0 ;;
+      s|S|skip|SKIP) CHOICE=skip; return 0 ;;
+      *) warn 'Please answer y, n, or s (skip for now).' ;;
+    esac
+  done
+}
+
+ask_retry() {
+  local prompt=$1
+  local answer
+  while true; do
+    printf '%s [r]etry/[s]kip: ' "$prompt" >/dev/tty
+    IFS= read -r answer </dev/tty || true
+    case "$answer" in
+      ''|r|R|retry|RETRY) CHOICE=retry; return 0 ;;
+      s|S|skip|SKIP) CHOICE=skip; return 0 ;;
+      *) warn 'Please answer r to retry or s to skip for now.' ;;
+    esac
+  done
+}
+
+pass_logged_in() {
+  command -v pass-cli >/dev/null 2>&1 && pass-cli info >/dev/null 2>&1
+}
+
+login_proton_pass() {
+  local method pat
+  pass_logged_in && { STATUS_PROTON=ready; log 'Proton Pass session is ready.'; return 0; }
+
+  if [ "$(uname -s)" = Linux ] \
+    && { ! command -v keyctl >/dev/null 2>&1 || ! keyctl show >/dev/null 2>&1; }; then
+    warn 'The Linux kernel keyring is unavailable in this shell.'
+    warn 'Exit and rerun nix-config-setup through proton-pass-session.'
+    STATUS_PROTON='needs a kernel-keyring session'
+    return 1
+  fi
+
+  printf 'Login method: [i]nteractive, [p]ersonal access token, [s]kip: ' >/dev/tty
+  IFS= read -r method </dev/tty || true
+  case "$method" in
+    ''|i|I)
+      if ! pass-cli login --interactive; then
+        warn 'Proton Pass interactive login did not complete.'
+        STATUS_PROTON='login failed'
+        return 1
+      fi
+      ;;
+    p|P)
+      printf 'Restricted, expiring Proton Pass token: ' >/dev/tty
+      IFS= read -rs pat </dev/tty || true
+      printf '\n' >/dev/tty
+      if [ -z "$pat" ]; then
+        warn 'No token was entered.'
+        STATUS_PROTON='login skipped'
+        return 1
+      fi
+      if ! PROTON_PASS_PERSONAL_ACCESS_TOKEN=$pat pass-cli login; then
+        unset pat
+        warn 'Proton Pass token login failed.'
+        STATUS_PROTON='login failed'
+        return 1
+      fi
+      unset pat
+      ;;
+    s|S)
+      STATUS_PROTON='skipped for now'
+      return 1
+      ;;
+    *)
+      warn 'Unknown login method; Proton Pass was skipped.'
+      STATUS_PROTON='skipped for now'
+      return 1
+      ;;
+  esac
+
+  if pass_logged_in; then
+    STATUS_PROTON=ready
+    log 'Proton Pass login completed.'
+    return 0
+  fi
+  STATUS_PROTON='login could not be verified'
+  warn 'Login returned, but Proton Pass is not ready.'
+  return 1
+}
+
+valid_reference_value() {
+  local value=$1
+  case "$value" in
+    *REPLACE_*|'') return 1 ;;
+    pass://*/*/*) return 0 ;;
     *) return 1 ;;
   esac
 }
 
-pass_logged_in() {
-  pass-cli info >/dev/null 2>&1
-}
-
-login_proton_pass() {
-  pass_logged_in && { log 'Proton Pass: already logged in'; return 0; }
-
-  log 'Proton Pass is not available in this session.'
-  has_tty || fail 'Proton Pass login needs a terminal'
-  printf 'Login method [i]nteractive, [p]ersonal access token, [s]kip: ' >/dev/tty
-  local method
-  IFS= read -r method </dev/tty || true
-
-  case "$method" in
-    s|S)
-      log 'Proton Pass login skipped'
-      return 1
-      ;;
-    ''|i|I|p|P) ;;
-    *) fail "unknown login method: $method" ;;
-  esac
-
-  if [ "$(uname -s)" = Linux ] \
-    && { ! command -v keyctl >/dev/null 2>&1 || ! keyctl show >/dev/null 2>&1; }; then
-    fail 'Linux kernel keyring is unavailable; rerun: proton-pass-session nix-config-setup'
-  fi
-
-  case "$method" in
-    ''|i|I)
-      pass-cli login --interactive \
-        || fail 'Proton Pass interactive login failed'
-      ;;
-    p|P)
-      local pat
-      printf 'Restricted, expiring Proton Pass PAT: ' >/dev/tty
-      IFS= read -rs pat </dev/tty
-      printf '\n' >/dev/tty
-      [ -n "$pat" ] || fail 'PAT cannot be empty'
-      PROTON_PASS_PERSONAL_ACCESS_TOKEN=$pat pass-cli login \
-        || { unset pat; fail 'Proton Pass PAT login failed'; }
-      unset pat
-      ;;
-  esac
-
-  pass_logged_in || fail 'Proton Pass login returned success but pass-cli info still fails'
+reference_value_from_file() {
+  local file=$1
+  local name=$2
+  local line
+  [ -f "$file" ] || return 1
+  [ ! -L "$file" ] || return 1
+  line=$(grep -E "^${name}=" "$file" | tail -n 1 || true)
+  [ -n "$line" ] || return 1
+  printf '%s' "${line#*=}"
 }
 
 validate_reference_file() {
   local file=$1
+  local line name value seen='' count=0
   [ -f "$file" ] || return 1
   [ ! -L "$file" ] || return 1
-  grep -q 'REPLACE_' "$file" && return 1
 
-  local name line value
-  for name in "${REQUIRED_PI_ENV[@]}"; do
-    line=$(grep -E "^${name}=" "$file" | tail -n 1 || true)
-    [ -n "$line" ] || return 1
-    value=${line#*=}
-    case "$value" in
-      pass://*/*/*) ;;
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      ''|'#'*) continue ;;
+      *=*) ;;
       *) return 1 ;;
     esac
-  done
-  return 0
+    name=${line%%=*}
+    value=${line#*=}
+    case "$name" in
+      DEEPSEEK_API_KEY|GEMINI_API_KEY|MOONSHOT_API_KEY) ;;
+      *) return 1 ;;
+    esac
+    case " $seen " in *" $name "*) return 1 ;; esac
+    valid_reference_value "$value" || return 1
+    seen="$seen $name"
+    count=$((count + 1))
+  done <"$file"
+  [ "$count" -gt 0 ]
 }
 
-resolve_reference_file() {
-  local file=$1
-  validate_reference_file "$file" || return 1
-  pass-cli run --env-file "$file" -- node -e '
-    const required = ["DEEPSEEK_API_KEY", "GEMINI_API_KEY", "MOONSHOT_API_KEY"];
-    if (required.some((name) => !process.env[name])) process.exit(1);
-  ' >/dev/null
+reference_resolves() {
+  local name=$1
+  local value=$2
+  local probe status=0
+  valid_reference_value "$value" || return 1
+  probe=$(mktemp "${TMPDIR:-/tmp}/nix-config-reference.XXXXXX") || return 1
+  chmod 600 "$probe" || { rm -f "$probe"; return 1; }
+  printf '%s=%s\n' "$name" "$value" >"$probe" \
+    || { rm -f "$probe"; return 1; }
+  pass-cli run --env-file "$probe" -- node -e '
+    const name = process.argv[1];
+    if (!process.env[name]) process.exit(1);
+  ' "$name" >/dev/null 2>&1 || status=$?
+  rm -f "$probe"
+  return "$status"
+}
+
+find_development_vault() {
+  local vaults_json
+  vaults_json=$(pass-cli vault list --output json) || return 1
+  DEVELOPMENT_SHARE_ID=$(jq -r '
+    [.vaults[]? | select(.name == "Development") | .share_id][0] // empty
+  ' <<<"$vaults_json") || return 1
+  [ -n "$DEVELOPMENT_SHARE_ID" ]
+}
+
+find_prepared_reference() {
+  local name=$1
+  local title=$2
+  local items_json item_id candidate
+  find_development_vault || return 1
+  items_json=$(pass-cli item list --share-id "$DEVELOPMENT_SHARE_ID" \
+    --filter-state active --sort-by alphabetic-asc --output json) || return 1
+  item_id=$(jq -r --arg title "$title" '
+    [.items[]? | select(.title == $title) | .id][0] // empty
+  ' <<<"$items_json") || return 1
+  [ -n "$item_id" ] || return 1
+  candidate="pass://${DEVELOPMENT_SHARE_ID}/${item_id}/API%20Key"
+  reference_resolves "$name" "$candidate" || return 1
+  DISCOVERED_REFERENCE=$candidate
+}
+
+show_secret_recipe() {
+  local label=$1
+  local title=$2
+  printf '\n  Prepare this secret in Proton Pass:\n'
+  printf '    Vault:       Development\n'
+  printf '    Item title:  %s\n' "$title"
+  printf '    Hidden field: API Key\n'
+  printf '    Value:       your %s API key\n' "$label"
+  printf '  Proton Pass web app: https://pass.proton.me\n'
+  printf '  Keep this wizard open while adding it on this or another device.\n'
+}
+
+write_reference_file() {
+  local output index count=0
+  [ ! -L "$pass_env" ] || { warn "$pass_env is a symlink; refusing to replace it."; return 1; }
+  mkdir -p "$config_dir" || return 1
+  chmod 700 "$config_dir" || return 1
+  umask 077
+
+  for index in 0 1 2; do
+    [ -z "${CONFIGURED_REFERENCES[index]}" ] || count=$((count + 1))
+  done
+  if [ "$count" -eq 0 ]; then
+    rm -f "$pass_env"
+  else
+    output=$(mktemp "$config_dir/.pi.env.XXXXXX") || return 1
+    chmod 600 "$output" || { rm -f "$output"; return 1; }
+    printf '%s\n' '# Proton Pass references only. Never put secret values in this file.' >"$output" \
+      || { rm -f "$output"; return 1; }
+    for index in 0 1 2; do
+      [ -z "${CONFIGURED_REFERENCES[index]}" ] && continue
+      printf '%s=%s\n' "${PROVIDER_ENV_NAMES[$index]}" "${CONFIGURED_REFERENCES[index]}" >>"$output" \
+        || { rm -f "$output"; return 1; }
+    done
+    mv -f "$output" "$pass_env" || { rm -f "$output"; return 1; }
+    chmod 600 "$pass_env" || return 1
+  fi
 }
 
 pi_api_key_conflicts() {
@@ -140,67 +298,82 @@ pi_api_key_conflicts() {
   ' "$pi_auth"
 }
 
-remove_shadowing_api_keys() {
+handle_shadowing_api_keys() {
   local conflicts
   conflicts=$(pi_api_key_conflicts) || return 0
-  log "Pi auth.json still has API-key entries that override Proton Pass: $conflicts"
-  log 'Use Pi /logout to remove those API-key providers; keep account/OAuth providers.'
-  if command -v pi >/dev/null 2>&1 && confirm 'Open Pi now to remove those entries with /logout? [Y/n] ' yes; then
-    PI_SKIP_PROTON_PASS=1 pi
+  warn "Pi still has local API-key entries that override Proton Pass: $conflicts"
+  log 'Pi owns auth.json, so the setup wizard will not edit it.'
+  ask_optional 'Open Pi now? Use /logout for those API-key providers, then /exit.' yes
+  if [ "$CHOICE" = yes ]; then
+    PI_SKIP_PROTON_PASS=1 pi || true
   fi
   if conflicts=$(pi_api_key_conflicts); then
-    log "Still shadowed by local API-key entries: $conflicts"
+    warn "Still shadowed: $conflicts"
+    STATUS_PI_KEYS="configured, but shadowed by $conflicts"
     return 1
   fi
-  return 0
 }
 
-configure_pi_references() {
-  mkdir -p "$config_dir" || fail 'could not create Proton Pass config directory'
-  chmod 700 "$config_dir" || fail 'could not secure Proton Pass config directory'
+configure_api_keys() {
+  local index name label title existing
+  section 'Optional Pi API keys'
+  log 'The wizard looks only for Development / llm-<provider> / API Key.'
+  log 'It reads item metadata and verifies fields without displaying secret values.'
 
-  if validate_reference_file "$pass_env"; then
-    chmod 600 "$pass_env" || fail 'could not secure Proton Pass reference file'
-    resolve_reference_file "$pass_env" \
-      || fail 'Pi references exist but Proton Pass could not resolve every field'
-    remove_shadowing_api_keys || return 1
-    log 'Pi API keys: Proton Pass references resolve successfully'
-    return 0
+  for index in 0 1 2; do
+    name=${PROVIDER_ENV_NAMES[$index]}
+    label=${PROVIDER_LABELS[$index]}
+    title=${PROVIDER_ITEM_TITLES[$index]}
+    existing=$(reference_value_from_file "$pass_env" "$name" || true)
+    if valid_reference_value "$existing" && reference_resolves "$name" "$existing"; then
+      CONFIGURED_REFERENCES[index]=$existing
+      PROVIDER_STATUS[index]='ready (existing reference)'
+      log "$label: existing reference is ready."
+      continue
+    fi
+
+    if find_prepared_reference "$name" "$title"; then
+      CONFIGURED_REFERENCES[index]=$DISCOVERED_REFERENCE
+      PROVIDER_STATUS[index]="ready ($title)"
+      log "$label: found and verified $title."
+      continue
+    fi
+
+    warn "$label was not found with the expected Proton Pass layout."
+    ask_optional "Set up the optional $label API key now?" yes
+    case "$CHOICE" in
+      no) PROVIDER_STATUS[index]='not used' ;;
+      skip) PROVIDER_STATUS[index]='skipped for now' ;;
+      yes)
+        while true; do
+          show_secret_recipe "$label" "$title"
+          ask_retry 'After saving the item, retry discovery?'
+          if [ "$CHOICE" = skip ]; then
+            PROVIDER_STATUS[index]='skipped for now'
+            break
+          fi
+          if find_prepared_reference "$name" "$title"; then
+            CONFIGURED_REFERENCES[index]=$DISCOVERED_REFERENCE
+            PROVIDER_STATUS[index]="ready ($title)"
+            log "$label: found and verified $title."
+            break
+          fi
+          warn "$title with a non-empty API Key field is still not available."
+        done
+        ;;
+    esac
+  done
+
+  if write_reference_file; then
+    if validate_reference_file "$pass_env"; then
+      STATUS_PI_KEYS='ready'
+      handle_shadowing_api_keys || true
+    else
+      STATUS_PI_KEYS='no API-key providers selected'
+    fi
+  else
+    STATUS_PI_KEYS='could not save references'
   fi
-
-  [ -f "$pass_env_example" ] \
-    || fail "managed reference example is missing: $pass_env_example"
-
-  if [ ! -f "$pass_env_draft" ]; then
-    umask 077
-    cp "$pass_env_example" "$pass_env_draft" \
-      || fail 'could not create the Proton Pass reference draft'
-    chmod 600 "$pass_env_draft" \
-      || fail 'could not secure the Proton Pass reference draft'
-  fi
-
-  log "Pi API-key references need opaque Proton Pass IDs: $pass_env_draft"
-  log 'Lookup commands:'
-  printf '  pass-cli vault list --output json\n'
-  printf '  pass-cli item list --vault-name Development --output json\n'
-
-  if confirm 'Open the reference draft in your editor now? [Y/n] ' yes; then
-    "${VISUAL:-${EDITOR:-nvim}}" "$pass_env_draft"
-  fi
-
-  if ! validate_reference_file "$pass_env_draft"; then
-    log "References remain incomplete. Edit $pass_env_draft, then rerun nix-config-setup."
-    return 1
-  fi
-
-  resolve_reference_file "$pass_env_draft" \
-    || fail 'Proton Pass could not resolve every reference in the draft'
-  remove_shadowing_api_keys || return 1
-  mv -f "$pass_env_draft" "$pass_env" \
-    || fail 'could not enable the Proton Pass reference file'
-  chmod 600 "$pass_env" \
-    || fail 'could not secure the Proton Pass reference file'
-  log "Enabled Proton Pass-backed Pi launch through $pass_env"
 }
 
 pi_has_account_login() {
@@ -214,77 +387,238 @@ pi_has_account_login() {
   ' "$pi_auth"
 }
 
-offer_account_logins() {
+configure_pi_login() {
+  section 'Pi account login'
+  if ! command -v pi >/dev/null 2>&1 || ! command -v node >/dev/null 2>&1; then
+    STATUS_PI_LOGIN='unavailable; Pi or Node.js is not installed'
+    warn "$STATUS_PI_LOGIN"
+    return
+  fi
   if pi_has_account_login; then
-    log 'Pi account login: detected local OAuth state'
-  elif command -v pi >/dev/null 2>&1 && confirm 'Open Pi now to run /login for account providers? [y/N] ' no; then
-    PI_SKIP_PROTON_PASS=${PI_SKIP_PROTON_PASS:-0} pi
+    STATUS_PI_LOGIN=ready
+    log 'Pi OAuth/account state is already present.'
+    return
+  fi
+  ask_optional 'Open Pi to add an optional account/OAuth provider with /login?' yes
+  case "$CHOICE" in
+    yes)
+      log 'Pi will open. Run /login, finish the provider flow, then run /exit.'
+      PI_SKIP_PROTON_PASS=1 pi || true
+      if pi_has_account_login; then STATUS_PI_LOGIN=ready; else STATUS_PI_LOGIN='not completed'; fi
+      ;;
+    no) STATUS_PI_LOGIN='not used' ;;
+    skip) STATUS_PI_LOGIN='skipped for now' ;;
+  esac
+}
+
+prompt_git_value() {
+  local label=$1
+  local key=$2
+  local value
+  printf '%s (or s to skip): ' "$label" >/dev/tty
+  IFS= read -r value </dev/tty || true
+  case "$value" in s|S) return 1 ;; esac
+  [ -n "$value" ] || { warn "$label cannot be empty."; return 1; }
+  if [ -L "$git_identity_file" ]; then
+    warn "$git_identity_file is a symlink; refusing to replace it."
+    return 1
+  fi
+  mkdir -p "${git_identity_file%/*}" || return 1
+  git config --file "$git_identity_file" "$key" "$value" || return 1
+  chmod 600 "$git_identity_file"
+}
+
+configure_git_identity() {
+  local name email
+  section 'Git identity'
+  if ! command -v git >/dev/null 2>&1; then
+    STATUS_GIT_IDENTITY='unavailable; Git is not installed'
+    warn "$STATUS_GIT_IDENTITY"
+    return
+  fi
+  name=$(git config --global --includes --get user.name 2>/dev/null || true)
+  email=$(git config --global --includes --get user.email 2>/dev/null || true)
+  if [ -n "$name" ] && [ -n "$email" ]; then
+    STATUS_GIT_IDENTITY="ready ($name <$email>)"
+    log "Git author is $name <$email>."
+    return
   fi
 
-  if command -v gh >/dev/null 2>&1; then
-    if gh auth status >/dev/null 2>&1; then
-      log 'GitHub CLI: already authenticated'
-    elif confirm 'Authenticate GitHub CLI now? [y/N] ' no; then
-      gh auth login
-    fi
+  log 'Git author name and email are not secrets; commits need both.'
+  if [ -z "$name" ]; then
+    ask_optional 'Set the Git author name now?' yes
+    [ "$CHOICE" != yes ] || prompt_git_value 'Git author name' user.name || true
   fi
-
-  if command -v claude >/dev/null 2>&1; then
-    if claude auth status >/dev/null 2>&1; then
-      log 'Claude: already authenticated'
-    elif confirm 'Authenticate Claude now? [y/N] ' no; then
-      claude auth login
-    fi
+  if [ -z "$email" ]; then
+    ask_optional 'Set the Git author email now?' yes
+    [ "$CHOICE" != yes ] || prompt_git_value 'Git author email' user.email || true
+  fi
+  name=$(git config --global --includes --get user.name 2>/dev/null || true)
+  email=$(git config --global --includes --get user.email 2>/dev/null || true)
+  if [ -n "$name" ] && [ -n "$email" ]; then
+    STATUS_GIT_IDENTITY="ready ($name <$email>)"
   else
-    log 'Claude: CLI not installed by this configuration; skipped'
-  fi
-
-  if command -v cloudflared >/dev/null 2>&1; then
-    if [ -f "$HOME/.cloudflared/cert.pem" ]; then
-      log 'Cloudflare Tunnel: local certificate detected'
-    elif confirm 'Authenticate Cloudflare Tunnel now? [y/N] ' no; then
-      cloudflared tunnel login
-    fi
+    STATUS_GIT_IDENTITY='incomplete'
   fi
 }
 
-check_status() {
-  local failed=0
-  if command -v pass-cli >/dev/null 2>&1 && pass_logged_in; then
-    log 'Proton Pass: ready'
-  else
-    log 'Proton Pass: not ready'
-    failed=1
+configure_github() {
+  section 'GitHub CLI'
+  if ! command -v gh >/dev/null 2>&1; then
+    STATUS_GITHUB='unavailable; GitHub CLI is not installed'
+    warn "$STATUS_GITHUB"
+    return
   fi
+  if gh auth status >/dev/null 2>&1; then
+    STATUS_GITHUB=ready
+    log 'GitHub CLI is already authenticated.'
+    return
+  fi
+  ask_optional 'Authenticate GitHub CLI now?' yes
+  case "$CHOICE" in
+    yes)
+      if gh auth login && gh auth status >/dev/null 2>&1; then
+        STATUS_GITHUB=ready
+      else
+        STATUS_GITHUB='login not completed'
+        warn 'GitHub authentication is still incomplete.'
+      fi
+      ;;
+    no) STATUS_GITHUB='not used' ;;
+    skip) STATUS_GITHUB='skipped for now' ;;
+  esac
+}
 
-  if validate_reference_file "$pass_env" && pass_logged_in \
-    && resolve_reference_file "$pass_env" && ! pi_api_key_conflicts >/dev/null; then
-    log 'Pi API-key references: ready'
-  else
-    log 'Pi API-key references: not ready'
-    failed=1
-  fi
-
-  if pi_has_account_login; then
-    log 'Pi account login: detected'
-  else
-    log 'Pi account login: not detected'
-  fi
-  if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
-    log 'GitHub CLI: authenticated'
-  else
-    log 'GitHub CLI: not authenticated'
-  fi
-  if command -v claude >/dev/null 2>&1 && claude auth status >/dev/null 2>&1; then
-    log 'Claude: authenticated'
-  else
-    log 'Claude: not authenticated or unavailable'
+configure_cloudflared() {
+  section 'Cloudflare Tunnel'
+  if ! command -v cloudflared >/dev/null 2>&1; then
+    STATUS_CLOUDFLARED='unavailable; cloudflared is not installed'
+    warn "$STATUS_CLOUDFLARED"
+    return
   fi
   if [ -f "$HOME/.cloudflared/cert.pem" ]; then
-    log 'Cloudflare Tunnel: authenticated'
-  else
-    log 'Cloudflare Tunnel: not authenticated'
+    STATUS_CLOUDFLARED=ready
+    log 'Cloudflare Tunnel certificate is present.'
+    return
   fi
+  ask_optional 'Authenticate cloudflared for tunnel management now?' no
+  case "$CHOICE" in
+    yes)
+      if cloudflared tunnel login && [ -f "$HOME/.cloudflared/cert.pem" ]; then
+        STATUS_CLOUDFLARED=ready
+      else
+        STATUS_CLOUDFLARED='login not completed'
+        warn 'Cloudflare Tunnel authentication is still incomplete.'
+      fi
+      ;;
+    no) STATUS_CLOUDFLARED='not used' ;;
+    skip) STATUS_CLOUDFLARED='skipped for now' ;;
+  esac
+}
+
+wrangler_logged_in() {
+  command -v wrangler >/dev/null 2>&1 && wrangler whoami >/dev/null 2>&1
+}
+
+configure_wrangler() {
+  section 'Cloudflare Wrangler'
+  if ! command -v wrangler >/dev/null 2>&1; then
+    STATUS_WRANGLER='unavailable; Wrangler is not installed'
+    warn "$STATUS_WRANGLER"
+    return
+  fi
+  if wrangler_logged_in; then
+    STATUS_WRANGLER=ready
+    log 'Wrangler is already authenticated.'
+    return
+  fi
+  ask_optional 'Authenticate Wrangler for Cloudflare Workers now?' no
+  case "$CHOICE" in
+    yes)
+      if wrangler login && wrangler_logged_in; then
+        STATUS_WRANGLER=ready
+      else
+        STATUS_WRANGLER='login not completed'
+        warn 'Wrangler authentication is still incomplete.'
+      fi
+      ;;
+    no) STATUS_WRANGLER='not used' ;;
+    skip) STATUS_WRANGLER='skipped for now' ;;
+  esac
+}
+
+print_summary() {
+  local index
+  section 'Setup summary'
+  printf '  %-22s %s\n' 'Proton Pass' "$STATUS_PROTON"
+  for index in 0 1 2; do
+    printf '  %-22s %s\n' "${PROVIDER_LABELS[$index]} API key" "${PROVIDER_STATUS[index]}"
+  done
+  printf '  %-22s %s\n' 'Pi API injection' "$STATUS_PI_KEYS"
+  printf '  %-22s %s\n' 'Pi account login' "$STATUS_PI_LOGIN"
+  printf '  %-22s %s\n' 'Git identity' "$STATUS_GIT_IDENTITY"
+  printf '  %-22s %s\n' 'GitHub CLI' "$STATUS_GITHUB"
+  printf '  %-22s %s\n' 'Cloudflare Tunnel' "$STATUS_CLOUDFLARED"
+  printf '  %-22s %s\n' 'Wrangler' "$STATUS_WRANGLER"
+  printf '\n  Rerun nix-config-setup whenever you want to finish a skipped item.\n'
+}
+
+check_status() {
+  local failed=0 index name value
+  section 'Current setup status'
+  if pass_logged_in; then
+    STATUS_PROTON=ready
+  else
+    STATUS_PROTON='not logged in'
+  fi
+  printf '  %-22s %s\n' 'Proton Pass' "$STATUS_PROTON"
+
+  if [ -e "$pass_env" ] && ! validate_reference_file "$pass_env"; then
+    printf '  %-22s %s\n' 'Pi API references' 'invalid'
+    failed=1
+  else
+    for index in 0 1 2; do
+      name=${PROVIDER_ENV_NAMES[$index]}
+      value=$(reference_value_from_file "$pass_env" "$name" || true)
+      if [ -z "$value" ]; then
+        PROVIDER_STATUS[index]='not configured (optional)'
+      elif pass_logged_in && ! command -v node >/dev/null 2>&1; then
+        PROVIDER_STATUS[index]='not checked; Node.js is unavailable'
+        failed=1
+      elif pass_logged_in && reference_resolves "$name" "$value"; then
+        PROVIDER_STATUS[index]=ready
+      elif pass_logged_in; then
+        PROVIDER_STATUS[index]='does not resolve'
+        failed=1
+      else
+        PROVIDER_STATUS[index]='configured; Proton Pass unavailable'
+        failed=1
+      fi
+      printf '  %-22s %s\n' "${PROVIDER_LABELS[$index]} API key" "${PROVIDER_STATUS[index]}"
+    done
+  fi
+
+  if conflicts=$(pi_api_key_conflicts); then
+    printf '  %-22s %s\n' 'Pi API shadowing' "$conflicts"
+    failed=1
+  fi
+  if ! command -v node >/dev/null 2>&1; then
+    printf '  %-22s %s\n' 'Pi account login' 'not checked; Node.js is unavailable'
+  elif pi_has_account_login; then
+    printf '  %-22s %s\n' 'Pi account login' ready
+  else
+    printf '  %-22s %s\n' 'Pi account login' 'not configured (optional)'
+  fi
+  if command -v git >/dev/null 2>&1; then
+    name=$(git config --global --includes --get user.name 2>/dev/null || true)
+    value=$(git config --global --includes --get user.email 2>/dev/null || true)
+    if [ -n "$name" ] && [ -n "$value" ]; then printf '  %-22s %s\n' 'Git identity' "$name <$value>"; else printf '  %-22s %s\n' 'Git identity' incomplete; fi
+  else
+    printf '  %-22s %s\n' 'Git identity' 'unavailable; Git is not installed'
+  fi
+  if ! command -v gh >/dev/null 2>&1; then printf '  %-22s %s\n' 'GitHub CLI' 'unavailable; GitHub CLI is not installed'; elif gh auth status >/dev/null 2>&1; then printf '  %-22s %s\n' 'GitHub CLI' ready; else printf '  %-22s %s\n' 'GitHub CLI' 'not authenticated (optional)'; fi
+  if [ -f "$HOME/.cloudflared/cert.pem" ]; then printf '  %-22s %s\n' 'Cloudflare Tunnel' ready; else printf '  %-22s %s\n' 'Cloudflare Tunnel' 'not authenticated (optional)'; fi
+  if wrangler_logged_in; then printf '  %-22s %s\n' 'Wrangler' ready; else printf '  %-22s %s\n' 'Wrangler' 'not authenticated (optional)'; fi
   return "$failed"
 }
 
@@ -296,16 +630,47 @@ main() {
     *) usage >&2; return 2 ;;
   esac
 
-  command -v pass-cli >/dev/null 2>&1 || fail 'pass-cli is not installed'
-  command -v node >/dev/null 2>&1 || fail 'Node.js is not installed'
   has_tty || fail 'interactive setup requires a terminal'
 
-  login_proton_pass || true
-  if pass_logged_in; then
-    configure_pi_references || true
+  printf '\nNix Config Account Setup\n'
+  printf '========================\n'
+  printf 'This wizard detects what is ready and asks only about missing optional items.\n'
+  printf 'It never opens an editor and never writes secret values to disk.\n'
+
+  section 'Proton Pass'
+  if ! command -v pass-cli >/dev/null 2>&1 \
+    || ! command -v jq >/dev/null 2>&1 \
+    || ! command -v node >/dev/null 2>&1; then
+    STATUS_PROTON='unavailable; pass-cli, jq, or Node.js is missing'
+    warn "$STATUS_PROTON"
+  elif pass_logged_in; then
+    STATUS_PROTON=ready
+    log 'Proton Pass session is ready.'
+  else
+    ask_optional 'Connect Proton Pass to discover optional Pi API keys?' yes
+    if [ "$CHOICE" = yes ]; then
+      login_proton_pass || true
+    elif [ "$CHOICE" = no ]; then
+      STATUS_PROTON='not used'
+    else
+      STATUS_PROTON='skipped for now'
+    fi
   fi
-  offer_account_logins
-  log 'Setup complete. Rerun nix-config-setup at any time.'
+
+  if command -v jq >/dev/null 2>&1 && command -v node >/dev/null 2>&1 \
+    && pass_logged_in; then
+    configure_api_keys
+  else
+    STATUS_PI_KEYS='not checked; Proton Pass unavailable'
+    PROVIDER_STATUS=('not checked' 'not checked' 'not checked')
+  fi
+
+  configure_pi_login
+  configure_git_identity
+  configure_github
+  configure_cloudflared
+  configure_wrangler
+  print_summary
 }
 
 main "$@"

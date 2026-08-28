@@ -48,9 +48,10 @@ contain none.
    └─ Pi remains the sole owner of local account/OAuth auth.json state
                          │
                          ▼
-6. PER-MACHINE ACCOUNT LOGINS (interactive post-activation setup)
-   ├─ Pi account/OAuth providers are logged into manually on every machine
-   └─ GitHub, Claude, and Cloudflare each run their own interactive login
+6. PER-MACHINE ACCOUNT LOGINS (editor-free setup wizard)
+   ├─ Pi account/OAuth providers use Pi's own /login flow
+   ├─ Git identity is prompted as non-secret name/email when absent
+   └─ GitHub, cloudflared, and Wrangler run their own interactive OAuth login
 
 Ownership boundary:
   Proton Pass ──> long-lived API keys
@@ -70,7 +71,10 @@ Ownership boundary:
    `aarch64-linux`; no disposable machine-specific target is needed. All three
    platform outputs target the `hattajr` account and its conventional home.
 3. **Activate Home Manager.** It installs Git, `proton-pass-cli`, Pi, Lumen,
-   Node, `uv`, lazydocker, `fzf`, and the setup/session helpers. Activation
+   Node, `uv`, lazydocker, `fzf`, Wrangler, native npm build prerequisites, and
+   the setup/session helpers. Linux receives GCC; macOS uses the Xcode Command
+   Line Tools compiler already required by Nix, while Nix supplies Make,
+   Python, and pkg-config for native npm modules. Activation
    remains non-interactive and never contacts Proton Pass. After activation,
    bootstrap refreshes the Home Manager profile path and enters managed zsh on
    a real terminal; `NIX_CONFIG_START_SHELL=no` disables that final handoff.
@@ -80,18 +84,18 @@ Ownership boundary:
    runs `keyctl new_session` only when needed. Kernel keys do not survive a
    reboot, so rerun login/setup afterward. D-Bus/GNOME Keyring remains an
    optional persistent desktop backend, not a bootstrap prerequisite.
-5. **Log into Proton Pass.** Local terminal: `pass-cli login --interactive`.
-   SSH/headless is for remotely provisioning the Linux hosts without a browser;
-   use a tested terminal flow or a restricted, expiring PAT supplied through
-   `PROTON_PASS_PERSONAL_ACCESS_TOKEN` for the `pass-cli login` process.
-6. **Configure Pi references.** `nix-config-setup` creates a local dotenv file
-   containing only opaque `pass://` references. The managed Pi wrapper resolves
-   those references with `pass-cli run`; it never writes API keys to
-   `auth.json`. Existing API-key entries must first be removed with Pi `/logout`
-   because auth-file entries take priority over environment variables.
-7. **Run account logins after activation.** `nix-config-setup` interactively
-   offers Pi account providers, GitHub, Claude, and Cloudflare on each machine.
-   Home Manager installs the CLIs but does not perform login during activation.
+5. **Run the account wizard.** `nix-config-setup` handles interactive Proton
+   login directly, including a hidden restricted-PAT prompt for headless use.
+   Users do not set environment variables or invoke raw login commands.
+6. **Discover optional Pi keys.** The wizard checks `Development` for exact
+   item titles `llm-deepseek`, `llm-gemini`, and `llm-moonshot`, each with a
+   hidden `API Key` field. Existing valid references are preserved; prepared
+   items are found automatically; missing providers offer configure, don't-use,
+   and skip-for-now choices. No editor, opaque ID, or reference entry is needed.
+7. **Run account logins after activation.** The same wizard detects Git
+   identity, Pi OAuth state, GitHub CLI, Cloudflare Tunnel, and Wrangler. It
+   launches each tool's own interactive login when approved and ends with a
+   status summary. Home Manager never performs login during activation.
 
 ## Proton Pass references
 
@@ -105,15 +109,15 @@ pass://SHARE_ID/ITEM_ID/FIELD_NAME
 The operational file is a mode-600 dotenv file containing references only:
 
 ```dotenv
-DEEPSEEK_API_KEY=pass://SHARE_ID/ITEM_ID/API_KEY
-GEMINI_API_KEY=pass://SHARE_ID/ITEM_ID/API_KEY
-MOONSHOT_API_KEY=pass://SHARE_ID/ITEM_ID/API_KEY
+DEEPSEEK_API_KEY=pass://SHARE_ID/ITEM_ID/API%20Key
+GEMINI_API_KEY=pass://SHARE_ID/ITEM_ID/API%20Key
+MOONSHOT_API_KEY=pass://SHARE_ID/ITEM_ID/API%20Key
 ```
 
-Populate it after login with `pass-cli vault list --output json` and
-`pass-cli item list --vault-name Development --output json`. Item recreation
-changes its ID. Update the non-secret map and reference file together; never
-put a field value in either.
+The wizard populates it from the secret-free vault/item list outputs. Those
+summaries contain names, IDs, state, and item type—not field values. Item
+recreation changes its ID; rerunning the wizard discovers the replacement and
+updates the local reference automatically.
 
 ## Pi authentication ownership: no merge
 
@@ -134,8 +138,9 @@ removed once through Pi `/logout`, because Pi gives auth-file entries priority
 over environment variables. The setup helper detects and reports this conflict;
 it does not edit `auth.json`.
 
-When Proton Pass is temporarily unavailable, `PI_SKIP_PROTON_PASS=1 pi` starts
-Pi with only its local OAuth state.
+When Proton Pass setup needs repair, rerun `nix-config-setup`. The wizard can
+open Pi with local OAuth only when an account login or API-key cleanup requires
+it; users do not need to manage bypass environment variables.
 
 ### Why not age-encrypt the whole `auth.json` in Git?
 

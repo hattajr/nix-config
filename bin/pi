@@ -44,12 +44,12 @@ if [ -f "$pass_env" ]; then
       exec proton-pass-session "$self" "$@"
     fi
     printf 'error: the Linux kernel keyring is unavailable\n' >&2
-    printf 'hint: run proton-pass-session pi, or set PI_SKIP_PROTON_PASS=1\n' >&2
+    printf 'hint: run nix-config-setup to repair the Proton Pass session\n' >&2
     exit 1
   fi
   if ! command -v pass-cli >/dev/null 2>&1; then
     printf 'error: %s exists but pass-cli is unavailable\n' "$pass_env" >&2
-    printf 'hint: set PI_SKIP_PROTON_PASS=1 to launch Pi with local OAuth only\n' >&2
+    printf 'hint: run nix-config-setup to repair account setup\n' >&2
     exit 127
   fi
   exec pass-cli run --env-file "$pass_env" -- "$real_pi" "$@"
