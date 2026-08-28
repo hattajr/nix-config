@@ -5,8 +5,10 @@ The setup wizard discovers these optional secrets automatically:
 | Environment variable | Vault | Item title | Hidden field |
 | --- | --- | --- | --- |
 | `DEEPSEEK_API_KEY` | Development | `llm-deepseek` | `API Key` |
-| `GEMINI_API_KEY` | Development | `llm-gemini` | `API Key` |
-| `MOONSHOT_API_KEY` | Development | `llm-moonshot` | `API Key` |
+| `GEMINI_API_KEY` | Development | `llm-google` | `API Key` |
+| `MOONSHOT_API_KEY` | Development | `llm-moonshotai` | `API Key` |
+
+The legacy titles `llm-gemini` and `llm-moonshot` remain valid aliases.
 
 Only the three field values are secret. The wizard reads secret-free vault/item
 summaries, creates opaque references from the discovered IDs, and verifies each

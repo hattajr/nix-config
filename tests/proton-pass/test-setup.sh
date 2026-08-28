@@ -79,19 +79,25 @@ case "${1:-}" in
     printf '%s\n' '{"vaults":[{"name":"Development","vault_id":"vault-dev","share_id":"share-dev"}]}'
     ;;
   item)
+    gemini_title=llm-google
+    moonshot_title=llm-moonshotai
+    if [ "${MOCK_LEGACY_NAMES:-0}" = 1 ]; then
+      gemini_title=llm-gemini
+      moonshot_title=llm-moonshot
+    fi
     if [ "${MOCK_MISSING_MOONSHOT:-0}" = 1 ]; then
-      cat <<'EOF_ITEMS_SHORT'
+      cat <<EOF_ITEMS_SHORT
 {"items":[
   {"id":"item-deepseek","share_id":"share-dev","vault_id":"vault-dev","state":"active","flags":[],"create_time":"2026-01-01T00:00:00","modify_time":"2026-01-01T00:00:00","title":"llm-deepseek","item_type":"custom"},
-  {"id":"item-gemini","share_id":"share-dev","vault_id":"vault-dev","state":"active","flags":[],"create_time":"2026-01-01T00:00:00","modify_time":"2026-01-01T00:00:00","title":"llm-gemini","item_type":"custom"}
+  {"id":"item-gemini","share_id":"share-dev","vault_id":"vault-dev","state":"active","flags":[],"create_time":"2026-01-01T00:00:00","modify_time":"2026-01-01T00:00:00","title":"$gemini_title","item_type":"custom"}
 ]}
 EOF_ITEMS_SHORT
     else
-      cat <<'EOF_ITEMS'
+      cat <<EOF_ITEMS
 {"items":[
   {"id":"item-deepseek","share_id":"share-dev","vault_id":"vault-dev","state":"active","flags":[],"create_time":"2026-01-01T00:00:00","modify_time":"2026-01-01T00:00:00","title":"llm-deepseek","item_type":"custom"},
-  {"id":"item-gemini","share_id":"share-dev","vault_id":"vault-dev","state":"active","flags":[],"create_time":"2026-01-01T00:00:00","modify_time":"2026-01-01T00:00:00","title":"llm-gemini","item_type":"custom"},
-  {"id":"item-moonshot","share_id":"share-dev","vault_id":"vault-dev","state":"active","flags":[],"create_time":"2026-01-01T00:00:00","modify_time":"2026-01-01T00:00:00","title":"llm-moonshot","item_type":"custom"}
+  {"id":"item-gemini","share_id":"share-dev","vault_id":"vault-dev","state":"active","flags":[],"create_time":"2026-01-01T00:00:00","modify_time":"2026-01-01T00:00:00","title":"$gemini_title","item_type":"custom"},
+  {"id":"item-moonshot","share_id":"share-dev","vault_id":"vault-dev","state":"active","flags":[],"create_time":"2026-01-01T00:00:00","modify_time":"2026-01-01T00:00:00","title":"$moonshot_title","item_type":"custom"}
 ]}
 EOF_ITEMS
     fi
@@ -210,14 +216,24 @@ DEEPSEEK_API_KEY=pass://share-dev/item-deepseek/API%20Key
 EOF_PARTIAL
 guided_output=$(run_pty '')
 grep -Fq 'DeepSeek: existing reference is ready.' <<<"$guided_output" || { printf '%s\n' 'setup test: existing key was not preserved' >&2; exit 1; }
-grep -Fq 'Gemini: found and verified llm-gemini.' <<<"$guided_output" || { printf '%s\n' 'setup test: Gemini was not auto-discovered' >&2; exit 1; }
-grep -Fq 'Moonshot: found and verified llm-moonshot.' <<<"$guided_output" || { printf '%s\n' 'setup test: Moonshot was not auto-discovered' >&2; exit 1; }
+grep -Fq 'Gemini: found and verified llm-google.' <<<"$guided_output" || { printf '%s\n' 'setup test: Gemini was not auto-discovered' >&2; exit 1; }
+grep -Fq 'Moonshot: found and verified llm-moonshotai.' <<<"$guided_output" || { printf '%s\n' 'setup test: Moonshot was not auto-discovered' >&2; exit 1; }
 grep -Fxq 'DEEPSEEK_API_KEY=pass://share-dev/item-deepseek/API%20Key' "$home/.config/proton-pass/pi.env" || exit 1
 grep -Fxq 'GEMINI_API_KEY=pass://share-dev/item-gemini/API%20Key' "$home/.config/proton-pass/pi.env" || exit 1
 grep -Fxq 'MOONSHOT_API_KEY=pass://share-dev/item-moonshot/API%20Key' "$home/.config/proton-pass/pi.env" || exit 1
 [ "$(file_mode "$home/.config/proton-pass/pi.env")" = 600 ] || { printf '%s\n' 'setup test: reference mode is not 600' >&2; exit 1; }
 [ "$auth_before" = "$(file_hash "$home/.pi/agent/auth.json")" ] || { printf '%s\n' 'setup test: wizard modified Pi auth' >&2; exit 1; }
 ! grep -q '^nvim ' "$logfile" || { printf '%s\n' 'setup test: wizard opened an editor' >&2; exit 1; }
+
+# Legacy item titles remain discoverable for existing installations.
+grep '^DEEPSEEK_API_KEY=' "$home/.config/proton-pass/pi.env" >"$home/.config/proton-pass/pi.env.tmp"
+mv "$home/.config/proton-pass/pi.env.tmp" "$home/.config/proton-pass/pi.env"
+chmod 600 "$home/.config/proton-pass/pi.env"
+export MOCK_LEGACY_NAMES=1
+legacy_output=$(run_pty '')
+unset MOCK_LEGACY_NAMES
+grep -Fq 'Gemini: found and verified llm-gemini.' <<<"$legacy_output" || { printf '%s\n' 'setup test: legacy Gemini title was not discovered' >&2; exit 1; }
+grep -Fq 'Moonshot: found and verified llm-moonshot.' <<<"$legacy_output" || { printf '%s\n' 'setup test: legacy Moonshot title was not discovered' >&2; exit 1; }
 
 # Missing optional providers can be skipped gracefully; ready providers remain.
 grep -v '^MOONSHOT_API_KEY=' "$home/.config/proton-pass/pi.env" >"$home/.config/proton-pass/pi.env.tmp"

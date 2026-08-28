@@ -9,7 +9,8 @@ git_identity_file=${XDG_CONFIG_HOME:-$HOME/.config}/git/identity
 pi_auth=${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/auth.json
 readonly PROVIDER_LABELS=(DeepSeek Gemini Moonshot)
 readonly PROVIDER_ENV_NAMES=(DEEPSEEK_API_KEY GEMINI_API_KEY MOONSHOT_API_KEY)
-readonly PROVIDER_ITEM_TITLES=(llm-deepseek llm-gemini llm-moonshot)
+readonly PROVIDER_ITEM_TITLES=(llm-deepseek llm-google llm-moonshotai)
+readonly PROVIDER_ITEM_ALIASES=('' llm-gemini llm-moonshot)
 
 STATUS_PROTON='not configured'
 STATUS_PI_KEYS='not configured'
@@ -229,17 +230,25 @@ find_development_vault() {
 find_prepared_reference() {
   local name=$1
   local title=$2
-  local items_json item_id candidate
+  local alias=${3:-}
+  local items_json item_id candidate candidate_title
+  local titles=("$title")
+  [ -z "$alias" ] || titles+=("$alias")
   find_development_vault || return 1
   items_json=$(pass-cli item list --share-id "$DEVELOPMENT_SHARE_ID" \
     --filter-state active --sort-by alphabetic-asc --output json) || return 1
-  item_id=$(jq -r --arg title "$title" '
-    [.items[]? | select(.title == $title) | .id][0] // empty
-  ' <<<"$items_json") || return 1
-  [ -n "$item_id" ] || return 1
-  candidate="pass://${DEVELOPMENT_SHARE_ID}/${item_id}/API%20Key"
-  reference_resolves "$name" "$candidate" || return 1
-  DISCOVERED_REFERENCE=$candidate
+  for candidate_title in "${titles[@]}"; do
+    item_id=$(jq -r --arg title "$candidate_title" '
+      [.items[]? | select(.title == $title) | .id][0] // empty
+    ' <<<"$items_json") || return 1
+    [ -n "$item_id" ] || continue
+    candidate="pass://${DEVELOPMENT_SHARE_ID}/${item_id}/API%20Key"
+    reference_resolves "$name" "$candidate" || continue
+    DISCOVERED_REFERENCE=$candidate
+    DISCOVERED_TITLE=$candidate_title
+    return 0
+  done
+  return 1
 }
 
 show_secret_recipe() {
@@ -315,7 +324,7 @@ handle_shadowing_api_keys() {
 }
 
 configure_api_keys() {
-  local index name label title existing
+  local index name label title alias existing
   section 'Optional Pi API keys'
   log 'The wizard looks only for Development / llm-<provider> / API Key.'
   log 'It reads item metadata and verifies fields without displaying secret values.'
@@ -324,6 +333,7 @@ configure_api_keys() {
     name=${PROVIDER_ENV_NAMES[$index]}
     label=${PROVIDER_LABELS[$index]}
     title=${PROVIDER_ITEM_TITLES[$index]}
+    alias=${PROVIDER_ITEM_ALIASES[$index]}
     existing=$(reference_value_from_file "$pass_env" "$name" || true)
     if valid_reference_value "$existing" && reference_resolves "$name" "$existing"; then
       CONFIGURED_REFERENCES[index]=$existing
@@ -332,10 +342,10 @@ configure_api_keys() {
       continue
     fi
 
-    if find_prepared_reference "$name" "$title"; then
+    if find_prepared_reference "$name" "$title" "$alias"; then
       CONFIGURED_REFERENCES[index]=$DISCOVERED_REFERENCE
-      PROVIDER_STATUS[index]="ready ($title)"
-      log "$label: found and verified $title."
+      PROVIDER_STATUS[index]="ready ($DISCOVERED_TITLE)"
+      log "$label: found and verified $DISCOVERED_TITLE."
       continue
     fi
 
@@ -352,10 +362,10 @@ configure_api_keys() {
             PROVIDER_STATUS[index]='skipped for now'
             break
           fi
-          if find_prepared_reference "$name" "$title"; then
+          if find_prepared_reference "$name" "$title" "$alias"; then
             CONFIGURED_REFERENCES[index]=$DISCOVERED_REFERENCE
-            PROVIDER_STATUS[index]="ready ($title)"
-            log "$label: found and verified $title."
+            PROVIDER_STATUS[index]="ready ($DISCOVERED_TITLE)"
+            log "$label: found and verified $DISCOVERED_TITLE."
             break
           fi
           warn "$title with a non-empty API Key field is still not available."

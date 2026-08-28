@@ -19,11 +19,12 @@ in Proton Pass using this exact layout:
 | Vault | Item title | Hidden field | Field value |
 | --- | --- | --- | --- |
 | Development | `llm-deepseek` | `API Key` | DeepSeek API key |
-| Development | `llm-gemini` | `API Key` | Gemini API key |
-| Development | `llm-moonshot` | `API Key` | Moonshot API key |
+| Development | `llm-google` | `API Key` | Gemini API key |
+| Development | `llm-moonshotai` | `API Key` | Moonshot API key |
 
-Keep the wizard open while adding a missing item, then choose retry. It finds
-the item automatically and validates the field without displaying its value.
+The legacy titles `llm-gemini` and `llm-moonshot` are also recognized. Keep
+the wizard open while adding a missing item, then choose retry. It finds the
+item automatically and validates the field without displaying its value.
 
 GitHub CLI, Pi account providers, Cloudflare Tunnel, and Wrangler use their own
 interactive OAuth/browser login flows; no additional secret needs to be stored
