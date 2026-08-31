@@ -73,7 +73,7 @@ ensure_nix() {
   command -v nix >/dev/null 2>&1 && return 0
   command -v curl >/dev/null 2>&1 || fail 'Nix is missing and curl is unavailable'
 
-  log 'Nix is not installed; downloading the official multi-user installer'
+  log 'Nix is not installed; downloading the official single-user installer'
   installer=$(mktemp "${TMPDIR:-/tmp}/nix-install.XXXXXX") \
     || fail 'could not create a temporary installer file'
   cleanup_installer() {
@@ -84,7 +84,7 @@ ensure_nix() {
   curl --proto '=https' --tlsv1.2 -fsSL \
     --output "$installer" https://nixos.org/nix/install \
     || fail 'could not download the official Nix installer'
-  sh "$installer" --daemon || fail 'official Nix installer failed'
+  sh "$installer" --no-daemon || fail 'official Nix installer failed'
   cleanup_installer
   trap - 0 1 2 15
 
