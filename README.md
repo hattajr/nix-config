@@ -16,7 +16,7 @@ curl -fsSLO https://raw.githubusercontent.com/hattajr/nix-config/main/scripts/in
 sh install.sh
 ```
 
-The installer installs Nix when needed, detects the platform, clones this repository to `~/src/nix-config`, and prompts to apply the configuration. Run `bro auth` after activation to configure optional accounts and API keys.
+The installer installs single-user Nix when needed, detects the platform, clones this repository to `~/src/nix-config`, and prompts to apply the configuration. Home Manager uses the active user's `$USER` and `$HOME`, so it works for arbitrary local account names; automation may override them with `NIX_CONFIG_USERNAME` and `NIX_CONFIG_HOME`. Run `bro auth` after activation to configure optional accounts and API keys.
 
 ## `bro` commands
 

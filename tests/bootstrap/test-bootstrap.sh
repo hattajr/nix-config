@@ -34,6 +34,7 @@ cat >"$mockbin/nix" <<'EOF_NIX'
 #!/usr/bin/env bash
 set -euo pipefail
 printf 'nix %s\n' "$*" >>"$MOCK_LOG"
+[ "${1:-}" != --impure ] || shift
 case "${1:-}" in
   shell)
     while [ "$#" -gt 0 ] && [ "$1" != --command ]; do shift; done

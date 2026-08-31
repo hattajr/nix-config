@@ -3,10 +3,12 @@
 set -euo pipefail
 repo_root=${BRO_REPO_ROOT:-$(CDPATH='' cd -- "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}
 bro="$repo_root/scripts/bro"
+unset NIX_CONFIG_USERNAME NIX_CONFIG_HOME
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 checkout="$work/checkout"; mockbin="$work/bin"; log="$work/log"
 mkdir -p "$checkout" "$mockbin"; : >"$log"
+ln -s /bin/bash "$mockbin/bash"
 git init -q "$checkout"
 git -C "$checkout" remote add origin https://github.com/hattajr/nix-config.git
 printf '{}\n' >"$checkout/flake.nix"
@@ -30,6 +32,7 @@ cat >"$mockbin/nix" <<'EOF'
 #!/usr/bin/env bash
 printf 'nix %s
 ' "$*" >>"$BRO_LOG"
+[ "${1:-}" != --impure ] || shift
 case "$1" in
   flake|eval) exit 0 ;;
   build) mkdir -p "$BRO_ACTIVATION"; cat >"$BRO_ACTIVATION/activate" <<'ACTIVATE'
@@ -50,13 +53,23 @@ cat >"$apply_home/.nix-profile/bin/tmux" <<'EOF'
 printf 'tmux %s\n' "$*" >>"$BRO_LOG"
 EOF
 chmod +x "$apply_home/.nix-profile/bin/tmux"
-HOME="$apply_home" PATH="$mockbin:$PATH" "$bro" apply >/dev/null
+env -u NIX_CONFIG_USERNAME -u NIX_CONFIG_HOME \
+  HOME="$apply_home" USER=apply-user PATH="$mockbin:$PATH" "$bro" apply >/dev/null
 grep -q '^activation$' "$log"
-grep -Fq "tmux source-file $apply_home/.config/tmux/tmux.conf" "$log" || {
+grep -Fq 'nix eval --impure --raw' "$log" || {
+  echo 'bro test: apply did not evaluate the active user identity impurely' >&2
+  exit 1
+}
+grep -Fq 'nix build --impure --no-link' "$log" || {
+  echo 'bro test: apply did not build with the active user identity' >&2
+  exit 1
+}
+grep -Eq '^tmux source-file .*/\.config/tmux/tmux\.conf$' "$log" || {
   echo 'bro test: apply did not reload an active managed tmux server' >&2
   exit 1
 }
-grep -q 'reloaded active tmux configuration' <(HOME="$apply_home" PATH="$mockbin:$PATH" "$bro" apply) || {
+grep -q 'reloaded active tmux configuration' <(env -u NIX_CONFIG_USERNAME -u NIX_CONFIG_HOME \
+  HOME="$apply_home" USER=apply-user PATH="$mockbin:$PATH" "$bro" apply) || {
   echo 'bro test: apply did not report tmux configuration reload' >&2
   exit 1
 }

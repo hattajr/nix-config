@@ -35,13 +35,13 @@ printf '%s\n' 'docker-validation: checking locked flake metadata and evaluation'
 # flake output and rejects its nested `type` attr. Show/eval validates the
 # locked flake and synthetic configuration without masking that limitation.
 nix flake metadata "$flake_source" >/tmp/flake-metadata.txt
-nix flake show "$flake_source" --json >/tmp/flake-show.json
-activation_drv=$(nix eval --raw "$flake_ref.activationPackage.drvPath")
-darwin_arm_drv=$(nix eval --raw \
+nix flake show --impure "$flake_source" --json >/tmp/flake-show.json
+activation_drv=$(nix eval --impure --raw "$flake_ref.activationPackage.drvPath")
+darwin_arm_drv=$(nix eval --impure --raw \
   "$flake_source#homeConfigurations.aarch64-darwin.activationPackage.drvPath")
-linux_arm_drv=$(nix eval --raw \
+linux_arm_drv=$(nix eval --impure --raw \
   "$flake_source#homeConfigurations.aarch64-linux.activationPackage.drvPath")
-linux_x86_drv=$(nix eval --raw \
+linux_x86_drv=$(nix eval --impure --raw \
   "$flake_source#homeConfigurations.x86_64-linux.activationPackage.drvPath")
 printf '%s\n' "$activation_drv" >/tmp/activation.drv
 printf '%s\n' "$darwin_arm_drv" >/tmp/aarch64-darwin-activation.drv
@@ -49,7 +49,7 @@ printf '%s\n' "$linux_arm_drv" >/tmp/aarch64-linux-activation.drv
 printf '%s\n' "$linux_x86_drv" >/tmp/x86_64-linux-activation.drv
 
 printf '%s\n' 'docker-validation: building activation package without checkout links'
-activation_package=$(nix build --no-link --print-out-paths "$flake_ref.activationPackage")
+activation_package=$(nix build --impure --no-link --print-out-paths "$flake_ref.activationPackage")
 printf 'activation package: %s\n' "$activation_package"
 if [ ! -f "$activation_package/activate" ]; then
   printf 'activation package contents:\n' >&2
@@ -181,8 +181,8 @@ BOOTSTRAP_REPO_ROOT="$source_root" "$source_root/tests/proton-pass/test-session-
 BOOTSTRAP_REPO_ROOT="$source_root" "$source_root/tests/proton-pass/test-setup.sh"
 
 printf '%s\n' 'docker-validation: checking repeatable activation generation'
-second_drv=$(nix eval --raw "$flake_ref.activationPackage.drvPath")
-second_package=$(nix build --no-link --print-out-paths "$flake_ref.activationPackage")
+second_drv=$(nix eval --impure --raw "$flake_ref.activationPackage.drvPath")
+second_package=$(nix build --impure --no-link --print-out-paths "$flake_ref.activationPackage")
 [ "$activation_drv" = "$second_drv" ] || fail 'locked inputs produced a different activation derivation'
 [ "$activation_package" = "$second_package" ] || fail 'locked inputs produced different activation paths'
 
