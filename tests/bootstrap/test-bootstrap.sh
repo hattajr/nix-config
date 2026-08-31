@@ -25,7 +25,7 @@ export MOCK_BIN="$mockbin"
 export MOCK_ACTIVATION="$activation"
 
 # Isolate PATH so missing-tool cases are real within the test.
-for command_name in bash env dirname mkdir cp chmod grep cat mktemp rm mv ps tty; do
+for command_name in bash sh env dirname mkdir cp chmod grep cat mktemp rm mv ps tty ls awk id; do
   command_path=$(command -v "$command_name")
   ln -s "$command_path" "$mockbin/$command_name"
 done
@@ -159,6 +159,63 @@ mv "$workdir/nix.stub" "$mockbin/nix"
 rm -f "$mockbin/curl"
 : >"$logfile"
 
+# Fresh installations use the official multi-user (daemon) installer.
+mv "$mockbin/nix" "$workdir/nix.stub"
+cat >"$mockbin/curl" <<'EOF_CURL'
+#!/usr/bin/env bash
+set -euo pipefail
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = --output ]; then
+    output=$2
+    break
+  fi
+  shift
+done
+cat >"$output" <<'EOF_INSTALLER'
+#!/usr/bin/env bash
+printf 'installer %s\n' "$*" >>"$MOCK_LOG"
+exit 1
+EOF_INSTALLER
+chmod +x "$output"
+EOF_CURL
+chmod +x "$mockbin/curl"
+set +e
+daemon_output=$(run_install "$home/src/daemon-install" 2>&1)
+daemon_status=$?
+set -e
+[ "$daemon_status" -ne 0 ] || { printf '%s\n' 'bootstrap test: mocked daemon installer unexpectedly succeeded' >&2; exit 1; }
+grep -Fq 'official multi-user Nix installer failed' <<<"$daemon_output" || {
+  printf '%s\n' 'bootstrap test: daemon installer failure was not reported' >&2
+  exit 1
+}
+grep -Fxq 'installer --daemon' "$logfile" || {
+  printf '%s\n' 'bootstrap test: official installer was not invoked in daemon mode' >&2
+  exit 1
+}
+mv "$workdir/nix.stub" "$mockbin/nix"
+rm -f "$mockbin/curl"
+: >"$logfile"
+
+# A valid single-user installation is discovered even when its profile was not
+# loaded by the invoking shell, so no installer download is attempted.
+profile_bin="$workdir/profile-bin"
+mkdir -p "$profile_bin" "$home/.nix-profile/etc/profile.d"
+mv "$mockbin/nix" "$profile_bin/nix"
+cat >"$home/.nix-profile/etc/profile.d/nix.sh" <<EOF_NIX_PROFILE
+PATH="$profile_bin:\$PATH"
+export PATH
+EOF_NIX_PROFILE
+hidden_nix_destination="$home/src/hidden-nix"
+run_install "$hidden_nix_destination" >/dev/null
+grep -Fq "git clone https://github.com/hattajr/nix-config.git $hidden_nix_destination.nix-config-install." "$logfile" || {
+  printf '%s\n' 'bootstrap test: hidden Nix profile did not reach clone' >&2
+  exit 1
+}
+! grep -q '^curl ' "$logfile" || { printf '%s\n' 'bootstrap test: hidden Nix profile reached installer download' >&2; exit 1; }
+rm -f "$home/.nix-profile/etc/profile.d/nix.sh"
+mv "$profile_bin/nix" "$mockbin/nix"
+: >"$logfile"
+
 # Explicit no validates the checkout but does not invoke Nix or activate.
 NIX_CONFIG_APPLY=no run_bootstrap "$repo_root" >/dev/null
 ! grep -q '^nix ' "$logfile" || { printf '%s\n' 'bootstrap test: decline reached Nix' >&2; exit 1; }
@@ -276,8 +333,8 @@ PY_NO_TTY
 install_mock_git
 destination="$home/src/public-clone"
 run_install "$destination" >/dev/null
-grep -Fq "git clone https://github.com/hattajr/nix-config.git $destination" "$logfile" || {
-  printf '%s\n' 'bootstrap test: public HTTPS clone was not used' >&2
+grep -Fq "git clone https://github.com/hattajr/nix-config.git $destination.nix-config-install." "$logfile" || {
+  printf '%s\n' 'bootstrap test: public HTTPS clone was not staged before finalizing' >&2
   exit 1
 }
 grep -Fq "checkout-bootstrap platform=x86_64-linux args=$destination" "$logfile" || {

@@ -16,7 +16,9 @@ curl -fsSLO https://raw.githubusercontent.com/hattajr/nix-config/main/scripts/in
 sh install.sh
 ```
 
-The installer installs single-user Nix when needed, detects the platform, clones this repository to `~/src/nix-config`, and prompts to apply the configuration. Home Manager uses the active user's `$USER` and `$HOME`, so it works for arbitrary local account names; automation may override them with `NIX_CONFIG_USERNAME` and `NIX_CONFIG_HOME`. Run `bro auth` after activation to configure optional accounts and API keys.
+The installer detects the platform, first reuses a working Nix installation (even when its profile is not loaded), otherwise installs multi-user Nix through the official daemon installer. The initial installation requires `sudo`; the installer manages the root-owned `/nix` store. It then clones this repository to `~/src/nix-config` and prompts to apply the configuration.
+
+Existing ChezMoi sources are detected and left unchanged. Do not let ChezMoi and Home Manager manage the same paths; review and migrate colliding files deliberately before applying Home Manager. Home Manager uses the active user's `$USER` and `$HOME`, so it works for arbitrary local account names; automation may override them with `NIX_CONFIG_USERNAME` and `NIX_CONFIG_HOME`. Run `bro auth` after activation to configure optional accounts and API keys.
 
 ## `bro` commands
 

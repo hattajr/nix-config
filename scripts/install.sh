@@ -5,6 +5,7 @@ set -eu
 
 REPOSITORY_URL=${NIX_CONFIG_REPOSITORY_URL:-https://github.com/hattajr/nix-config.git}
 DEFAULT_DESTINATION=${HOME}/src/nix-config
+NIX_ROOT=${NIX_CONFIG_NIX_ROOT:-/nix}
 PLATFORMS="aarch64-darwin aarch64-linux x86_64-linux"
 
 log() {
@@ -30,6 +31,10 @@ configuration; set NIX_CONFIG_APPLY=yes to apply unattended or
 NIX_CONFIG_APPLY=no to clone and validate only. Without a terminal, bootstrap
 fails closed unless one of those values is set. After activation, run bro auth to
 configure optional accounts and API keys.
+
+The installer first reuses an existing working Nix installation, including one
+whose profile is not loaded in the current shell. It never changes /nix ownership
+or modifies an existing ChezMoi source.
 EOF
 }
 
@@ -59,7 +64,7 @@ detect_platform() {
 
 load_nix_environment() {
   for hook in \
-    /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh \
+    "$NIX_ROOT/var/nix/profiles/default/etc/profile.d/nix-daemon.sh" \
     "${HOME}/.nix-profile/etc/profile.d/nix.sh"
   do
     if [ -f "$hook" ]; then
@@ -69,27 +74,38 @@ load_nix_environment() {
   done
 }
 
-ensure_nix() {
-  command -v nix >/dev/null 2>&1 && return 0
-  command -v curl >/dev/null 2>&1 || fail 'Nix is missing and curl is unavailable'
+nix_is_usable() {
+  command -v nix >/dev/null 2>&1 && nix --version >/dev/null 2>&1
+}
 
-  log 'Nix is not installed; downloading the official single-user installer'
+ensure_nix() {
+  # A shell that has not sourced nix.sh is not a fresh installation. Always try
+  # known profile hooks before deciding that Nix is absent.
+  load_nix_environment
+  if nix_is_usable; then
+    log 'Using existing Nix installation'
+    return 0
+  fi
+
+  # The daemon installer owns /nix as root, so an existing root-owned /nix is
+  # expected and must be left for the official installer to manage.
+  log 'Nix is not installed; downloading the official multi-user installer (sudo is required)'
+
+  command -v curl >/dev/null 2>&1 || fail 'Nix is missing and curl is unavailable'
   installer=$(mktemp "${TMPDIR:-/tmp}/nix-install.XXXXXX") \
     || fail 'could not create a temporary installer file'
-  cleanup_installer() {
-    rm -f "$installer"
-  }
+  cleanup_installer() { rm -f "$installer"; }
   trap cleanup_installer 0 1 2 15
 
   curl --proto '=https' --tlsv1.2 -fsSL \
     --output "$installer" https://nixos.org/nix/install \
     || fail 'could not download the official Nix installer'
-  sh "$installer" --no-daemon || fail 'official Nix installer failed'
+  sh "$installer" --daemon || fail 'official multi-user Nix installer failed'
   cleanup_installer
   trap - 0 1 2 15
 
   load_nix_environment
-  command -v nix >/dev/null 2>&1 \
+  nix_is_usable \
     || fail 'Nix was installed but is not available; open a new shell and rerun this command'
 }
 
@@ -111,23 +127,48 @@ run_git() {
   fi
 }
 
+origin_is_trusted() {
+  case "$1" in
+    "$REPOSITORY_URL"|git@github.com:hattajr/nix-config.git) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+validate_checkout() {
+  checkout=$1
+  [ -d "$checkout/.git" ] || return 1
+  origin=$(run_git -C "$checkout" remote get-url origin 2>/dev/null) || return 1
+  origin_is_trusted "$origin" || return 1
+  run_git -C "$checkout" rev-parse --verify HEAD >/dev/null 2>&1 || return 1
+  [ -f "$checkout/scripts/bootstrap.sh" ] || return 1
+}
+
 clone_repository() {
   destination=$1
   if [ -e "$destination" ]; then
-    [ -d "$destination/.git" ] \
-      || fail "destination exists but is not a Git repository: $destination"
-    origin=$(run_git -C "$destination" remote get-url origin 2>/dev/null) \
-      || fail "existing repository has no origin remote: $destination"
-    [ "$origin" = "$REPOSITORY_URL" ] \
-      || fail "existing repository origin is not $REPOSITORY_URL"
+    validate_checkout "$destination" \
+      || fail "destination is not a complete trusted nix-config checkout: $destination"
     log "Using existing checkout at $destination"
     return 0
   fi
 
   mkdir -p "$(dirname "$destination")"
+  staging="${destination}.nix-config-install.$$"
+  [ ! -e "$staging" ] \
+    || fail "an interrupted clone is present at $staging; inspect it before retrying"
   log "Cloning the public repository into $destination"
-  run_git clone "$REPOSITORY_URL" "$destination" \
-    || fail 'repository clone failed'
+  run_git clone "$REPOSITORY_URL" "$staging" \
+    || fail 'repository clone failed; rerun the same command after fixing connectivity'
+  validate_checkout "$staging" \
+    || fail "repository clone is incomplete or untrusted at $staging; it was left in place for inspection"
+  mv "$staging" "$destination" \
+    || fail "could not finalize cloned checkout; retry the same command"
+}
+
+detect_chezmoi() {
+  if command -v chezmoi >/dev/null 2>&1 || [ -d "${XDG_DATA_HOME:-$HOME/.local/share}/chezmoi" ]; then
+    log 'ChezMoi was detected. Its source will not be modified; review Home Manager path collisions before applying.'
+  fi
 }
 
 main() {
@@ -138,9 +179,10 @@ main() {
   platform=$(detect_platform)
   destination=${1:-${NIX_CONFIG_REPOSITORY:-$DEFAULT_DESTINATION}}
 
-  ensure_nix
+  ensure_nix "$destination"
   enable_nix_features
   clone_repository "$destination"
+  detect_chezmoi
 
   bootstrap="$destination/scripts/bootstrap.sh"
   [ -f "$bootstrap" ] || fail "bootstrap script is missing: $bootstrap"
