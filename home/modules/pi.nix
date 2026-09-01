@@ -57,7 +57,7 @@ let
     (lib.filesystem.listFilesRecursive piStaticRoot);
   piStaticHomeFiles = builtins.listToAttrs (map (source: {
     name = ".pi/agent/${lib.removePrefix "${toString piStaticRoot}/" (toString source)}";
-    value.source = source;
+    value = { inherit source; force = true; };
   }) piStaticFiles);
 in
 {
@@ -68,23 +68,11 @@ in
     temporary="$settings.tmp.$$"
     mkdir -p "$(dirname "$settings")"
 
-    # Preserve Pi's live changelog marker while refreshing managed settings.
-    # This replaces the old Chezmoi template's live-field behavior without
-    # leaving the runtime settings file as a read-only /nix/store symlink.
+    # Preserve Pi's live changelog marker while refreshing managed settings
+    # without leaving the runtime file as a read-only /nix/store symlink.
     last_changelog_version="0.0.0"
     if [ -f "$settings" ]; then
       last_changelog_version="$(${pkgs.jq}/bin/jq -r '.lastChangelogVersion // "0.0.0"' "$settings" 2>/dev/null || printf '%s' '0.0.0')"
-    else
-      # During ChezMoi takeover settings.json is backed up before linkGeneration.
-      # Recover only this non-secret marker from the approved private transaction.
-      migration_root="''${XDG_STATE_HOME:-$HOME/.local/state}/nix-config/migrations/chezmoi-v1"
-      if [ -r "$migration_root/current" ]; then
-        migration_digest="$(cat "$migration_root/current")"
-        migration_settings="$migration_root/transactions/$migration_digest/backup/.pi/agent/settings.json"
-        if [ -f "$migration_settings" ]; then
-          last_changelog_version="$(${pkgs.jq}/bin/jq -r '.lastChangelogVersion // "0.0.0"' "$migration_settings" 2>/dev/null || printf '%s' '0.0.0')"
-        fi
-      fi
     fi
     ${pkgs.jq}/bin/jq --arg version "$last_changelog_version" \
       '.lastChangelogVersion = $version' "${piSettings}" > "$temporary"
@@ -93,18 +81,20 @@ in
   '';
 
   home.file = piStaticHomeFiles // {
-    ".pi/README.md".source = ../../config/pi/README.md;
-    ".pi/.gitignore".source = ../../config/pi/.gitignore;
-    ".pi/.nvmrc".source = ../../config/pi/.nvmrc;
+    ".pi/README.md" = { source = ../../config/pi/README.md; force = true; };
+    ".pi/.gitignore" = { source = ../../config/pi/.gitignore; force = true; };
+    ".pi/.nvmrc" = { source = ../../config/pi/.nvmrc; force = true; };
     ".local/bin/pi" = {
       source = ../../bin/pi;
       executable = true;
+      force = true;
     };
     ".local/bin/proton-pass-pi-env" = {
       source = ../../bin/proton-pass-pi-env;
       executable = true;
+      force = true;
     };
-    ".pi/.claude/settings.local.json".source = ../../config/pi/.claude/settings.local.json;
-    ".claude/settings.local.json".source = ../../config/claude/settings.local.json;
+    ".pi/.claude/settings.local.json" = { source = ../../config/pi/.claude/settings.local.json; force = true; };
+    ".claude/settings.local.json" = { source = ../../config/claude/settings.local.json; force = true; };
   };
 }

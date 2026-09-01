@@ -7,7 +7,10 @@ SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 readonly DEFAULT_DESTINATION=$(dirname "$SCRIPT_DIR")
 
 log() { printf 'nix-bootstrap: %s\n' "$*"; }
-fail() { printf 'nix-bootstrap: ERROR: %s\n' "$*" >&2; exit 1; }
+fail() {
+  printf 'nix-bootstrap: ERROR: %s\n' "$*" >&2
+  exit 1
+}
 usage() {
   cat <<'EOF'
 Usage: scripts/bootstrap.sh [checkout]
@@ -18,8 +21,8 @@ Without a terminal set NIX_CONFIG_APPLY=yes to apply or NIX_CONFIG_APPLY=no to
 validate only. NIX_CONFIG_PLATFORM overrides platform detection.
 EOF
 }
-answer_is_yes() { case "$1" in y|Y|yes|YES|true|TRUE|1) return 0;; *) return 1;; esac; }
-answer_is_no() { case "$1" in n|N|no|NO|false|FALSE|0) return 0;; *) return 1;; esac; }
+answer_is_yes() { case "$1" in y | Y | yes | YES | true | TRUE | 1) return 0 ;; *) return 1 ;; esac }
+answer_is_no() { case "$1" in n | N | no | NO | false | FALSE | 0) return 0 ;; *) return 1 ;; esac }
 
 run_git() {
   if command -v git >/dev/null 2>&1; then
@@ -35,8 +38,8 @@ validate_checkout() {
   [ -d "$repo/.git" ] || fail "not a Git checkout: $repo"
   origin=$(run_git -C "$repo" remote get-url origin 2>/dev/null || true)
   case "$origin:$EXPECTED_ORIGIN" in
-    "$EXPECTED_ORIGIN:$EXPECTED_ORIGIN"|git@github.com:hattajr/nix-config.git:https://github.com/hattajr/nix-config.git) ;;
-    *) fail "checkout origin is not $EXPECTED_ORIGIN" ;;
+  "$EXPECTED_ORIGIN:$EXPECTED_ORIGIN" | git@github.com:hattajr/nix-config.git:https://github.com/hattajr/nix-config.git) ;;
+  *) fail "checkout origin is not $EXPECTED_ORIGIN" ;;
   esac
 }
 write_checkout_state() {
@@ -57,7 +60,7 @@ resolve_terminal_device() {
   tty_name=${tty_name#"${tty_name%%[![:space:]]*}"}
   tty_name=${tty_name%"${tty_name##*[![:space:]]}"}
   case "$tty_name" in
-    ''|'?'|'??'|tty|/*|'.'|'..'|./*|../*|*/.|*/..|*/./*|*/../*) return 1 ;;
+  '' | '?' | '??' | tty | /* | '.' | '..' | ./* | ../* | */. | */.. | */./* | */../*) return 1 ;;
   esac
   [[ "$tty_name" =~ ^[[:alnum:]_.-]+(/[[:alnum:]_.-]+)*$ ]] || return 1
   device=/dev/$tty_name
@@ -68,25 +71,23 @@ start_managed_shell() {
   local managed_zsh="$HOME/.nix-profile/bin/zsh"
   local start_shell=${NIX_CONFIG_START_SHELL:-yes}
   local terminal_device
-  answer_is_no "$start_shell" && { log "Managed shell ready; start it with: exec $managed_zsh -l"; return; }
+  answer_is_no "$start_shell" && {
+    log "Managed shell ready; start it with: exec $managed_zsh -l"
+    return
+  }
   answer_is_yes "$start_shell" || fail "invalid NIX_CONFIG_START_SHELL value: $start_shell"
-  [ -x "$managed_zsh" ] || { log "Managed shell ready; start it with: exec $managed_zsh -l"; return; }
-  terminal_device=$(resolve_terminal_device) \
-    || { log "Managed shell ready; start it with: exec $managed_zsh -l"; return; }
+  [ -x "$managed_zsh" ] || {
+    log "Managed shell ready; start it with: exec $managed_zsh -l"
+    return
+  }
+  terminal_device=$(resolve_terminal_device) ||
+    {
+      log "Managed shell ready; start it with: exec $managed_zsh -l"
+      return
+    }
   log 'Entering the managed zsh login shell'
   exec "$managed_zsh" -l <"$terminal_device" >"$terminal_device" 2>&1
 }
-migration_allows_activation() {
-  local repo=$1 source=${CHEZMOI_SOURCE:-${XDG_DATA_HOME:-$HOME/.local/share}/chezmoi} status
-  [ -d "$source" ] || return 0
-  [ -x "$repo/scripts/migrate-chezmoi.py" ] || fail 'ChezMoi source detected but migration tool is missing'
-  status=$("$repo/scripts/migrate-chezmoi.py" --home "$HOME" status)
-  case "$status" in
-    *'"state": "activation-pending"'*|*'"state": "complete"'*) return 0 ;;
-    *) fail "ChezMoi migration is unresolved; run scripts/install.sh and approve its displayed migration digest before activation" ;;
-  esac
-}
-
 should_apply() {
   local preset=${NIX_CONFIG_APPLY:-} answer terminal_device
   if [ -n "$preset" ]; then
@@ -114,13 +115,17 @@ should_apply() {
   fail "invalid yes/no answer: $answer"
 }
 main() {
-  case "${1:-}" in -h|--help) usage; exit 0;; esac
+  case "${1:-}" in -h | --help)
+    usage
+    exit 0
+    ;;
+  esac
   local repo=${1:-${NIX_CONFIG_REPOSITORY:-$DEFAULT_DESTINATION}}
   local apply_status
   validate_checkout "$repo"
   write_checkout_state "$repo"
   if should_apply; then
-    migration_allows_activation "$repo"
+    :
   else
     apply_status=$?
     if [ "$apply_status" -eq 1 ]; then

@@ -2,7 +2,10 @@ import { execFile } from "node:child_process";
 import { hostname, userInfo } from "node:os";
 import { promisify } from "node:util";
 
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type {
+  ExtensionAPI,
+  ExtensionContext,
+} from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 
 const execFileAsync = promisify(execFile);
@@ -35,7 +38,10 @@ function formatTokens(count: number): string {
 }
 
 function sanitizeStatusText(text: string): string {
-  return text.replace(/[\r\n\t]/g, " ").replace(/ +/g, " ").trim();
+  return text
+    .replace(/[\r\n\t]/g, " ")
+    .replace(/ +/g, " ")
+    .trim();
 }
 
 function formatPath(cwd: string): string {
@@ -66,7 +72,11 @@ function fitLine(left: string, right: string, width: number): string {
 
   const trimmedRight = truncateToWidth(right, availableForRight, "");
   const trimmedRightWidth = visibleWidth(trimmedRight);
-  return left + " ".repeat(Math.max(1, width - leftWidth - trimmedRightWidth)) + trimmedRight;
+  return (
+    left +
+    " ".repeat(Math.max(1, width - leftWidth - trimmedRightWidth)) +
+    trimmedRight
+  );
 }
 
 type GitState = {
@@ -122,7 +132,10 @@ function formatRepoStatus(state: GitState): string {
   return marks || "✓";
 }
 
-function styleRepoStatus(theme: ExtensionContext["ui"]["theme"], state: GitState): string {
+function styleRepoStatus(
+  theme: ExtensionContext["ui"]["theme"],
+  state: GitState,
+): string {
   const text = formatRepoStatus(state);
   if (!text) return "";
   if (state.conflicts) return theme.fg("error", text);
@@ -156,7 +169,10 @@ function getUsageTotals(ctx: ExtensionContext): {
   return { input, output, cacheRead, cacheWrite, cost };
 }
 
-function renderStatsLeft(theme: ExtensionContext["ui"]["theme"], ctx: ExtensionContext): string {
+function renderStatsLeft(
+  theme: ExtensionContext["ui"]["theme"],
+  ctx: ExtensionContext,
+): string {
   const totals = getUsageTotals(ctx);
   const parts: string[] = [];
 
@@ -165,9 +181,13 @@ function renderStatsLeft(theme: ExtensionContext["ui"]["theme"], ctx: ExtensionC
   if (totals.cacheRead) parts.push(`R${formatTokens(totals.cacheRead)}`);
   if (totals.cacheWrite) parts.push(`W${formatTokens(totals.cacheWrite)}`);
 
-  const usingSubscription = !!(ctx.model && ctx.modelRegistry.isUsingOAuth(ctx.model));
+  const usingSubscription = !!(
+    ctx.model && ctx.modelRegistry.isUsingOAuth(ctx.model)
+  );
   if (totals.cost || usingSubscription) {
-    parts.push(`$${totals.cost.toFixed(3)}${usingSubscription ? " (sub)" : ""}`);
+    parts.push(
+      `$${totals.cost.toFixed(3)}${usingSubscription ? " (sub)" : ""}`,
+    );
   }
 
   const usage = ctx.getContextUsage();
@@ -189,10 +209,25 @@ function renderStatsLeft(theme: ExtensionContext["ui"]["theme"], ctx: ExtensionC
   return theme.fg("dim", parts.join(" "));
 }
 
-function renderStatsRight(theme: ExtensionContext["ui"]["theme"], ctx: ExtensionContext, pi: ExtensionAPI): string {
+function renderStatsRight(
+  theme: ExtensionContext["ui"]["theme"],
+  ctx: ExtensionContext,
+  pi: ExtensionAPI,
+  activePreset?: string,
+): string {
   const model = ctx.model?.id || "no-model";
   const thinking = pi.getThinkingLevel();
-  return theme.fg("dim", `${model} • ${thinking}`);
+  const description = `${model} • ${thinking}`;
+  const presetColor =
+    activePreset === "FAST"
+      ? "success"
+      : activePreset === "THINKING"
+        ? "error"
+        : "accent";
+
+  return activePreset
+    ? theme.fg(presetColor, `${activePreset} `) + theme.fg("dim", description)
+    : theme.fg("dim", description);
 }
 
 class AestheticFooter {
@@ -205,7 +240,12 @@ class AestheticFooter {
     getExtensionStatuses(): ReadonlyMap<string, string>;
     onBranchChange(callback: () => void): () => void;
   };
-  private gitState: GitState = { inRepo: false, dirty: false, untracked: false, conflicts: false };
+  private gitState: GitState = {
+    inRepo: false,
+    dirty: false,
+    untracked: false,
+    conflicts: false,
+  };
   private refreshTimer: ReturnType<typeof setTimeout> | undefined;
   private disposed = false;
   private readonly unsubscribeBranchChange: () => void;
@@ -226,7 +266,9 @@ class AestheticFooter {
     this.tui = tui;
     this.theme = theme;
     this.footerData = footerData;
-    this.unsubscribeBranchChange = footerData.onBranchChange(() => this.scheduleRefresh(0));
+    this.unsubscribeBranchChange = footerData.onBranchChange(() =>
+      this.scheduleRefresh(0),
+    );
     this.scheduleRefresh(0);
   }
 
@@ -258,19 +300,23 @@ class AestheticFooter {
       repoStatus,
     ].filter(Boolean);
 
+    const extensionStatuses = this.footerData.getExtensionStatuses();
+    const activePreset = extensionStatuses.get("model-preset");
+    const visibleExtensionStatuses = Array.from(extensionStatuses.entries())
+      .filter(([name]) => name !== "model-preset")
+      .sort(([a], [b]) => a.localeCompare(b));
+
     const promptLine = truncateToWidth(promptParts.join(sep), width, "…");
     const statsLine = fitLine(
       renderStatsLeft(this.theme, this.ctx),
-      renderStatsRight(this.theme, this.ctx, this.pi),
+      renderStatsRight(this.theme, this.ctx, this.pi, activePreset),
       width,
     );
 
     const lines = [promptLine, statsLine];
 
-    const extensionStatuses = this.footerData.getExtensionStatuses();
-    if (extensionStatuses.size > 0) {
-      const statusLine = Array.from(extensionStatuses.entries())
-        .sort(([a], [b]) => a.localeCompare(b))
+    if (visibleExtensionStatuses.length > 0) {
+      const statusLine = visibleExtensionStatuses
         .map(([, text]) => sanitizeStatusText(text))
         .join(" ");
       lines.push(truncateToWidth(statusLine, width, this.theme.fg("dim", "…")));

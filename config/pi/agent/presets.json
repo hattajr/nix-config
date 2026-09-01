@@ -1,0 +1,12 @@
+{
+  "thinking": {
+    "provider": "openai-codex",
+    "model": "gpt-5.6-sol",
+    "thinkingLevel": "high"
+  },
+  "fast": {
+    "provider": "openai-codex",
+    "model": "gpt-5.6-terra",
+    "thinkingLevel": "medium"
+  }
+}

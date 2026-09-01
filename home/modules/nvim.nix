@@ -1,18 +1,18 @@
 { lib, pkgs, ... }:
 
 let
-  # The Chezmoi setup builds Neovim from source. Select nixpkgs' unwrapped
+  # Select nixpkgs' unwrapped Neovim package explicitly. Home Manager may add
   # source-built package explicitly; Home Manager may add its normal provider
   # wrapper around this package when provider support is enabled.
   neovimSource = pkgs.neovim-unwrapped;
   nvimConfigRoot = ../../config/nvim;
   # Link leaves individually so existing ~/.config/nvim remains a real
-  # directory. This lets the migration back up only colliding files and never
-  # move an entire user configuration directory.
+  # directory. Forced ownership replaces only declared files and preserves
+  # unrelated local entries.
   nvimConfigFiles = lib.filesystem.listFilesRecursive nvimConfigRoot;
   nvimConfigHomeFiles = builtins.listToAttrs (map (source: {
     name = "nvim/${lib.removePrefix "${toString nvimConfigRoot}/" (toString source)}";
-    value.source = source;
+    value = { inherit source; force = true; };
   }) nvimConfigFiles);
 in
 {
@@ -28,12 +28,12 @@ in
 
   # Preserve the historical vi/vim command names without invoking the
   # nixpkgs Neovim wrapper or generating a mutable remote-plugin manifest.
-  home.file.".local/bin/vi".source = "${neovimSource}/bin/nvim";
-  home.file.".local/bin/vim".source = "${neovimSource}/bin/nvim";
+  home.file.".local/bin/vi" = { source = "${neovimSource}/bin/nvim"; force = true; };
+  home.file.".local/bin/vim" = { source = "${neovimSource}/bin/nvim"; force = true; };
 
   # Keep the LazyVim source tree in Git while allowing Neovim's mutable state
-  # and downloaded plugins to live under XDG_DATA_HOME. Per-leaf links avoid a
-  # directory collision with an existing migrated ~/.config/nvim tree.
+  # and downloaded plugins to live under XDG_DATA_HOME. Per-leaf links preserve
+  # unrelated files in an existing ~/.config/nvim tree.
   xdg.configFile = nvimConfigHomeFiles;
 
   # Lazy must write its operational lockfile, while the versioned source is a

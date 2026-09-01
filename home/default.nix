@@ -11,5 +11,6 @@
     ./modules/shell.nix
     ./modules/ssh.nix
     ./modules/tmux.nix
+    ./modules/takeover.nix
   ];
 }

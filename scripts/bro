@@ -9,15 +9,13 @@ log() { printf 'bro: %s\n' "$*"; }
 fail() { printf 'bro: ERROR: %s\n' "$*" >&2; exit 1; }
 usage() {
   cat <<'EOF'
-Usage: bro <health|apply|sync|auth|migration> [--push]
+Usage: bro <health|apply|sync|auth> [--push]
 
   bro health        Check core shell health and optional account setup.
   bro apply         Build and activate this checkout; does not update Git.
   bro sync           Fast-forward from upstream, then apply.
   bro sync --push    As above, and explicitly push local commits after applying.
   bro auth          Interactively configure accounts and API keys.
-  bro migration status|resume|rollback|legacy
-                    Inspect, resume, roll back, or report migration artifacts.
 
 BRO_REPOSITORY overrides the installed checkout location.
 EOF
@@ -79,39 +77,15 @@ run_git() {
   fi
 }
 
-migration_allows_apply() {
-  local repo=$1 source=${CHEZMOI_SOURCE:-${XDG_DATA_HOME:-$HOME/.local/share}/chezmoi} state
-  [ -d "$source" ] || return 0
-  state=$("$repo/scripts/migrate-chezmoi.py" --home "$HOME" status)
-  case "$state" in *'"state": "activation-pending"'*|*'"state": "complete"'*) return 0 ;; esac
-  fail 'ChezMoi migration is unresolved; rerun scripts/install.sh and approve its exact migration digest'
-}
-
 apply() {
   local repo=$1 target=$2 ref="$1#homeConfigurations.$2.activationPackage" package
   command -v nix >/dev/null 2>&1 || fail 'Nix is required'
-  migration_allows_apply "$repo"
   nix flake metadata "$repo" >/dev/null || fail 'flake metadata validation failed'
   nix eval --impure --raw "$ref.drvPath" >/dev/null || fail "platform output is unavailable or invalid: $target"
   package=$(nix build --impure --no-link --print-out-paths "$ref") || fail 'Home Manager activation package build failed'
   [ -x "$package/activate" ] || fail 'built activation package has no executable activate script'
   log "activating $target"
   "$package/activate"
-  if [ -d "${CHEZMOI_SOURCE:-${XDG_DATA_HOME:-$HOME/.local/share}/chezmoi}" ]; then
-    # There is intentionally no public migration-tool `complete` command:
-    # only this successful activation handoff may record terminal state.
-    python3 - "$repo/scripts/migrate-chezmoi.py" "$HOME" <<'PY' || \
-      log 'WARN: Home Manager activated but migration completion was not recorded; rerun bro apply'
-import importlib.util
-import sys
-from pathlib import Path
-spec = importlib.util.spec_from_file_location("nix_config_migration", sys.argv[1])
-module = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(module)
-module.mark_complete_after_activation(Path(sys.argv[2]))
-PY
-  fi
-
   # Home Manager updates the configuration link, but an already-running tmux
   # server keeps its previous status-line/plugin state until it is reloaded.
   # Do not start a server merely to reload it.
@@ -147,17 +121,6 @@ health() {
     log "OK: $target flake output"
   else
     log "CORE FAIL: platform output is unavailable: $target"; core_failed=1
-  fi
-
-  local chezmoi_source=${CHEZMOI_SOURCE:-${XDG_DATA_HOME:-$HOME/.local/share}/chezmoi} migration_state
-  if [ -d "$chezmoi_source" ]; then
-    migration_state=$("$repo/scripts/migrate-chezmoi.py" --home "$HOME" status)
-    if [[ "$migration_state" == *'"state": "complete"'* ]]; then
-      log 'OK: ChezMoi migration completed'
-    else
-      log 'CORE FAIL: ChezMoi migration is unresolved; run bro migration status'
-      core_failed=1
-    fi
   fi
 
   locale_output=$(locale 2>&1) || {
@@ -211,13 +174,6 @@ health() {
   [ "$auth_failed" -eq 0 ] || return 1
 }
 
-migration() {
-  local repo=$1 action=${2:-status} tool="$1/scripts/migrate-chezmoi.py"
-  [ -x "$tool" ] || fail "migration tool is missing: $tool"
-  case "$action" in status|resume|rollback|legacy) ;; *) fail 'migration action must be status, resume, rollback, or legacy' ;; esac
-  "$tool" --home "$HOME" "$action"
-}
-
 sync() {
   local repo=$1 target=$2 push=${3:-no} upstream ahead behind
   [ -z "$(run_git -C "$repo" status --porcelain)" ] || fail 'working tree has changes'
@@ -237,11 +193,10 @@ sync() {
 
 main() {
   local command=${1:-} repo target
-  case "$command" in health|apply|sync|auth|migration) ;; -h|--help|'') usage; [ -n "$command" ] && exit 0 || exit 2 ;; *) usage >&2; exit 2;; esac
+  case "$command" in health|apply|sync|auth) ;; -h|--help|'') usage; [ -n "$command" ] && exit 0 || exit 2 ;; *) usage >&2; exit 2;; esac
   shift
-  local push=no migration_action=status
+  local push=no
   if [ "$command" = sync ] && [ "${1:-}" = --push ]; then push=yes; shift; fi
-  if [ "$command" = migration ] && [ "$#" -gt 0 ]; then migration_action=$1; shift; fi
   [ "$#" = 0 ] || { usage >&2; exit 2; }
   enable_nix_features; set_home_identity; repo=$(checkout); target=$(platform)
   case "$command" in
@@ -249,7 +204,6 @@ main() {
     health) health "$repo" "$target";;
     sync) sync "$repo" "$target" "$push";;
     auth) auth;;
-    migration) migration "$repo" "$migration_action";;
   esac
 }
 main "$@"

@@ -23,15 +23,18 @@
   home.file.".local/bin/bro" = {
     source = ../../bin/bro;
     executable = true;
+    force = true;
   };
 
   home.file.".local/bin/devtunnel" = {
     source = ../../bin/devtunnel;
     executable = true;
+    force = true;
   };
 
   home.file.".local/bin/pi-models-sync" = {
     source = ../../bin/pi-models-sync;
     executable = true;
+    force = true;
   };
 }

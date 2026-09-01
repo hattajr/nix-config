@@ -33,8 +33,8 @@ fails closed unless one of those values is set. After activation, run bro auth t
 configure optional accounts and API keys.
 
 The installer first reuses an existing working Nix installation, including one
-whose profile is not loaded in the current shell. It never changes /nix ownership
-except for a deterministic `.chezmoiignore` guard that prevents ChezMoi from overwriting paths taken over by Home Manager.
+whose profile is not loaded in the current shell. Home Manager is the sole owner
+of its managed configuration paths and replaces legacy files during activation.
 EOF
 }
 
@@ -52,10 +52,10 @@ detect_platform() {
     os=$(uname -s)
     arch=$(uname -m)
     case "$os:$arch" in
-      Darwin:arm64|Darwin:aarch64) selected=aarch64-darwin ;;
-      Linux:arm64|Linux:aarch64) selected=aarch64-linux ;;
-      Linux:x86_64|Linux:amd64) selected=x86_64-linux ;;
-      *) fail "unsupported platform: $os/$arch" ;;
+    Darwin:arm64 | Darwin:aarch64) selected=aarch64-darwin ;;
+    Linux:arm64 | Linux:aarch64) selected=aarch64-linux ;;
+    Linux:x86_64 | Linux:amd64) selected=x86_64-linux ;;
+    *) fail "unsupported platform: $os/$arch" ;;
     esac
   fi
   contains_platform "$selected" || fail "unsupported platform override: $selected"
@@ -65,8 +65,7 @@ detect_platform() {
 load_nix_environment() {
   for hook in \
     "$NIX_ROOT/var/nix/profiles/default/etc/profile.d/nix-daemon.sh" \
-    "${HOME}/.nix-profile/etc/profile.d/nix.sh"
-  do
+    "${HOME}/.nix-profile/etc/profile.d/nix.sh"; do
     if [ -f "$hook" ]; then
       # shellcheck disable=SC1090
       . "$hook"
@@ -92,21 +91,21 @@ ensure_nix() {
   log 'Nix is not installed; downloading the official multi-user installer (sudo is required)'
 
   command -v curl >/dev/null 2>&1 || fail 'Nix is missing and curl is unavailable'
-  installer=$(mktemp "${TMPDIR:-/tmp}/nix-install.XXXXXX") \
-    || fail 'could not create a temporary installer file'
+  installer=$(mktemp "${TMPDIR:-/tmp}/nix-install.XXXXXX") ||
+    fail 'could not create a temporary installer file'
   cleanup_installer() { rm -f "$installer"; }
   trap cleanup_installer 0 1 2 15
 
   curl --proto '=https' --tlsv1.2 -fsSL \
-    --output "$installer" https://nixos.org/nix/install \
-    || fail 'could not download the official Nix installer'
-  sh "$installer" --daemon || fail 'official multi-user Nix installer failed'
+    --output "$installer" https://nixos.org/nix/install ||
+    fail 'could not download the official Nix installer'
+  sh "$installer" --daemon --yes || fail 'official multi-user Nix installer failed'
   cleanup_installer
   trap - 0 1 2 15
 
   load_nix_environment
-  nix_is_usable \
-    || fail 'Nix was installed but is not available; open a new shell and rerun this command'
+  nix_is_usable ||
+    fail 'Nix was installed but is not available; open a new shell and rerun this command'
 }
 
 enable_nix_features() {
@@ -129,8 +128,8 @@ run_git() {
 
 origin_is_trusted() {
   case "$1" in
-    "$REPOSITORY_URL"|git@github.com:hattajr/nix-config.git) return 0 ;;
-    *) return 1 ;;
+  "$REPOSITORY_URL" | git@github.com:hattajr/nix-config.git) return 0 ;;
+  *) return 1 ;;
   esac
 }
 
@@ -143,74 +142,58 @@ validate_checkout() {
   [ -f "$checkout/scripts/bootstrap.sh" ] || return 1
 }
 
+update_checkout() {
+  checkout=$1
+  [ -z "$(run_git -C "$checkout" status --porcelain)" ] ||
+    fail "checkout has local changes; commit or stash them before updating: $checkout"
+  run_git -C "$checkout" fetch --prune origin ||
+    fail 'could not fetch the latest nix-config commit'
+  default_ref=$(run_git -C "$checkout" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null || true)
+  [ -n "$default_ref" ] || default_ref=origin/main
+  run_git -C "$checkout" merge-base --is-ancestor HEAD "$default_ref" ||
+    fail "checkout has local commits or diverged from $default_ref; resolve them before updating"
+  run_git -C "$checkout" merge --ff-only "$default_ref" ||
+    fail "could not fast-forward checkout to $default_ref"
+  log "Using latest commit from $default_ref"
+}
+
 clone_repository() {
   destination=$1
   if [ -e "$destination" ]; then
-    validate_checkout "$destination" \
-      || fail "destination is not a complete trusted nix-config checkout: $destination"
-    log "Using existing checkout at $destination"
+    validate_checkout "$destination" ||
+      fail "destination is not a complete trusted nix-config checkout: $destination"
+    update_checkout "$destination"
     return 0
   fi
 
   mkdir -p "$(dirname "$destination")"
   staging="${destination}.nix-config-install.$$"
-  [ ! -e "$staging" ] \
-    || fail "an interrupted clone is present at $staging; inspect it before retrying"
+  [ ! -e "$staging" ] ||
+    fail "an interrupted clone is present at $staging; inspect it before retrying"
   log "Cloning the public repository into $destination"
-  run_git clone "$REPOSITORY_URL" "$staging" \
-    || fail 'repository clone failed; rerun the same command after fixing connectivity'
-  validate_checkout "$staging" \
-    || fail "repository clone is incomplete or untrusted at $staging; it was left in place for inspection"
-  mv "$staging" "$destination" \
-    || fail "could not finalize cloned checkout; retry the same command"
-}
-
-migrate_chezmoi() {
-  source=${CHEZMOI_SOURCE:-${XDG_DATA_HOME:-$HOME/.local/share}/chezmoi}
-  [ -d "$source" ] || return 0
-  migration="$1/scripts/migrate-chezmoi.py"
-  [ -x "$migration" ] || fail "ChezMoi migration tool is missing: $migration"
-  command -v python3 >/dev/null 2>&1 || fail 'ChezMoi was detected but python3 is unavailable for the safe migration preflight'
-  migration_status=$("$migration" --home "$HOME" status)
-  case "$migration_status" in
-    *'"state": "complete"'*)
-      log 'ChezMoi migration is already complete; skipping migration planning'
-      return 0
-      ;;
-  esac
-
-  plan_output=$("$migration" --home "$HOME" --source "$source" plan) \
-    || fail 'ChezMoi migration plan failed; no home files were changed'
-  printf '%s\n' "$plan_output"
-  digest=$(printf '%s\n' "$plan_output" | awk '/plan digest/ { print $NF }')
-  [ -n "$digest" ] || fail 'ChezMoi migration plan did not return an approval digest'
-
-  approval=${NIX_CONFIG_MIGRATION:-}
-  if [ -z "$approval" ]; then
-    [ -t 0 ] || fail "ChezMoi migration needs explicit approval; rerun with NIX_CONFIG_MIGRATION=$digest"
-    printf 'Back up the listed files and let Home Manager take over? [y/N] '
-    IFS= read -r approval || approval=no
-    [ "$approval" = y ] || [ "$approval" = Y ] || { log 'ChezMoi migration was not approved; no home files were changed'; exit 0; }
-    approval=$digest
-  fi
-  [ "$approval" = "$digest" ] || fail "invalid ChezMoi migration approval; rerun with NIX_CONFIG_MIGRATION=$digest"
-  "$migration" --home "$HOME" --source "$source" execute --digest "$digest" \
-    || fail 'ChezMoi migration backup failed; rerun the exact command to resume safely'
+  run_git clone "$REPOSITORY_URL" "$staging" ||
+    fail 'repository clone failed; rerun the same command after fixing connectivity'
+  validate_checkout "$staging" ||
+    fail "repository clone is incomplete or untrusted at $staging; it was left in place for inspection"
+  mv "$staging" "$destination" ||
+    fail "could not finalize cloned checkout; retry the same command"
+  update_checkout "$destination"
 }
 
 main() {
   case "${1:-}" in
-    -h|--help) usage; exit 0 ;;
+  -h | --help)
+    usage
+    exit 0
+    ;;
   esac
 
   platform=$(detect_platform)
   destination=${1:-${NIX_CONFIG_REPOSITORY:-$DEFAULT_DESTINATION}}
 
-  ensure_nix "$destination"
+  ensure_nix
   enable_nix_features
   clone_repository "$destination"
-  migrate_chezmoi "$destination"
-
   bootstrap="$destination/scripts/bootstrap.sh"
   [ -f "$bootstrap" ] || fail "bootstrap script is missing: $bootstrap"
   log "Continuing with the reviewed checkout for platform $platform"

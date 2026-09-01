@@ -18,7 +18,7 @@
     in
     {
       homeConfigurations = {
-        incus-test = import ./lib/mkHome.nix {
+        multipass-test = import ./lib/mkHome.nix {
           inherit inputs;
           system = "x86_64-linux";
           username = "test";

@@ -7,8 +7,14 @@ python3_path=$(command -v python3)
 system_bash=$(command -v bash)
 install_script="$repo_root/scripts/install.sh"
 bootstrap="$repo_root/scripts/bootstrap.sh"
-[ -x "$install_script" ] || { printf '%s\n' 'bootstrap test: install script is not executable' >&2; exit 1; }
-[ -x "$bootstrap" ] || { printf '%s\n' 'bootstrap test: bootstrap script is not executable' >&2; exit 1; }
+[ -x "$install_script" ] || {
+  printf '%s\n' 'bootstrap test: install script is not executable' >&2
+  exit 1
+}
+[ -x "$bootstrap" ] || {
+  printf '%s\n' 'bootstrap test: bootstrap script is not executable' >&2
+  exit 1
+}
 
 workdir=$(mktemp -d)
 trap 'rm -rf "$workdir"' EXIT
@@ -134,7 +140,10 @@ if NIX_CONFIG_PLATFORM=unsupported NIX_CONFIG_APPLY=yes run_bootstrap "$repo_roo
   printf '%s\n' 'bootstrap test: unsupported platform unexpectedly succeeded' >&2
   exit 1
 fi
-! grep -q '^nix ' "$logfile" || { printf '%s\n' 'bootstrap test: invalid platform reached Nix' >&2; exit 1; }
+! grep -q '^nix ' "$logfile" || {
+  printf '%s\n' 'bootstrap test: invalid platform reached Nix' >&2
+  exit 1
+}
 : >"$logfile"
 
 # A failed Nix-installer download is reported directly and never piped to sh.
@@ -149,12 +158,18 @@ set +e
 download_output=$(run_install "$home/src/download-failure" 2>&1)
 download_status=$?
 set -e
-[ "$download_status" -ne 0 ] || { printf '%s\n' 'bootstrap test: failed installer download succeeded' >&2; exit 1; }
+[ "$download_status" -ne 0 ] || {
+  printf '%s\n' 'bootstrap test: failed installer download succeeded' >&2
+  exit 1
+}
 grep -Fq 'could not download the official Nix installer' <<<"$download_output" || {
   printf '%s\n' 'bootstrap test: failed download produced the wrong error' >&2
   exit 1
 }
-! grep -q '^git clone ' "$logfile" || { printf '%s\n' 'bootstrap test: failed download reached clone' >&2; exit 1; }
+! grep -q '^git clone ' "$logfile" || {
+  printf '%s\n' 'bootstrap test: failed download reached clone' >&2
+  exit 1
+}
 mv "$workdir/nix.stub" "$mockbin/nix"
 rm -f "$mockbin/curl"
 : >"$logfile"
@@ -183,12 +198,15 @@ set +e
 daemon_output=$(run_install "$home/src/daemon-install" 2>&1)
 daemon_status=$?
 set -e
-[ "$daemon_status" -ne 0 ] || { printf '%s\n' 'bootstrap test: mocked daemon installer unexpectedly succeeded' >&2; exit 1; }
+[ "$daemon_status" -ne 0 ] || {
+  printf '%s\n' 'bootstrap test: mocked daemon installer unexpectedly succeeded' >&2
+  exit 1
+}
 grep -Fq 'official multi-user Nix installer failed' <<<"$daemon_output" || {
   printf '%s\n' 'bootstrap test: daemon installer failure was not reported' >&2
   exit 1
 }
-grep -Fxq 'installer --daemon' "$logfile" || {
+grep -Fxq 'installer --daemon --yes' "$logfile" || {
   printf '%s\n' 'bootstrap test: official installer was not invoked in daemon mode' >&2
   exit 1
 }
@@ -215,16 +233,28 @@ grep -Fq "git clone https://github.com/hattajr/nix-config.git $hidden_nix_destin
   printf '%s\n' 'bootstrap test: hidden Nix profile did not reach clone' >&2
   exit 1
 }
-! grep -q '^curl ' "$logfile" || { printf '%s\n' 'bootstrap test: hidden Nix profile reached installer download' >&2; exit 1; }
-! grep -q '^installer --daemon$' "$logfile" || { printf '%s\n' 'bootstrap test: hidden Nix profile reached daemon installer' >&2; exit 1; }
+! grep -q '^curl ' "$logfile" || {
+  printf '%s\n' 'bootstrap test: hidden Nix profile reached installer download' >&2
+  exit 1
+}
+! grep -q '^installer --daemon --yes$' "$logfile" || {
+  printf '%s\n' 'bootstrap test: hidden Nix profile reached daemon installer' >&2
+  exit 1
+}
 rm -f "$home/.nix-profile/etc/profile.d/nix.sh"
 mv "$profile_bin/nix" "$mockbin/nix"
 : >"$logfile"
 
 # Explicit no validates the checkout but does not invoke Nix or activate.
 NIX_CONFIG_APPLY=no run_bootstrap "$repo_root" >/dev/null
-! grep -q '^nix ' "$logfile" || { printf '%s\n' 'bootstrap test: decline reached Nix' >&2; exit 1; }
-! grep -q '^activation$' "$logfile" || { printf '%s\n' 'bootstrap test: decline still activated Home Manager' >&2; exit 1; }
+! grep -q '^nix ' "$logfile" || {
+  printf '%s\n' 'bootstrap test: decline reached Nix' >&2
+  exit 1
+}
+! grep -q '^activation$' "$logfile" || {
+  printf '%s\n' 'bootstrap test: decline still activated Home Manager' >&2
+  exit 1
+}
 if NIX_CONFIG_APPLY=invalid run_bootstrap "$repo_root" >/dev/null 2>&1; then
   printf '%s\n' 'bootstrap test: invalid apply preset unexpectedly succeeded' >&2
   exit 1
@@ -241,18 +271,6 @@ grep -Fq 'nix shell --accept-flake-config nixpkgs#git --command git -C' "$logfil
 install_mock_git
 : >"$logfile"
 
-# Bootstrap refuses to activate a ChezMoi home unless installer migration has
-# recorded an approved, activation-pending transaction.
-chezmoi_source="$workdir/chezmoi-reference"
-mkdir "$chezmoi_source"
-: >"$logfile"
-if CHEZMOI_SOURCE="$chezmoi_source" NIX_CONFIG_APPLY=yes run_bootstrap "$repo_root" >/dev/null 2>&1; then
-  printf '%s\n' 'bootstrap test: unresolved ChezMoi migration activated' >&2
-  exit 1
-fi
-! grep -q '^nix build ' "$logfile" || { printf '%s\n' 'bootstrap test: unresolved migration reached activation build' >&2; exit 1; }
-: >"$logfile"
-
 # Explicit ARM64 override builds and activates, then runs noninteractive health.
 NIX_CONFIG_PLATFORM=aarch64-linux NIX_CONFIG_APPLY=yes \
   run_bootstrap "$repo_root" >/dev/null
@@ -260,9 +278,18 @@ grep -Fq 'homeConfigurations.aarch64-linux.activationPackage' "$logfile" || {
   printf '%s\n' 'bootstrap test: ARM64 override did not select the ARM output' >&2
   exit 1
 }
-grep -q '^nix build ' "$logfile" || { printf '%s\n' 'bootstrap test: approval did not build activation' >&2; exit 1; }
-grep -q '^activation$' "$logfile" || { printf '%s\n' 'bootstrap test: approval did not activate Home Manager' >&2; exit 1; }
-[ -r "$home/.local/state/bro/checkout" ] || { printf '%s\n' 'bootstrap test: checkout state was not written' >&2; exit 1; }
+grep -q '^nix build ' "$logfile" || {
+  printf '%s\n' 'bootstrap test: approval did not build activation' >&2
+  exit 1
+}
+grep -q '^activation$' "$logfile" || {
+  printf '%s\n' 'bootstrap test: approval did not activate Home Manager' >&2
+  exit 1
+}
+[ -r "$home/.local/state/bro/checkout" ] || {
+  printf '%s\n' 'bootstrap test: checkout state was not written' >&2
+  exit 1
+}
 
 # A piped installer with a controlling PTY hands managed zsh the concrete
 # terminal device, never the /dev/tty alias rejected by tmux.
@@ -300,13 +327,22 @@ _, status = os.waitpid(pid, 0)
 if not os.WIFEXITED(status) or os.WEXITSTATUS(status) != 0:
     sys.exit(1)
 PY_PTY
-grep -Eq '^managed-tty=/dev/.+' "$shell_log" || { printf '%s\n' 'bootstrap test: managed shell did not receive a concrete terminal' >&2; exit 1; }
-! grep -Fxq 'managed-tty=/dev/tty' "$shell_log" || { printf '%s\n' 'bootstrap test: managed shell received the /dev/tty alias' >&2; exit 1; }
+grep -Eq '^managed-tty=/dev/.+' "$shell_log" || {
+  printf '%s\n' 'bootstrap test: managed shell did not receive a concrete terminal' >&2
+  exit 1
+}
+! grep -Fxq 'managed-tty=/dev/tty' "$shell_log" || {
+  printf '%s\n' 'bootstrap test: managed shell received the /dev/tty alias' >&2
+  exit 1
+}
 
 # An explicit shell opt-out never launches managed zsh.
 : >"$shell_log"
 NIX_CONFIG_APPLY=yes NIX_CONFIG_START_SHELL=no run_bootstrap "$repo_root" >/dev/null
-[ ! -s "$shell_log" ] || { printf '%s\n' 'bootstrap test: shell opt-out launched managed shell' >&2; exit 1; }
+[ ! -s "$shell_log" ] || {
+  printf '%s\n' 'bootstrap test: shell opt-out launched managed shell' >&2
+  exit 1
+}
 
 # With no controlling terminal, explicit activation succeeds without launching a shell.
 : >"$shell_log"
@@ -343,7 +379,10 @@ result = subprocess.run(
 if result.returncode == 0 or "No terminal available" not in result.stdout:
     sys.exit(1)
 PY_NO_TTY
-[ ! -s "$shell_log" ] || { printf '%s\n' 'bootstrap test: no-TTY bootstrap launched managed shell' >&2; exit 1; }
+[ ! -s "$shell_log" ] || {
+  printf '%s\n' 'bootstrap test: no-TTY bootstrap launched managed shell' >&2
+  exit 1
+}
 : >"$logfile"
 
 # Stage zero auto-detects Linux x86, clones over public HTTPS, and passes the destination.
@@ -358,7 +397,10 @@ grep -Fq "checkout-bootstrap platform=x86_64-linux args=$destination" "$logfile"
   printf '%s\n' 'bootstrap test: stage zero did not hand off platform and destination' >&2
   exit 1
 }
-! grep -q '^gh ' "$logfile" || { printf '%s\n' 'bootstrap test: public clone invoked gh' >&2; exit 1; }
+! grep -q '^gh ' "$logfile" || {
+  printf '%s\n' 'bootstrap test: public clone invoked gh' >&2
+  exit 1
+}
 : >"$logfile"
 
 # Missing Git uses an ephemeral nix shell; it never mutates a Nix profile.
@@ -369,7 +411,10 @@ grep -Fq 'nix shell --accept-flake-config nixpkgs#git --command git clone' "$log
   printf '%s\n' 'bootstrap test: missing Git did not use an ephemeral nix shell' >&2
   exit 1
 }
-! grep -Fq 'nix profile' "$logfile" || { printf '%s\n' 'bootstrap test: stage zero mutated the Nix profile' >&2; exit 1; }
+! grep -Fq 'nix profile' "$logfile" || {
+  printf '%s\n' 'bootstrap test: stage zero mutated the Nix profile' >&2
+  exit 1
+}
 : >"$logfile"
 
 # Native ARM64 detection supports an Ubuntu UTM VM without a machine-specific target.
@@ -393,9 +438,20 @@ grep -Fq "checkout-bootstrap platform=aarch64-darwin args=$darwin_destination" "
 
 # Rerunning against an existing checkout verifies origin and does not clone again.
 run_install "$destination" >/dev/null
-! grep -q '^git clone ' "$logfile" || { printf '%s\n' 'bootstrap test: rerun recloned repository' >&2; exit 1; }
+! grep -q '^git clone ' "$logfile" || {
+  printf '%s\n' 'bootstrap test: rerun recloned repository' >&2
+  exit 1
+}
 grep -Fq "git -C $destination remote get-url origin" "$logfile" || {
   printf '%s\n' 'bootstrap test: rerun did not verify repository origin' >&2
+  exit 1
+}
+grep -Fq "git -C $destination fetch --prune origin" "$logfile" || {
+  printf '%s\n' 'bootstrap test: rerun did not fetch the latest remote commit' >&2
+  exit 1
+}
+grep -Fq "git -C $destination merge --ff-only origin/main" "$logfile" || {
+  printf '%s\n' 'bootstrap test: rerun did not fast-forward to the default branch' >&2
   exit 1
 }
 
