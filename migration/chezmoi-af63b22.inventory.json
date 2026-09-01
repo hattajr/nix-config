@@ -1,0 +1,1452 @@
+{
+  "schema": 1,
+  "sourceCommit": "af63b22ec845bdcb7c7f2780c06c2184bd0d7efe",
+  "items": [
+    {
+      "path": ".config",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/core-files.nix"
+    },
+    {
+      "path": ".config/bottom",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/core-files.nix"
+    },
+    {
+      "path": ".config/bottom/bottom.toml",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/core-files.nix"
+    },
+    {
+      "path": ".config/git",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/core-files.nix"
+    },
+    {
+      "path": ".config/git/ignore",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/git.nix"
+    },
+    {
+      "path": ".config/mise",
+      "owner": "retired",
+      "treatment": "backup-and-remove",
+      "replacement": "migration/README.md"
+    },
+    {
+      "path": ".config/mise/config.toml",
+      "owner": "retired",
+      "treatment": "backup-and-remove",
+      "replacement": "migration/README.md"
+    },
+    {
+      "path": ".config/mise/mise.lock",
+      "owner": "retired",
+      "treatment": "backup-and-remove",
+      "replacement": "migration/README.md"
+    },
+    {
+      "path": ".config/nvim",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/nvim.nix"
+    },
+    {
+      "path": ".config/nvim/.gitignore",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/nvim.nix"
+    },
+    {
+      "path": ".config/nvim/.neoconf.json",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/nvim.nix"
+    },
+    {
+      "path": ".config/nvim/LICENSE",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/nvim.nix"
+    },
+    {
+      "path": ".config/nvim/README.md",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/nvim.nix"
+    },
+    {
+      "path": ".config/nvim/colors",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/nvim.nix"
+    },
+    {
+      "path": ".config/nvim/colors/blink.lua",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/nvim.nix"
+    },
+    {
+      "path": ".config/nvim/init.lua",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/nvim.nix"
+    },
+    {
+      "path": ".config/nvim/lazy-lock.json",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/nvim.nix"
+    },
+    {
+      "path": ".config/nvim/lazyvim.json",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/nvim.nix"
+    },
+    {
+      "path": ".config/nvim/lua",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/nvim.nix"
+    },
+    {
+      "path": ".config/nvim/lua/config",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/nvim.nix"
+    },
+    {
+      "path": ".config/nvim/lua/config/autocmds.lua",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/nvim.nix"
+    },
+    {
+      "path": ".config/nvim/lua/config/keymaps.lua",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/nvim.nix"
+    },
+    {
+      "path": ".config/nvim/lua/config/lazy.lua",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/nvim.nix"
+    },
+    {
+      "path": ".config/nvim/lua/config/options.lua",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/nvim.nix"
+    },
+    {
+      "path": ".config/nvim/lua/plugins",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/nvim.nix"
+    },
+    {
+      "path": ".config/nvim/lua/plugins/colorscheme.lua",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/nvim.nix"
+    },
+    {
+      "path": ".config/nvim/lua/plugins/diagnostics.lua",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/nvim.nix"
+    },
+    {
+      "path": ".config/nvim/lua/plugins/diffview.lua",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/nvim.nix"
+    },
+    {
+      "path": ".config/nvim/lua/plugins/neo-tree.lua",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/nvim.nix"
+    },
+    {
+      "path": ".config/nvim/lua/plugins/snacks.lua",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/nvim.nix"
+    },
+    {
+      "path": ".config/nvim/lua/plugins/treesitter-context.lua",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/nvim.nix"
+    },
+    {
+      "path": ".config/nvim/lua/plugins/ty.lua",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/nvim.nix"
+    },
+    {
+      "path": ".config/nvim/stylua.toml",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/nvim.nix"
+    },
+    {
+      "path": ".config/tmux",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/tmux.nix"
+    },
+    {
+      "path": ".config/tmux/keys.sh",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/tmux.nix"
+    },
+    {
+      "path": ".config/tmux/tmux.conf",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/tmux.nix"
+    },
+    {
+      "path": ".gitconfig",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/git.nix"
+    },
+    {
+      "path": ".inputrc",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/core-files.nix"
+    },
+    {
+      "path": ".local",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/core-files.nix"
+    },
+    {
+      "path": ".local/bin",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/core-files.nix"
+    },
+    {
+      "path": ".local/bin/devtunnel",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/core-files.nix"
+    },
+    {
+      "path": ".local/bin/pi",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".local/bin/pi-models-sync",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/core-files.nix"
+    },
+    {
+      "path": ".pi/.claude",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/.claude/settings.local.json",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/.gitignore",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/.nvmrc",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/.pi",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/.pi/.gitignore",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/README.md",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/agents",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/agents/drafter.md",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/agents/issue-splitter.md",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/agents/issue-worker-tdd.md",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/agents/plan-reviewer.md",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/agents/planner.md",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/agents/qa-worker-integration.md",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/agents/visual-reviewer.md",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/chains",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/chains/implement-issue-with-review.chain.md",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/chains/plan-bootstrap.chain.md",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/chains/plan-loop.chain.md",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/chains/plan-to-issues.chain.md",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/extensions",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/extensions/aesthetic-footer.ts",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/extensions/btw.ts",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/extensions/dangerous-command-guard.ts",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/extensions/frontend-get-design.ts",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/extensions/gen-standup.ts",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/extensions/gh-create-issue.ts",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/extensions/issue-exec.ts",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/extensions/notify.ts",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/extensions/plan-autoloop.ts",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/extensions/plans-at-autocomplete.ts",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/extensions/qa-exec.ts",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/extensions/riyadus-salihin-widget.ts.disabled",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/extensions/rpiv-ask-user-question",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/extensions/rpiv-ask-user-question/LICENSE",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/extensions/rpiv-ask-user-question/README.md",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/extensions/rpiv-ask-user-question/ask-user-question.ts",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/extensions/rpiv-ask-user-question/config.ts",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/extensions/rpiv-ask-user-question/index.ts",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/extensions/rpiv-ask-user-question/locales",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/extensions/rpiv-ask-user-question/locales/de.json",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/extensions/rpiv-ask-user-question/locales/en.json",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/extensions/rpiv-ask-user-question/locales/es.json",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/extensions/rpiv-ask-user-question/locales/fr.json",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/extensions/rpiv-ask-user-question/locales/pt-BR.json",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/extensions/rpiv-ask-user-question/locales/pt.json",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/extensions/rpiv-ask-user-question/locales/ru.json",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/extensions/rpiv-ask-user-question/locales/uk.json",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/extensions/rpiv-ask-user-question/package.json",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/extensions/rpiv-ask-user-question/state",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/extensions/rpiv-ask-user-question/state/build-questionnaire.ts",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/extensions/rpiv-ask-user-question/state/i18n-bridge.ts",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/extensions/rpiv-ask-user-question/state/key-router.ts",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/extensions/rpiv-ask-user-question/state/questionnaire-session.ts",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/extensions/rpiv-ask-user-question/state/row-intent.ts",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/extensions/rpiv-ask-user-question/state/selectors",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/extensions/rpiv-ask-user-question/state/selectors/contract.ts",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/extensions/rpiv-ask-user-question/state/selectors/derivations.ts",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/extensions/rpiv-ask-user-question/state/selectors/focus.ts",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/extensions/rpiv-ask-user-question/state/selectors/projections.ts",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/extensions/rpiv-ask-user-question/state/state-reducer.ts",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/extensions/rpiv-ask-user-question/state/state.ts",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/extensions/rpiv-ask-user-question/tool",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/extensions/rpiv-ask-user-question/tool/format-answer.ts",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/extensions/rpiv-ask-user-question/tool/response-envelope.ts",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/extensions/rpiv-ask-user-question/tool/types.ts",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/extensions/rpiv-ask-user-question/tool/validate-questionnaire.ts",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/extensions/rpiv-ask-user-question/view",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/extensions/rpiv-ask-user-question/view/component-binding.ts",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/extensions/rpiv-ask-user-question/view/components",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/extensions/rpiv-ask-user-question/view/components/chat-row-view.ts",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/extensions/rpiv-ask-user-question/view/components/multi-select-view.ts",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/extensions/rpiv-ask-user-question/view/components/option-list-view.ts",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/extensions/rpiv-ask-user-question/view/components/preview",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/extensions/rpiv-ask-user-question/view/components/preview/markdown-content-cache.ts",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/extensions/rpiv-ask-user-question/view/components/preview/preview-block-renderer.ts",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/extensions/rpiv-ask-user-question/view/components/preview/preview-box-renderer.ts",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/extensions/rpiv-ask-user-question/view/components/preview/preview-layout-decider.ts",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/extensions/rpiv-ask-user-question/view/components/preview/preview-pane.ts",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/extensions/rpiv-ask-user-question/view/components/submit-picker.ts",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/extensions/rpiv-ask-user-question/view/components/tab-bar.ts",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/extensions/rpiv-ask-user-question/view/components/wrapping-select.ts",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/extensions/rpiv-ask-user-question/view/dialog-builder.ts",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/extensions/rpiv-ask-user-question/view/props-adapter.ts",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/extensions/rpiv-ask-user-question/view/stateful-view.ts",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/extensions/rpiv-ask-user-question/view/tab-components.ts",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/extensions/rpiv-ask-user-question/view/tab-content-strategy.ts",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/extensions/start-new-project.ts",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/extensions/subagent",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/extensions/subagent/config.json",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/extensions/telegram-notify.ts",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/extensions/todos",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/extensions/todos.ts",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/extensions/todos/core.ts",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/extensions/uv.ts",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/extensions/whimsical.ts",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/intercepted-commands",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/intercepted-commands/pip",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/intercepted-commands/pip3",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/intercepted-commands/poetry",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/intercepted-commands/python",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/intercepted-commands/python3",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/keybindings.json",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/messenger",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/messenger/migrations",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/messenger/migrations/legacy-crew-agent-cleanup-v1.json",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/scoped-models.json",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/scripts",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/scripts/setup-plans-worktree.mjs",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/secrets.json",
+      "owner": "runtime-proton-pass",
+      "treatment": "preserve",
+      "replacement": "home/modules/proton-pass.nix"
+    },
+    {
+      "path": ".pi/agent/settings.json",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/skills",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/skills/codebase-audit",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/skills/codebase-audit/SKILL.md",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/skills/commit",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/skills/commit/SKILL.md",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/skills/design-md-import",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/skills/design-md-import/SKILL.md",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/skills/frontend-design",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/skills/frontend-design/SKILL.md",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/skills/github",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/skills/github/SKILL.md",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/skills/htmx-alpine",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/skills/htmx-alpine/SKILL.md",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/skills/htmx-alpine/references",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/skills/htmx-alpine/references/accessibility.md",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/skills/htmx-alpine/references/alpine-state.md",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/skills/htmx-alpine/references/feedback-patterns.md",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/skills/htmx-alpine/references/frameworks",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/skills/htmx-alpine/references/frameworks/rust-axum.md",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/skills/htmx-alpine/references/htmx-requests.md",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/skills/htmx-alpine/references/integration.md",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/skills/htmx-alpine/references/realtime.md",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/skills/make-test",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/skills/make-test/SKILL.md",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/skills/polars",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/skills/polars/SKILL.md",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/skills/product-description",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/skills/product-description/SKILL.md",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/skills/remote-dev",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/skills/remote-dev/SKILL.md",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/skills/setup-daisyui-tailwind-fastapi",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/skills/setup-daisyui-tailwind-fastapi/SKILL.md",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/skills/tldraw-offline",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/skills/tldraw-offline/README.md",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/skills/tldraw-offline/SKILL.md",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/skills/tldraw-offline/inject-server-context.sh",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/skills/tldraw-offline/tq",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/skills/uv",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/skills/uv/SKILL.md",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/skills/uv/build.md",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/skills/uv/scripts.md",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/skills/web-browser",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/skills/web-browser/LICENSE",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/skills/web-browser/SKILL.md",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/skills/web-browser/scripts",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/skills/web-browser/scripts/cdp.js",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/skills/web-browser/scripts/devices.js",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/skills/web-browser/scripts/dismiss-cookies.js",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/skills/web-browser/scripts/emulate.js",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/skills/web-browser/scripts/emulation-state.js",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/skills/web-browser/scripts/eval.js",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/skills/web-browser/scripts/logs-tail.js",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/skills/web-browser/scripts/nav.js",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/skills/web-browser/scripts/net-summary.js",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/skills/web-browser/scripts/package-lock.json",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/skills/web-browser/scripts/package.json",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/skills/web-browser/scripts/pick.js",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/skills/web-browser/scripts/screenshot.js",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/skills/web-browser/scripts/start.js",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/skills/web-browser/scripts/watch.js",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/themes",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/themes/modern-dark.json",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".pi/agent/themes/nightowl.json",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/pi.nix"
+    },
+    {
+      "path": ".vimrc",
+      "owner": "retired",
+      "treatment": "backup-and-remove",
+      "replacement": "migration/README.md"
+    },
+    {
+      "path": ".zshenv",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/core-files.nix"
+    },
+    {
+      "path": ".zshrc",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/core-files.nix"
+    },
+    {
+      "path": "00-bootstrap.sh",
+      "owner": "retired",
+      "treatment": "backup-and-remove",
+      "replacement": "migration/README.md"
+    },
+    {
+      "path": "Makefile",
+      "owner": "retired",
+      "treatment": "backup-and-remove",
+      "replacement": "migration/README.md"
+    },
+    {
+      "path": "PLANS",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/core-files.nix"
+    },
+    {
+      "path": "PLANS/bootstrap-dag",
+      "owner": "retired",
+      "treatment": "backup-and-remove",
+      "replacement": "migration/README.md"
+    },
+    {
+      "path": "PLANS/bootstrap-dag/draft.md",
+      "owner": "retired",
+      "treatment": "backup-and-remove",
+      "replacement": "migration/README.md"
+    },
+    {
+      "path": "install-mise.sh",
+      "owner": "retired",
+      "treatment": "backup-and-remove",
+      "replacement": "migration/README.md"
+    },
+    {
+      "path": "install-mosh-osc52.sh",
+      "owner": "retired",
+      "treatment": "backup-and-remove",
+      "replacement": "migration/README.md"
+    },
+    {
+      "path": "install-neovim.sh",
+      "owner": "retired",
+      "treatment": "backup-and-remove",
+      "replacement": "migration/README.md"
+    },
+    {
+      "path": "install-tmux-plugins.sh",
+      "owner": "retired",
+      "treatment": "backup-and-remove",
+      "replacement": "migration/README.md"
+    },
+    {
+      "path": "install-web-browser.sh",
+      "owner": "retired",
+      "treatment": "backup-and-remove",
+      "replacement": "migration/README.md"
+    },
+    {
+      "path": "register-claude-url-handler.sh",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/core-files.nix"
+    },
+    {
+      "path": "zz-validate.sh",
+      "owner": "home-manager",
+      "treatment": "take-over",
+      "replacement": "home/modules/core-files.nix"
+    }
+  ],
+  "lifecycle": [
+    {
+      "name": "bootstrap",
+      "owner": "scripts/install.sh",
+      "treatment": "replaced"
+    },
+    {
+      "name": "mise",
+      "owner": "nix",
+      "treatment": "retired"
+    },
+    {
+      "name": "neovim",
+      "owner": "home-manager",
+      "treatment": "replaced"
+    },
+    {
+      "name": "tmux-plugins",
+      "owner": "home-manager",
+      "treatment": "replaced"
+    },
+    {
+      "name": "web-browser",
+      "owner": "nix",
+      "treatment": "replaced"
+    },
+    {
+      "name": "claude-url-handler",
+      "owner": "external-on-macos",
+      "treatment": "manual"
+    },
+    {
+      "name": "validate",
+      "owner": "bro health",
+      "treatment": "replaced"
+    },
+    {
+      "name": "mosh-osc52",
+      "owner": "retired",
+      "treatment": "retired"
+    }
+  ]
+}

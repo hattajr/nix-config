@@ -1,12 +1,13 @@
 {
   "theme": "modern-dark",
-  "defaultThinkingLevel": "high",
+  "defaultThinkingLevel": "medium",
   "enabledModels": [
     "deepseek/deepseek-v4-flash",
     "deepseek/deepseek-v4-pro",
     "moonshotai/kimi-k3",
     "openai-codex/gpt-5.6-luna",
-    "openai-codex/gpt-5.6-sol"
+    "openai-codex/gpt-5.6-sol",
+    "openai-codex/gpt-5.6-terra"
   ],
   "packages": [
     "npm:pi-subagents",
@@ -14,13 +15,15 @@
     "npm:@plannotator/pi-extension"
   ],
   "subagents": {
-    "defaultModel": "openai-codex/gpt-5.6-luna",
+    "defaultModel": "openai-codex/gpt-5.6-terra",
     "defaultThinking": "medium",
     "agentOverrides": {
       "scout": {
         "model": "deepseek/deepseek-v4-flash",
         "thinking": "low",
-        "fallbackModels": ["openai-codex/gpt-5.6-luna:low"]
+        "fallbackModels": [
+          "openai-codex/gpt-5.6-luna:low"
+        ]
       },
       "researcher": {
         "model": "deepseek/deepseek-v4-flash",
@@ -37,12 +40,16 @@
       "worker": {
         "model": "openai-codex/gpt-5.6-luna",
         "thinking": "medium",
-        "fallbackModels": ["deepseek/deepseek-v4-pro:medium"]
+        "fallbackModels": [
+          "deepseek/deepseek-v4-pro:medium"
+        ]
       },
       "issue-worker-tdd": {
         "model": "openai-codex/gpt-5.6-luna",
         "thinking": "medium",
-        "fallbackModels": ["deepseek/deepseek-v4-pro:medium"]
+        "fallbackModels": [
+          "deepseek/deepseek-v4-pro:medium"
+        ]
       },
       "qa-worker-integration": {
         "model": "openai-codex/gpt-5.6-luna",
@@ -51,17 +58,23 @@
       "reviewer": {
         "model": "deepseek/deepseek-v4-pro",
         "thinking": "medium",
-        "fallbackModels": ["openai-codex/gpt-5.6-sol:high"]
+        "fallbackModels": [
+          "openai-codex/gpt-5.6-sol:high"
+        ]
       },
       "visual-reviewer": {
         "model": "openai-codex/gpt-5.6-sol",
         "thinking": "medium",
-        "fallbackModels": ["openai-codex/gpt-5.6-sol:high"]
+        "fallbackModels": [
+          "openai-codex/gpt-5.6-sol:high"
+        ]
       },
       "plan-reviewer": {
         "model": "deepseek/deepseek-v4-pro",
         "thinking": "high",
-        "fallbackModels": ["openai-codex/gpt-5.6-sol:high"]
+        "fallbackModels": [
+          "openai-codex/gpt-5.6-sol:high"
+        ]
       },
       "drafter": {
         "model": "deepseek/deepseek-v4-pro",
@@ -73,8 +86,7 @@
       },
       "oracle": {
         "model": "openai-codex/gpt-5.6-sol",
-        "thinking": "high",
-        "fallbackModels": ["deepseek/deepseek-v4-pro:high"]
+        "thinking": "high"
       }
     }
   },
@@ -82,5 +94,5 @@
     "enabled": false
   },
   "defaultProvider": "openai-codex",
-  "defaultModel": "gpt-5.6-luna"
+  "defaultModel": "gpt-5.6-terra"
 }

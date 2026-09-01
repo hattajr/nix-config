@@ -206,12 +206,17 @@ PATH="$profile_bin:\$PATH"
 export PATH
 EOF_NIX_PROFILE
 hidden_nix_destination="$home/src/hidden-nix"
-run_install "$hidden_nix_destination" >/dev/null
+hidden_nix_output=$(run_install "$hidden_nix_destination")
+grep -Fq 'nix-install: Using existing Nix installation' <<<"$hidden_nix_output" || {
+  printf '%s\n' 'bootstrap test: hidden single-user Nix was not reused' >&2
+  exit 1
+}
 grep -Fq "git clone https://github.com/hattajr/nix-config.git $hidden_nix_destination.nix-config-install." "$logfile" || {
   printf '%s\n' 'bootstrap test: hidden Nix profile did not reach clone' >&2
   exit 1
 }
 ! grep -q '^curl ' "$logfile" || { printf '%s\n' 'bootstrap test: hidden Nix profile reached installer download' >&2; exit 1; }
+! grep -q '^installer --daemon$' "$logfile" || { printf '%s\n' 'bootstrap test: hidden Nix profile reached daemon installer' >&2; exit 1; }
 rm -f "$home/.nix-profile/etc/profile.d/nix.sh"
 mv "$profile_bin/nix" "$mockbin/nix"
 : >"$logfile"
@@ -234,6 +239,18 @@ grep -Fq 'nix shell --accept-flake-config nixpkgs#git --command git -C' "$logfil
   exit 1
 }
 install_mock_git
+: >"$logfile"
+
+# Bootstrap refuses to activate a ChezMoi home unless installer migration has
+# recorded an approved, activation-pending transaction.
+chezmoi_source="$workdir/chezmoi-reference"
+mkdir "$chezmoi_source"
+: >"$logfile"
+if CHEZMOI_SOURCE="$chezmoi_source" NIX_CONFIG_APPLY=yes run_bootstrap "$repo_root" >/dev/null 2>&1; then
+  printf '%s\n' 'bootstrap test: unresolved ChezMoi migration activated' >&2
+  exit 1
+fi
+! grep -q '^nix build ' "$logfile" || { printf '%s\n' 'bootstrap test: unresolved migration reached activation build' >&2; exit 1; }
 : >"$logfile"
 
 # Explicit ARM64 override builds and activates, then runs noninteractive health.

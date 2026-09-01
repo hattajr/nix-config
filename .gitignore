@@ -1,6 +1,7 @@
 .pi/
 result
 result-*
+.env
 
 # Private planning material
 /PLAN/

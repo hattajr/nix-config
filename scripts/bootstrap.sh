@@ -76,6 +76,17 @@ start_managed_shell() {
   log 'Entering the managed zsh login shell'
   exec "$managed_zsh" -l <"$terminal_device" >"$terminal_device" 2>&1
 }
+migration_allows_activation() {
+  local repo=$1 source=${CHEZMOI_SOURCE:-${XDG_DATA_HOME:-$HOME/.local/share}/chezmoi} status
+  [ -d "$source" ] || return 0
+  [ -x "$repo/scripts/migrate-chezmoi.py" ] || fail 'ChezMoi source detected but migration tool is missing'
+  status=$("$repo/scripts/migrate-chezmoi.py" --home "$HOME" status)
+  case "$status" in
+    *'"state": "activation-pending"'*|*'"state": "complete"'*) return 0 ;;
+    *) fail "ChezMoi migration is unresolved; run scripts/install.sh and approve its displayed migration digest before activation" ;;
+  esac
+}
+
 should_apply() {
   local preset=${NIX_CONFIG_APPLY:-} answer terminal_device
   if [ -n "$preset" ]; then
@@ -109,7 +120,7 @@ main() {
   validate_checkout "$repo"
   write_checkout_state "$repo"
   if should_apply; then
-    :
+    migration_allows_activation "$repo"
   else
     apply_status=$?
     if [ "$apply_status" -eq 1 ]; then

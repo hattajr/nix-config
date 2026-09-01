@@ -34,7 +34,7 @@ configure optional accounts and API keys.
 
 The installer first reuses an existing working Nix installation, including one
 whose profile is not loaded in the current shell. It never changes /nix ownership
-or modifies an existing ChezMoi source.
+except for a deterministic `.chezmoiignore` guard that prevents ChezMoi from overwriting paths taken over by Home Manager.
 EOF
 }
 
@@ -165,10 +165,37 @@ clone_repository() {
     || fail "could not finalize cloned checkout; retry the same command"
 }
 
-detect_chezmoi() {
-  if command -v chezmoi >/dev/null 2>&1 || [ -d "${XDG_DATA_HOME:-$HOME/.local/share}/chezmoi" ]; then
-    log 'ChezMoi was detected. Its source will not be modified; review Home Manager path collisions before applying.'
+migrate_chezmoi() {
+  source=${CHEZMOI_SOURCE:-${XDG_DATA_HOME:-$HOME/.local/share}/chezmoi}
+  [ -d "$source" ] || return 0
+  migration="$1/scripts/migrate-chezmoi.py"
+  [ -x "$migration" ] || fail "ChezMoi migration tool is missing: $migration"
+  command -v python3 >/dev/null 2>&1 || fail 'ChezMoi was detected but python3 is unavailable for the safe migration preflight'
+  migration_status=$("$migration" --home "$HOME" status)
+  case "$migration_status" in
+    *'"state": "complete"'*)
+      log 'ChezMoi migration is already complete; skipping migration planning'
+      return 0
+      ;;
+  esac
+
+  plan_output=$("$migration" --home "$HOME" --source "$source" plan) \
+    || fail 'ChezMoi migration plan failed; no home files were changed'
+  printf '%s\n' "$plan_output"
+  digest=$(printf '%s\n' "$plan_output" | awk '/plan digest/ { print $NF }')
+  [ -n "$digest" ] || fail 'ChezMoi migration plan did not return an approval digest'
+
+  approval=${NIX_CONFIG_MIGRATION:-}
+  if [ -z "$approval" ]; then
+    [ -t 0 ] || fail "ChezMoi migration needs explicit approval; rerun with NIX_CONFIG_MIGRATION=$digest"
+    printf 'Back up the listed files and let Home Manager take over? [y/N] '
+    IFS= read -r approval || approval=no
+    [ "$approval" = y ] || [ "$approval" = Y ] || { log 'ChezMoi migration was not approved; no home files were changed'; exit 0; }
+    approval=$digest
   fi
+  [ "$approval" = "$digest" ] || fail "invalid ChezMoi migration approval; rerun with NIX_CONFIG_MIGRATION=$digest"
+  "$migration" --home "$HOME" --source "$source" execute --digest "$digest" \
+    || fail 'ChezMoi migration backup failed; rerun the exact command to resume safely'
 }
 
 main() {
@@ -182,7 +209,7 @@ main() {
   ensure_nix "$destination"
   enable_nix_features
   clone_repository "$destination"
-  detect_chezmoi
+  migrate_chezmoi "$destination"
 
   bootstrap="$destination/scripts/bootstrap.sh"
   [ -f "$bootstrap" ] || fail "bootstrap script is missing: $bootstrap"

@@ -6,10 +6,10 @@ home_dir=/home/test
 # path: includes newly added files during pre-commit validation; a plain Git
 # flake intentionally hides untracked files.
 flake_source="path:$source_root"
-flake_ref="$flake_source#homeConfigurations.docker-test"
+flake_ref="$flake_source#homeConfigurations.incus-test"
 
 fail() {
-  printf 'docker-validation: FAIL: %s\n' "$1" >&2
+  printf 'incus-validation: FAIL: %s\n' "$1" >&2
   exit 1
 }
 
@@ -30,7 +30,7 @@ chmod 700 "$home_dir"
 # Mark only this disposable source mount safe for Git's ownership check.
 nix shell nixpkgs#git --command git config --global --add safe.directory "$source_root"
 
-printf '%s\n' 'docker-validation: checking locked flake metadata and evaluation'
+printf '%s\n' 'incus-validation: checking locked flake metadata and evaluation'
 # `nix flake check` treats Home Manager's configuration object as a generic
 # flake output and rejects its nested `type` attr. Show/eval validates the
 # locked flake and synthetic configuration without masking that limitation.
@@ -48,7 +48,7 @@ printf '%s\n' "$darwin_arm_drv" >/tmp/aarch64-darwin-activation.drv
 printf '%s\n' "$linux_arm_drv" >/tmp/aarch64-linux-activation.drv
 printf '%s\n' "$linux_x86_drv" >/tmp/x86_64-linux-activation.drv
 
-printf '%s\n' 'docker-validation: building activation package without checkout links'
+printf '%s\n' 'incus-validation: building activation package without checkout links'
 activation_package=$(nix build --impure --no-link --print-out-paths "$flake_ref.activationPackage")
 printf 'activation package: %s\n' "$activation_package"
 if [ ! -f "$activation_package/activate" ]; then
@@ -64,7 +64,7 @@ activate() {
   }
 }
 
-printf '%s\n' 'docker-validation: first disposable activation'
+printf '%s\n' 'incus-validation: first disposable activation'
 activate first
 
 nvim_lockfile="$XDG_STATE_HOME/nvim/lazy/lazy-lock.json"
@@ -76,7 +76,7 @@ nvim_baseline="$XDG_STATE_HOME/nvim/lazy/managed-lazy-lock.json"
 printf '\n' >>"$nvim_lockfile"
 user_lock_hash=$(nix hash file "$nvim_lockfile")
 
-printf '%s\n' 'docker-validation: second activation and idempotence check'
+printf '%s\n' 'incus-validation: second activation and idempotence check'
 first_snapshot=$(find "$home_dir" -mindepth 1 -maxdepth 4 -printf '%P\n' | sort)
 activate second
 second_snapshot=$(find "$home_dir" -mindepth 1 -maxdepth 4 -printf '%P\n' | sort)
@@ -88,12 +88,12 @@ profile_bin="$home_dir/.nix-profile/bin"
 [ -d "$profile_bin" ] || fail 'Home Manager profile bin directory was not created'
 export PATH="$home_dir/.local/bin:$profile_bin:$PATH"
 
-printf '%s\n' 'docker-validation: checking managed tools and PATH'
-for tool in btm git nvim rg tmux zsh fzf gh lazygit lazydocker uv node gcc g++ make python3 pkg-config ssh pi pass-cli lumen cloudflared wrangler keyctl setpriv; do
+printf '%s\n' 'incus-validation: checking managed tools and PATH'
+for tool in age btm git nvim rg tmux zsh fzf gh lazygit lazydocker uv node gcc g++ make python3 pkg-config ssh pi pass-cli lumen cloudflared wrangler ty keyctl setpriv; do
   command -v "$tool" >/dev/null 2>&1 || fail "managed tool is missing from PATH: $tool"
 done
 
-printf '%s\n' 'docker-validation: checking OpenSSH MagicDNS aliases'
+printf '%s\n' 'incus-validation: checking OpenSSH MagicDNS aliases'
 ssh -G -F "$home_dir/.ssh/config" latte >/tmp/ssh-latte.conf
 ssh -G -F "$home_dir/.ssh/config" legion >/tmp/ssh-legion.conf
 for host in latte legion; do
@@ -102,7 +102,7 @@ for host in latte legion; do
   grep -Fx 'port 22' /tmp/ssh-"$host".conf >/dev/null || fail "SSH port is wrong for $host"
 done
 
-printf '%s\n' 'docker-validation: checking zsh startup and Git configuration'
+printf '%s\n' 'incus-validation: checking zsh startup and Git configuration'
 zsh -lic '[[ -n "$EDITOR" ]] && [[ "$EDITOR" = nvim ]] && alias n >/dev/null'
 [ -f "$home_dir/.inputrc" ] || fail 'native Readline config was not deployed'
 grep -Fx 'set enable-bracketed-paste on' "$home_dir/.inputrc" >/dev/null \
@@ -121,6 +121,9 @@ jq -e '.lastChangelogVersion == "0.0.0"' "$settings" >/dev/null || fail 'Pi chan
   || fail 'Pi PLANS autocomplete extension was not deployed'
 [ -x "$home_dir/.pi/agent/intercepted-commands/python" ] || fail 'Pi command wrappers were not deployed executable'
 [ -x "$home_dir/.local/bin/nix-config-setup" ] || fail 'account setup helper was not deployed'
+[ -x "$home_dir/.local/bin/bro" ] || fail 'everyday management command was not deployed'
+[ -x "$home_dir/.local/bin/devtunnel" ] || fail 'custom dev tunnel command was not deployed'
+[ -x "$home_dir/.local/bin/pi-models-sync" ] || fail 'Pi model sync command was not deployed'
 [ -x "$home_dir/.local/bin/proton-pass-session" ] || fail 'Proton Pass Linux session helper was not deployed'
 [ -f "$home_dir/.config/proton-pass/pi.env.example" ] || fail 'Proton Pass reference example was not deployed'
 [ ! -e "$home_dir/.config/proton-pass/pi.env" ] || fail 'Home Manager materialized the local Proton Pass reference file'
@@ -138,7 +141,7 @@ git config --get-regexp '^alias\.' >/dev/null || fail 'Git aliases were not conf
 git config --get-all include.path | grep -Fx '~/.config/git/identity' >/dev/null \
   || fail 'Git writable identity include was not configured'
 
-printf '%s\n' 'docker-validation: checking isolated tmux server'
+printf '%s\n' 'incus-validation: checking isolated tmux server'
 tmux -L hm-validation -f "$home_dir/.config/tmux/tmux.conf" new-session -d -s validation
 # A separate socket proves this test did not attach to a host or shared server.
 tmux -L hm-validation has-session -t validation
@@ -148,7 +151,7 @@ case "$status_right" in
 esac
 tmux -L hm-validation kill-server
 
-printf '%s\n' 'docker-validation: checking Neovim headless startup'
+printf '%s\n' 'incus-validation: checking Neovim headless startup'
 [ "$(jq -c . "$XDG_CONFIG_HOME/nvim/lazy-lock.json")" = "$(jq -c . "$nvim_lockfile")" ] \
   || fail 'seeded Lazy lockfile does not match the managed lockfile'
 # Run as an ordinary user so store-backed config writes and permission errors
@@ -173,17 +176,17 @@ fi
 setpriv --reuid=30033 --regid=1000 --clear-groups test -w "$nvim_lockfile" \
   || fail 'Neovim Lazy lockfile is not writable by the user'
 
-printf '%s\n' 'docker-validation: running credential-free bootstrap and Proton Pass tests'
+printf '%s\n' 'incus-validation: running credential-free bootstrap and Proton Pass tests'
 BOOTSTRAP_REPO_ROOT="$source_root" "$source_root/tests/bootstrap/test-bootstrap.sh"
 BRO_TEST_REPO_ROOT="$source_root" "$source_root/tests/bro/test-bro.sh"
 BOOTSTRAP_REPO_ROOT="$source_root" "$source_root/tests/proton-pass/test-pi-wrapper.sh"
 BOOTSTRAP_REPO_ROOT="$source_root" "$source_root/tests/proton-pass/test-session-wrapper.sh"
 BOOTSTRAP_REPO_ROOT="$source_root" "$source_root/tests/proton-pass/test-setup.sh"
 
-printf '%s\n' 'docker-validation: checking repeatable activation generation'
+printf '%s\n' 'incus-validation: checking repeatable activation generation'
 second_drv=$(nix eval --impure --raw "$flake_ref.activationPackage.drvPath")
 second_package=$(nix build --impure --no-link --print-out-paths "$flake_ref.activationPackage")
 [ "$activation_drv" = "$second_drv" ] || fail 'locked inputs produced a different activation derivation'
 [ "$activation_package" = "$second_package" ] || fail 'locked inputs produced different activation paths'
 
-printf '%s\n' 'docker-validation: PASSED (flake, activation, idempotence, tools, bootstrap, and Proton Pass boundaries)'
+printf '%s\n' 'incus-validation: PASSED (flake, activation, idempotence, tools, bootstrap, and Proton Pass boundaries)'

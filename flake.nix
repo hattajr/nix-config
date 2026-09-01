@@ -18,7 +18,7 @@
     in
     {
       homeConfigurations = {
-        docker-test = import ./lib/mkHome.nix {
+        incus-test = import ./lib/mkHome.nix {
           inherit inputs;
           system = "x86_64-linux";
           username = "test";

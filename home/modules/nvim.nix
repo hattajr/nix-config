@@ -5,6 +5,15 @@ let
   # source-built package explicitly; Home Manager may add its normal provider
   # wrapper around this package when provider support is enabled.
   neovimSource = pkgs.neovim-unwrapped;
+  nvimConfigRoot = ../../config/nvim;
+  # Link leaves individually so existing ~/.config/nvim remains a real
+  # directory. This lets the migration back up only colliding files and never
+  # move an entire user configuration directory.
+  nvimConfigFiles = lib.filesystem.listFilesRecursive nvimConfigRoot;
+  nvimConfigHomeFiles = builtins.listToAttrs (map (source: {
+    name = "nvim/${lib.removePrefix "${toString nvimConfigRoot}/" (toString source)}";
+    value.source = source;
+  }) nvimConfigFiles);
 in
 {
   programs.neovim = {
@@ -23,8 +32,9 @@ in
   home.file.".local/bin/vim".source = "${neovimSource}/bin/nvim";
 
   # Keep the LazyVim source tree in Git while allowing Neovim's mutable state
-  # and downloaded plugins to live under XDG_DATA_HOME.
-  xdg.configFile."nvim".source = ../../config/nvim;
+  # and downloaded plugins to live under XDG_DATA_HOME. Per-leaf links avoid a
+  # directory collision with an existing migrated ~/.config/nvim tree.
+  xdg.configFile = nvimConfigHomeFiles;
 
   # Lazy must write its operational lockfile, while the versioned source is a
   # read-only Nix-store symlink. Seed a regular state copy on activation. A

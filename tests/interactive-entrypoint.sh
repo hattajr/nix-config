@@ -21,7 +21,7 @@ git config --global --add safe.directory /source
 # path: includes newly added files during pre-commit validation; a plain Git
 # flake intentionally hides untracked files.
 activation_package=$(nix build --no-link --print-out-paths \
-  path:/source#homeConfigurations.docker-test.activationPackage)
+  path:/source#homeConfigurations.incus-test.activationPackage)
 "$activation_package/activate"
 export PATH="$HOME/.nix-profile/bin:$HOME/.local/bin:$PATH"
 PYTHON=$(command -v python3)
@@ -73,6 +73,6 @@ if [ "${INTERACTIVE_SMOKE:-0}" = 1 ]; then
 fi
 
 # The preflight shell above is intentionally noninteractive so it cannot
-# steal Docker's foreground process group. The final login shell inherits the
-# Docker TTY and becomes interactive normally.
+# steal Incus's foreground process group. The final login shell inherits the
+# Incus TTY and becomes interactive normally.
 exec setpriv --reuid=30033 --regid=1000 --clear-groups zsh -l

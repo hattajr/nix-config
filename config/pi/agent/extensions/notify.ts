@@ -14,9 +14,9 @@ import { Markdown, type MarkdownTheme, stripTerminalSequences } from "@earendil-
 /**
  * Send a desktop notification via OSC 777 escape sequence.
  *
- * tmux only forwards terminal control sequences when they are wrapped in
- * its DCS passthrough format. Mosh cannot forward this wrapper, so the
- * notification path still requires SSH (or a local terminal connection).
+ * tmux forwards terminal control sequences only when they are wrapped in
+ * its DCS passthrough format. The notification path supports SSH and local
+ * terminal connections.
  */
 const notify = (title: string, body: string): void => {
 	// OSC 777 format: ESC ] 777 ; notify ; title ; body BEL

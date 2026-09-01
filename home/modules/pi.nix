@@ -49,6 +49,16 @@ let
   };
 
   piSettings = ../../config/pi/agent/settings.json;
+  piStaticRoot = ../../config/pi/agent;
+  # Never link an entire Pi directory: Pi keeps sessions, OAuth, npm state, and
+  # locally installed extensions below the same writable parents.  Each static
+  # reference file is instead linked independently.
+  piStaticFiles = builtins.filter (source: toString source != toString piSettings)
+    (lib.filesystem.listFilesRecursive piStaticRoot);
+  piStaticHomeFiles = builtins.listToAttrs (map (source: {
+    name = ".pi/agent/${lib.removePrefix "${toString piStaticRoot}/" (toString source)}";
+    value.source = source;
+  }) piStaticFiles);
 in
 {
   home.packages = [ piPackage ];
@@ -64,6 +74,17 @@ in
     last_changelog_version="0.0.0"
     if [ -f "$settings" ]; then
       last_changelog_version="$(${pkgs.jq}/bin/jq -r '.lastChangelogVersion // "0.0.0"' "$settings" 2>/dev/null || printf '%s' '0.0.0')"
+    else
+      # During ChezMoi takeover settings.json is backed up before linkGeneration.
+      # Recover only this non-secret marker from the approved private transaction.
+      migration_root="''${XDG_STATE_HOME:-$HOME/.local/state}/nix-config/migrations/chezmoi-v1"
+      if [ -r "$migration_root/current" ]; then
+        migration_digest="$(cat "$migration_root/current")"
+        migration_settings="$migration_root/transactions/$migration_digest/backup/.pi/agent/settings.json"
+        if [ -f "$migration_settings" ]; then
+          last_changelog_version="$(${pkgs.jq}/bin/jq -r '.lastChangelogVersion // "0.0.0"' "$migration_settings" 2>/dev/null || printf '%s' '0.0.0')"
+        fi
+      fi
     fi
     ${pkgs.jq}/bin/jq --arg version "$last_changelog_version" \
       '.lastChangelogVersion = $version' "${piSettings}" > "$temporary"
@@ -71,20 +92,10 @@ in
     mv -f "$temporary" "$settings"
   '';
 
-  home.file = {
+  home.file = piStaticHomeFiles // {
     ".pi/README.md".source = ../../config/pi/README.md;
     ".pi/.gitignore".source = ../../config/pi/.gitignore;
     ".pi/.nvmrc".source = ../../config/pi/.nvmrc;
-    ".pi/agent/scoped-models.json".source = ../../config/pi/agent/scoped-models.json;
-    ".pi/agent/keybindings.json".source = ../../config/pi/agent/keybindings.json;
-    ".pi/agent/agents".source = ../../config/pi/agent/agents;
-    ".pi/agent/chains".source = ../../config/pi/agent/chains;
-    ".pi/agent/extensions".source = ../../config/pi/agent/extensions;
-    ".pi/agent/intercepted-commands".source = ../../config/pi/agent/intercepted-commands;
-    ".pi/agent/messenger".source = ../../config/pi/agent/messenger;
-    ".pi/agent/scripts".source = ../../config/pi/agent/scripts;
-    ".pi/agent/skills".source = ../../config/pi/agent/skills;
-    ".pi/agent/themes".source = ../../config/pi/agent/themes;
     ".local/bin/pi" = {
       source = ../../bin/pi;
       executable = true;

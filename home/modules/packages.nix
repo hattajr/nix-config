@@ -5,6 +5,7 @@
   # these tools in the new configuration; project-specific versions can later
   # use per-project flakes or dev shells.
   home.packages = with pkgs; [
+    age
     atuin
     bat
     btop
@@ -31,6 +32,7 @@
     rclone
     ripgrep
     rustc
+    ty
     uv
     wrangler
   ] ++ lib.optionals pkgs.stdenv.hostPlatform.isLinux [
