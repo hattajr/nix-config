@@ -162,6 +162,12 @@ jq -e '.lastChangelogVersion == "0.0.0"' "$settings" >/dev/null || fail 'Pi chan
 [ -f "$home_dir/.pi/agent/extensions/plan-autoloop.ts" ] || fail 'Pi extensions were not deployed'
 [ -f "$home_dir/.pi/agent/extensions/plans-at-autocomplete.ts" ] ||
   fail 'Pi PLANS autocomplete extension was not deployed'
+question_extension="$home_dir/.pi/agent/extensions/rpiv-ask-user-question"
+[ -f "$question_extension/index.ts" ] || fail 'Pi question extension was not deployed'
+[ -f "$question_extension/config.ts" ] || fail 'Pi question extension helper was not deployed'
+question_extension_source=$(readlink -f "$question_extension/index.ts")
+[ -f "$(dirname "$question_extension_source")/config.ts" ] ||
+  fail 'Pi question extension files do not share an importable source directory'
 [ -x "$home_dir/.pi/agent/intercepted-commands/python" ] || fail 'Pi command wrappers were not deployed executable'
 [ -x "$home_dir/.local/bin/nix-config-setup" ] || fail 'account setup helper was not deployed'
 [ -x "$home_dir/.local/bin/bro" ] || fail 'everyday management command was not deployed'
