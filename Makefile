@@ -1,4 +1,4 @@
-.PHONY: multipass-validation test
+.PHONY: multipass-validation test test-interactive
 
 test:
 	@./tests/bootstrap/test-bootstrap.sh
@@ -10,3 +10,6 @@ test:
 
 multipass-validation:
 	@./tests/run-multipass.sh
+
+test-interactive:
+	@./tests/run-multipass-interactive.sh

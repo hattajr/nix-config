@@ -37,6 +37,15 @@ cat >"$mockbin/nix" <<'EOF'
 #!/usr/bin/env bash
 printf 'nix %s
 ' "$*" >>"$BRO_LOG"
+if [ -n "${BRO_NIX_DNS_FAILURES:-}" ]; then
+  attempt=0
+  [ ! -r "$BRO_NIX_RETRY_STATE" ] || attempt=$(cat "$BRO_NIX_RETRY_STATE")
+  if [ "$attempt" -lt "$BRO_NIX_DNS_FAILURES" ]; then
+    printf '%s\n' "$((attempt + 1))" >"$BRO_NIX_RETRY_STATE"
+    printf '%s\n' "warning: unable to download input: Could not resolve hostname (6) Could not resolve host: github.com" >&2
+    exit 1
+  fi
+fi
 [ "${1:-}" != --impure ] || shift
 case "$1" in
   flake|eval) exit 0 ;;
@@ -48,7 +57,11 @@ ACTIVATE
   *) exit 1 ;;
 esac
 EOF
-chmod +x "$mockbin/git" "$mockbin/nix"
+cat >"$mockbin/sleep" <<'EOF'
+#!/bin/sh
+printf 'sleep %s\n' "$*" >>"$BRO_LOG"
+EOF
+chmod +x "$mockbin/git" "$mockbin/nix" "$mockbin/sleep"
 export BRO_LOG="$log" BRO_ACTIVATION="$work/activation" BRO_REPOSITORY="$checkout"
 apply_home="$work/apply-home"
 mkdir -p "$apply_home/.nix-profile/bin" "$apply_home/.config/tmux"
@@ -78,6 +91,47 @@ grep -q 'reloaded active tmux configuration' <(env -u NIX_CONFIG_USERNAME -u NIX
   echo 'bro test: apply did not report tmux configuration reload' >&2
   exit 1
 }
+
+: >"$log"
+retry_state="$work/retry-state"
+retry_error="$work/retry-error"
+BRO_NIX_DNS_FAILURES=2 BRO_NIX_RETRY_STATE="$retry_state" \
+  HOME="$apply_home" USER=apply-user PATH="$mockbin:$PATH" "$bro" apply \
+  >/dev/null 2>"$retry_error"
+[ "$(grep -c '^nix flake metadata ' "$log")" -eq 3 ] || {
+  echo 'bro test: apply did not retry transient DNS failures' >&2
+  exit 1
+}
+if ! grep -Fxq 'sleep 1' "$log" || ! grep -Fxq 'sleep 2' "$log"; then
+  echo 'bro test: DNS retries did not use exponential backoff' >&2
+  exit 1
+fi
+grep -Fq 'retrying in 1s (attempt 2/5)' "$retry_error" || {
+  echo 'bro test: apply did not report DNS retry progress' >&2
+  exit 1
+}
+
+: >"$log"
+rm -f "$retry_state"
+if BRO_NIX_DNS_FAILURES=9 BRO_NIX_RETRY_STATE="$retry_state" \
+  HOME="$apply_home" USER=apply-user PATH="$mockbin:$PATH" "$bro" apply \
+  >/dev/null 2>"$retry_error"; then
+  echo 'bro test: apply accepted DNS failure after the retry limit' >&2
+  exit 1
+fi
+[ "$(grep -c '^nix flake metadata ' "$log")" -eq 5 ] || {
+  echo 'bro test: apply did not stop after five DNS attempts' >&2
+  exit 1
+}
+[ "$(grep -c '^sleep ' "$log")" -eq 4 ] || {
+  echo 'bro test: apply slept after the final DNS attempt' >&2
+  exit 1
+}
+grep -Fq 'DNS resolution failed after 5 attempts' "$retry_error" || {
+  echo 'bro test: apply did not report exhausted DNS retries' >&2
+  exit 1
+}
+
 ! grep -Eq '^git .* (fetch|push)($| )' "$log" || {
   echo 'bro test: apply used Git network operation' >&2
   exit 1

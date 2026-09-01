@@ -2,6 +2,7 @@
 result
 result-*
 .env
+/.trash/
 
 # Private planning material
 /PLAN/

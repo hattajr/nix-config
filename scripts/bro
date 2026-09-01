@@ -58,6 +58,48 @@ enable_nix_features() {
   export NIX_CONFIG="${NIX_CONFIG:+$NIX_CONFIG$'\n'}experimental-features = nix-command flakes"
 }
 
+run_nix_with_dns_retry() {
+  local attempt=1 max_attempts=5 delay=1 status
+  local stdout_file stderr_file
+  stdout_file=$(mktemp "${TMPDIR:-/tmp}/bro-nix-stdout.XXXXXX") || fail 'could not create Nix output file'
+  stderr_file=$(mktemp "${TMPDIR:-/tmp}/bro-nix-stderr.XXXXXX") || {
+    rm -f "$stdout_file"
+    fail 'could not create Nix error file'
+  }
+
+  while true; do
+    : >"$stdout_file"
+    : >"$stderr_file"
+    if "$@" >"$stdout_file" 2>"$stderr_file"; then
+      cat "$stderr_file" >&2
+      cat "$stdout_file"
+      rm -f "$stdout_file" "$stderr_file"
+      return 0
+    else
+      status=$?
+    fi
+    cat "$stderr_file" >&2
+    [ ! -s "$stdout_file" ] || cat "$stdout_file" >&2
+
+    if ! grep -Eiq \
+      'could not resolve (host(name)?|proxy)|temporary failure in name resolution|name or service not known' \
+      "$stderr_file" "$stdout_file"; then
+      rm -f "$stdout_file" "$stderr_file"
+      return "$status"
+    fi
+    if [ "$attempt" -ge "$max_attempts" ]; then
+      log "DNS resolution failed after $max_attempts attempts" >&2
+      rm -f "$stdout_file" "$stderr_file"
+      return "$status"
+    fi
+
+    log "DNS resolution failed; retrying in ${delay}s (attempt $((attempt + 1))/$max_attempts)" >&2
+    sleep "$delay"
+    attempt=$((attempt + 1))
+    delay=$((delay * 2))
+  done
+}
+
 set_home_identity() {
   local username=${NIX_CONFIG_USERNAME:-${USER:-}}
   local home_directory=${NIX_CONFIG_HOME:-${HOME:-}}
@@ -80,9 +122,9 @@ run_git() {
 apply() {
   local repo=$1 target=$2 ref="$1#homeConfigurations.$2.activationPackage" package
   command -v nix >/dev/null 2>&1 || fail 'Nix is required'
-  nix flake metadata "$repo" >/dev/null || fail 'flake metadata validation failed'
-  nix eval --impure --raw "$ref.drvPath" >/dev/null || fail "platform output is unavailable or invalid: $target"
-  package=$(nix build --impure --no-link --print-out-paths "$ref") || fail 'Home Manager activation package build failed'
+  run_nix_with_dns_retry nix flake metadata "$repo" >/dev/null || fail 'flake metadata validation failed'
+  run_nix_with_dns_retry nix eval --impure --raw "$ref.drvPath" >/dev/null || fail "platform output is unavailable or invalid: $target"
+  package=$(run_nix_with_dns_retry nix build --impure --no-link --print-out-paths "$ref") || fail 'Home Manager activation package build failed'
   [ -x "$package/activate" ] || fail 'built activation package has no executable activate script'
   log "activating $target"
   "$package/activate"
@@ -112,12 +154,12 @@ health() {
   local core_failed=0 auth_failed=0 locale_output startup_file tmux_socket
 
   command -v nix >/dev/null 2>&1 || { log 'CORE FAIL: Nix is unavailable'; core_failed=1; }
-  if nix flake metadata "$repo" >/dev/null; then
+  if run_nix_with_dns_retry nix flake metadata "$repo" >/dev/null; then
     log 'OK: checkout metadata'
   else
     log 'CORE FAIL: flake metadata validation failed'; core_failed=1
   fi
-  if nix eval --impure --raw "$repo#homeConfigurations.$target.activationPackage.drvPath" >/dev/null; then
+  if run_nix_with_dns_retry nix eval --impure --raw "$repo#homeConfigurations.$target.activationPackage.drvPath" >/dev/null; then
     log "OK: $target flake output"
   else
     log "CORE FAIL: platform output is unavailable: $target"; core_failed=1

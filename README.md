@@ -46,3 +46,19 @@ make multipass-validation
 The suite launches Ubuntu 24.04, copies only tracked and non-ignored project files into the VM, and runs the public curl installer against that local fixture. It then validates the generated Home Manager activation, idempotence, managed tools, shell startup, Neovim, and credential-free bootstrap tests. The VM is deleted on exit.
 
 Set `MULTIPASS_VALIDATION_IMAGE` to select another Ubuntu image.
+
+### Interactive Multipass testing
+
+To manually test the current working tree without pushing it, run:
+
+```sh
+make test-interactive
+```
+
+This launches (or reuses) a persistent Ubuntu 24.04 VM, mounts the working tree, converts its tracked and non-ignored files—including uncommitted changes—into a local Git fixture, installs the prerequisites, and opens a shell. Follow the displayed local-source installer command. After host edits, run `make test-interactive` again and rerun that installer command to refresh the fixture and activation. The VM remains available until you delete it:
+
+```sh
+multipass delete --purge nix-config-interactive-$USER
+```
+
+Set `MULTIPASS_INTERACTIVE_IMAGE` or `MULTIPASS_INTERACTIVE_INSTANCE` to override the image or VM name.
