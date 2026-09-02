@@ -1,4 +1,4 @@
-.PHONY: multipass-validation test test-interactive
+.PHONY: multipass-validation test test-interactive test-interactive-new
 
 test:
 	@./tests/validate-flake.sh
@@ -15,3 +15,6 @@ multipass-validation:
 
 test-interactive:
 	@./tests/run-multipass-interactive.sh
+
+test-interactive-new:
+	@./tests/run-multipass-interactive.sh --fresh

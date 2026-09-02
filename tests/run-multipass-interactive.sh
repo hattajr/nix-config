@@ -7,11 +7,26 @@ image=${MULTIPASS_INTERACTIVE_IMAGE:-24.04}
 instance=${MULTIPASS_INTERACTIVE_INSTANCE:-"nix-config-interactive-${USER:-user}"}
 instance=${instance//[^[:alnum:].-]/-}
 source_target=/home/ubuntu/source
+fresh=no
+
+case "${1:-}" in
+--fresh) fresh=yes ;;
+'') ;;
+*)
+  printf 'Usage: %s [--fresh]\n' "${0##*/}" >&2
+  exit 2
+  ;;
+esac
 
 command -v multipass >/dev/null 2>&1 || {
   printf '%s\n' 'test-interactive: Multipass is required' >&2
   exit 77
 }
+
+if [ "$fresh" = yes ] && multipass info "$instance" >/dev/null 2>&1; then
+  printf 'test-interactive: deleting existing VM %s for a fresh start\n' "$instance"
+  multipass delete --purge "$instance"
+fi
 
 if ! multipass info "$instance" >/dev/null 2>&1; then
   printf 'test-interactive: launching Ubuntu %s VM %s\n' "$image" "$instance"
