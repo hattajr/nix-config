@@ -80,4 +80,7 @@ then rerun the installer command above. The VM is persistent; delete it when fin
 
 EOF
 
-exec multipass shell "$instance"
+# Do not forward an outer tmux socket into the guest. tmux treats any nonempty
+# $TMUX as a nested client and exits before opening its own server; the host
+# socket path is meaningless inside this VM in any case.
+exec env -u TMUX multipass shell "$instance"

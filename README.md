@@ -55,7 +55,7 @@ To manually test the current working tree without pushing it, run:
 make test-interactive
 ```
 
-This launches (or reuses) a persistent Ubuntu 24.04 VM, mounts the working tree, converts its tracked and non-ignored files—including uncommitted changes—into a local Git fixture, installs the prerequisites, and opens a shell. Follow the displayed local-source installer command. After host edits, run `make test-interactive` again and rerun that installer command to refresh the fixture and activation. The VM remains available until you delete it:
+This launches (or reuses) a persistent Ubuntu 24.04 VM, mounts the working tree, converts its tracked and non-ignored files—including uncommitted changes—into a local Git fixture, installs the prerequisites, and opens a shell. Run it from a regular host terminal rather than an embedded command pane; the launcher clears any outer `TMUX` value so tmux can start normally in the guest. Follow the displayed local-source installer command. After host edits, run `make test-interactive` again and rerun that installer command to refresh the fixture and activation. The VM remains available until you delete it:
 
 ```sh
 multipass delete --purge nix-config-interactive-$USER
