@@ -122,9 +122,10 @@ run_git() {
 }
 
 apply() {
-  local repo=$1 target=$2 ref="$1#homeConfigurations.$2.activationPackage" package
+  local repo=$1 target=$2 source="path:$1" ref package
+  ref="$source#homeConfigurations.$2.activationPackage"
   command -v nix >/dev/null 2>&1 || fail 'Nix is required'
-  run_nix_with_dns_retry nix flake metadata "$repo" >/dev/null || fail 'flake metadata validation failed'
+  run_nix_with_dns_retry nix flake metadata "$source" >/dev/null || fail 'flake metadata validation failed'
   run_nix_with_dns_retry nix eval --impure --raw "$ref.drvPath" >/dev/null || fail "platform output is unavailable or invalid: $target"
   package=$(run_nix_with_dns_retry nix build --impure --no-link --print-out-paths "$ref") || fail 'Home Manager activation package build failed'
   [ -x "$package/activate" ] || fail 'built activation package has no executable activate script'
@@ -156,12 +157,12 @@ health() {
   local core_failed=0 auth_failed=0 locale_output startup_file tmux_socket
 
   command -v nix >/dev/null 2>&1 || { log 'CORE FAIL: Nix is unavailable'; core_failed=1; }
-  if run_nix_with_dns_retry nix flake metadata "$repo" >/dev/null; then
+  if run_nix_with_dns_retry nix flake metadata "path:$repo" >/dev/null; then
     log 'OK: checkout metadata'
   else
     log 'CORE FAIL: flake metadata validation failed'; core_failed=1
   fi
-  if run_nix_with_dns_retry nix eval --impure --raw "$repo#homeConfigurations.$target.activationPackage.drvPath" >/dev/null; then
+  if run_nix_with_dns_retry nix eval --impure --raw "path:$repo#homeConfigurations.$target.activationPackage.drvPath" >/dev/null; then
     log "OK: $target flake output"
   else
     log "CORE FAIL: platform output is unavailable: $target"; core_failed=1

@@ -29,11 +29,16 @@ export XDG_STATE_HOME="$home/.local/state"
 export MOCK_LOG="$logfile"
 export MOCK_BIN="$mockbin"
 export MOCK_ACTIVATION="$activation"
+export MOCK_REVISION=1111111111111111111111111111111111111111
 
 # Isolate PATH so missing-tool cases are real within the test.
 for command_name in bash sh env dirname mkdir cp chmod grep cat mktemp rm mv ps tty ls awk id; do
   command_path=$(command -v "$command_name")
   ln -s "$command_path" "$mockbin/$command_name"
+done
+for command_name in sha256sum shasum; do
+  command_path=$(command -v "$command_name" 2>/dev/null || true)
+  [ -z "$command_path" ] || ln -s "$command_path" "$mockbin/$command_name"
 done
 
 cat >"$mockbin/nix" <<'EOF_NIX'
@@ -105,8 +110,21 @@ if [ "${1:-}" = clone ]; then
   mkdir -p "$destination/.git" "$destination/scripts"
   cp "$MOCK_BOOTSTRAP_STUB" "$destination/scripts/bootstrap.sh"
   chmod +x "$destination/scripts/bootstrap.sh"
-elif [ "${1:-}" = -C ] && [ "${3:-}" = remote ] && [ "${4:-}" = get-url ]; then
-  printf '%s\n' 'https://github.com/hattajr/nix-config.git'
+elif [ "${1:-}" = -C ]; then
+  shift 2
+  case "${1:-}" in
+    remote)
+      [ "${2:-}" = get-url ] && printf '%s\n' 'https://github.com/hattajr/nix-config.git'
+      ;;
+    status|fetch|reset) ;;
+    rev-parse)
+      if [ "${2:-}" = --verify ]; then
+        printf '%s\n' "$MOCK_REVISION"
+      else
+        printf '%s\n' "${MOCK_HEAD_REVISION:-$MOCK_REVISION}"
+      fi
+      ;;
+  esac
 fi
 EOF_GIT
 
@@ -128,12 +146,25 @@ install_mock_git() {
 }
 
 run_install() {
-  PATH="$mockbin" "$install_script" "$@"
+  NIX_CONFIG_REVISION="$MOCK_REVISION" \
+    NIX_CONFIG_NIX_INSTALLER_SHA256="${MOCK_NIX_INSTALLER_SHA256:-9adda97297d9e8ab360df95c729eabff4f4f93d6db091953c3a68f29e3fb130c}" \
+    PATH="$mockbin" "$install_script" "$@"
 }
 
 run_bootstrap() {
   PATH="$mockbin" "$bootstrap" "$@"
 }
+
+# Stage zero refuses to execute anything without a full reviewed revision.
+if PATH="$mockbin" "$install_script" "$home/src/unpinned" >/dev/null 2>&1; then
+  printf '%s\n' 'bootstrap test: unpinned installer unexpectedly succeeded' >&2
+  exit 1
+fi
+! grep -q '^nix ' "$logfile" || {
+  printf '%s\n' 'bootstrap test: unpinned installer reached Nix' >&2
+  exit 1
+}
+: >"$logfile"
 
 # Invalid platform overrides fail before Nix or activation work.
 if NIX_CONFIG_PLATFORM=unsupported NIX_CONFIG_APPLY=yes run_bootstrap "$repo_root" >/dev/null 2>&1; then
@@ -174,8 +205,21 @@ mv "$workdir/nix.stub" "$mockbin/nix"
 rm -f "$mockbin/curl"
 : >"$logfile"
 
-# Fresh installations use the official multi-user (daemon) installer.
+# Fresh installations verify the pinned installer before running it in daemon mode.
 mv "$mockbin/nix" "$workdir/nix.stub"
+installer_fixture="$workdir/nix-installer.fixture"
+cat >"$installer_fixture" <<'EOF_INSTALLER'
+#!/usr/bin/env bash
+printf 'installer %s\n' "$*" >>"$MOCK_LOG"
+exit 1
+EOF_INSTALLER
+chmod +x "$installer_fixture"
+if command -v sha256sum >/dev/null 2>&1; then
+  installer_hash=$(sha256sum "$installer_fixture" | awk '{print $1}')
+else
+  installer_hash=$(shasum -a 256 "$installer_fixture" | awk '{print $1}')
+fi
+export MOCK_INSTALLER_FIXTURE="$installer_fixture"
 cat >"$mockbin/curl" <<'EOF_CURL'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -186,18 +230,36 @@ while [ "$#" -gt 0 ]; do
   fi
   shift
 done
-cat >"$output" <<'EOF_INSTALLER'
-#!/usr/bin/env bash
-printf 'installer %s\n' "$*" >>"$MOCK_LOG"
-exit 1
-EOF_INSTALLER
-chmod +x "$output"
+cp "$MOCK_INSTALLER_FIXTURE" "$output"
 EOF_CURL
 chmod +x "$mockbin/curl"
+
+MOCK_NIX_INSTALLER_SHA256=0000000000000000000000000000000000000000000000000000000000000000
+set +e
+checksum_output=$(run_install "$home/src/checksum-failure" 2>&1)
+checksum_status=$?
+set -e
+unset MOCK_NIX_INSTALLER_SHA256
+[ "$checksum_status" -ne 0 ] || {
+  printf '%s\n' 'bootstrap test: mismatched installer checksum succeeded' >&2
+  exit 1
+}
+grep -Fq 'Nix installer checksum mismatch' <<<"$checksum_output" || {
+  printf '%s\n' 'bootstrap test: checksum mismatch produced the wrong error' >&2
+  exit 1
+}
+! grep -q '^installer ' "$logfile" || {
+  printf '%s\n' 'bootstrap test: mismatched installer was executed' >&2
+  exit 1
+}
+: >"$logfile"
+
+MOCK_NIX_INSTALLER_SHA256="$installer_hash"
 set +e
 daemon_output=$(run_install "$home/src/daemon-install" 2>&1)
 daemon_status=$?
 set -e
+unset MOCK_NIX_INSTALLER_SHA256
 [ "$daemon_status" -ne 0 ] || {
   printf '%s\n' 'bootstrap test: mocked daemon installer unexpectedly succeeded' >&2
   exit 1
@@ -207,11 +269,12 @@ grep -Fq 'official multi-user Nix installer failed' <<<"$daemon_output" || {
   exit 1
 }
 grep -Fxq 'installer --daemon --yes' "$logfile" || {
-  printf '%s\n' 'bootstrap test: official installer was not invoked in daemon mode' >&2
+  printf '%s\n' 'bootstrap test: verified installer was not invoked in daemon mode' >&2
   exit 1
 }
 mv "$workdir/nix.stub" "$mockbin/nix"
 rm -f "$mockbin/curl"
+unset MOCK_INSTALLER_FIXTURE
 : >"$logfile"
 
 # A valid single-user installation is discovered even when its profile was not
@@ -436,7 +499,7 @@ grep -Fq "checkout-bootstrap platform=aarch64-darwin args=$darwin_destination" "
 }
 : >"$logfile"
 
-# Rerunning against an existing checkout verifies origin and does not clone again.
+# Rerunning verifies the origin and exact reviewed revision without advancing it.
 run_install "$destination" >/dev/null
 ! grep -q '^git clone ' "$logfile" || {
   printf '%s\n' 'bootstrap test: rerun recloned repository' >&2
@@ -447,12 +510,29 @@ grep -Fq "git -C $destination remote get-url origin" "$logfile" || {
   exit 1
 }
 grep -Fq "git -C $destination fetch --prune origin" "$logfile" || {
-  printf '%s\n' 'bootstrap test: rerun did not fetch the latest remote commit' >&2
+  printf '%s\n' 'bootstrap test: rerun did not fetch the reviewed commit' >&2
   exit 1
 }
-grep -Fq "git -C $destination merge --ff-only origin/main" "$logfile" || {
-  printf '%s\n' 'bootstrap test: rerun did not fast-forward to the default branch' >&2
+grep -Fq "git -C $destination rev-parse --verify $MOCK_REVISION^{commit}" "$logfile" || {
+  printf '%s\n' 'bootstrap test: rerun did not resolve the reviewed commit' >&2
+  exit 1
+}
+! grep -q 'merge --ff-only' "$logfile" || {
+  printf '%s\n' 'bootstrap test: pinned rerun advanced the checkout' >&2
   exit 1
 }
 
-printf '%s\n' 'bootstrap test: PASSED (platform detection, public clone, ephemeral Git, activation, and rerun)'
+# A clean checkout at another commit is not silently advanced or rewound.
+: >"$logfile"
+export MOCK_HEAD_REVISION=2222222222222222222222222222222222222222
+if run_install "$destination" >/dev/null 2>&1; then
+  printf '%s\n' 'bootstrap test: installer accepted a checkout at an unreviewed commit' >&2
+  exit 1
+fi
+unset MOCK_HEAD_REVISION
+! grep -Eq 'reset --hard|merge --ff-only' "$logfile" || {
+  printf '%s\n' 'bootstrap test: installer mutated a checkout at another commit' >&2
+  exit 1
+}
+
+printf '%s\n' 'bootstrap test: PASSED (pinned checkout, verified installer, platform detection, activation, and rerun)'

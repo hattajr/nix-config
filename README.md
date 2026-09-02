@@ -11,17 +11,23 @@ Personal Home Manager configuration for macOS (Apple Silicon) and Linux (x86-64,
 
 ## Install
 
+Clone without executing repository code, inspect the checkout, then bind the installation to the exact commit you reviewed:
+
 ```sh
-curl -fsSL https://raw.githubusercontent.com/hattajr/nix-config/main/scripts/install.sh | sh
+git clone https://github.com/hattajr/nix-config.git ~/src/nix-config
+cd ~/src/nix-config
+git log -1 --show-signature --stat
+# Review the commit and configuration before continuing.
+NIX_CONFIG_REVISION=$(git rev-parse HEAD) ./scripts/install.sh
 ```
 
-The installer detects the platform, reuses a working Nix installation when available, otherwise installs the official multi-user Nix daemon. It clones this repository to `~/src/nix-config`, fast-forwards a clean existing checkout to the latest `origin/main`, and prompts to apply the configuration. Local changes and diverged commits are never overwritten.
+`NIX_CONFIG_REVISION` is required and accepts only a full commit hash. The installer detects the platform, reuses a working Nix installation when available, otherwise downloads the official multi-user Nix installer and verifies its reviewed SHA-256 checksum before execution. It refuses an existing checkout unless it is clean and already at the selected commit, then prompts to apply the configuration. Routine updates remain a separate `bro sync` action.
 
-Home Manager is the sole owner of each configuration file it manages. Activation deliberately replaces conflicting files at those managed leaves, including files previously managed by Chezmoi, while preserving unrelated files in shared directories. The legacy `~/.gitconfig` is removed in favor of `~/.config/git/config`. No migration, backup, approval digest, or Chezmoi source checkout is used. Runtime state and secrets outside the managed paths remain writable.
+Home Manager is the sole owner of each configuration file it manages. Activation replaces conflicting files at those managed leaves, including files previously managed by Chezmoi, while preserving unrelated files in shared directories. A colliding regular file or directory is moved under `$XDG_STATE_HOME/home-manager/takeover/` before replacement; existing managed symlinks are simply refreshed. The legacy `~/.gitconfig` is quarantined there after `~/.config/git/config` is linked. Runtime state and secrets outside the managed paths remain writable.
 
 ### Manual macOS ownership
 
-Browsers on macOS are intentionally installed and updated manually. Home Manager does not install Chrome or take ownership of browser profiles. Tailscale/Proton split DNS is also external host state: enable and maintain it through the macOS/Tailscale tools, not this repository. The managed `devtunnel` command defaults to the `mbp` SSH hostname and only uses ordinary SSH forwarding.
+Browsers on macOS are intentionally installed and updated manually. Home Manager does not install Chrome or take ownership of browser profiles. Tailscale and Proton split DNS are external host state on every platform: install Tailscale through its signed system package repository, then enable and maintain it through the host tools. The managed `devtunnel` command defaults to the `mbp` SSH hostname and only uses ordinary SSH forwarding.
 
 Home Manager uses the active user's `$USER` and `$HOME`, so it works for arbitrary local account names; automation may override them with `NIX_CONFIG_USERNAME` and `NIX_CONFIG_HOME`. Run `bro auth` after activation to configure optional accounts and API keys.
 

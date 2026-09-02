@@ -4,8 +4,12 @@
 set -eu
 
 REPOSITORY_URL=${NIX_CONFIG_REPOSITORY_URL:-https://github.com/hattajr/nix-config.git}
+REVISION=${NIX_CONFIG_REVISION:-}
 DEFAULT_DESTINATION=${HOME}/src/nix-config
 NIX_ROOT=${NIX_CONFIG_NIX_ROOT:-/nix}
+NIX_INSTALLER_URL=${NIX_CONFIG_NIX_INSTALLER_URL:-https://nixos.org/nix/install}
+# Reviewed 2026-09-02. Updating the installer is an explicit checksum change.
+NIX_INSTALLER_SHA256=${NIX_CONFIG_NIX_INSTALLER_SHA256:-9adda97297d9e8ab360df95c729eabff4f4f93d6db091953c3a68f29e3fb130c}
 PLATFORMS="aarch64-darwin aarch64-linux x86_64-linux"
 
 log() {
@@ -26,8 +30,9 @@ Supported platforms: aarch64-darwin, aarch64-linux, x86_64-linux.
 The destination defaults to ~/src/nix-config.
 
 NIX_CONFIG_PLATFORM may override detection for automation. NIX_CONFIG_REPOSITORY
-may set the destination. After cloning, bootstrap prompts once to apply the
-configuration; set NIX_CONFIG_APPLY=yes to apply unattended or
+may set the destination. NIX_CONFIG_REVISION is required and must contain the
+full reviewed Git commit hash to install. After cloning, bootstrap prompts once
+to apply the configuration; set NIX_CONFIG_APPLY=yes to apply unattended or
 NIX_CONFIG_APPLY=no to clone and validate only. Without a terminal, bootstrap
 fails closed unless one of those values is set. After activation, run bro auth to
 configure optional accounts and API keys.
@@ -36,6 +41,27 @@ The installer first reuses an existing working Nix installation, including one
 whose profile is not loaded in the current shell. Home Manager is the sole owner
 of its managed configuration paths and replaces legacy files during activation.
 EOF
+}
+
+validate_revision() {
+  case "$REVISION" in
+  '' | *[!0-9a-f]*)
+    fail 'NIX_CONFIG_REVISION must be a lowercase full reviewed Git commit hash'
+    ;;
+  esac
+  length=${#REVISION}
+  [ "$length" -eq 40 ] || [ "$length" -eq 64 ] ||
+    fail 'NIX_CONFIG_REVISION must contain a full 40- or 64-character commit hash'
+}
+
+sha256_file() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$1" | awk '{print $1}'
+  else
+    fail 'sha256sum or shasum is required to verify the Nix installer'
+  fi
 }
 
 contains_platform() {
@@ -97,8 +123,12 @@ ensure_nix() {
   trap cleanup_installer 0 1 2 15
 
   curl --proto '=https' --tlsv1.2 -fsSL \
-    --output "$installer" https://nixos.org/nix/install ||
+    --retry 5 --retry-all-errors --retry-delay 1 \
+    --output "$installer" "$NIX_INSTALLER_URL" ||
     fail 'could not download the official Nix installer'
+  installer_sha256=$(sha256_file "$installer")
+  [ "$installer_sha256" = "$NIX_INSTALLER_SHA256" ] ||
+    fail "Nix installer checksum mismatch: expected $NIX_INSTALLER_SHA256, got $installer_sha256"
   sh "$installer" --daemon --yes || fail 'official multi-user Nix installer failed'
   cleanup_installer
   trap - 0 1 2 15
@@ -138,31 +168,45 @@ validate_checkout() {
   [ -d "$checkout/.git" ] || return 1
   origin=$(run_git -C "$checkout" remote get-url origin 2>/dev/null) || return 1
   origin_is_trusted "$origin" || return 1
-  run_git -C "$checkout" rev-parse --verify HEAD >/dev/null 2>&1 || return 1
+  head=$(run_git -C "$checkout" rev-parse HEAD 2>/dev/null) || return 1
+  [ "$head" = "$REVISION" ] || return 1
   [ -f "$checkout/scripts/bootstrap.sh" ] || return 1
 }
 
-update_checkout() {
+fetch_pinned_revision() {
+  checkout=$1
+  run_git -C "$checkout" fetch --prune origin ||
+    fail 'could not fetch the reviewed nix-config revision'
+  resolved=$(run_git -C "$checkout" rev-parse --verify "$REVISION^{commit}" 2>/dev/null) ||
+    fail "reviewed nix-config revision is unavailable: $REVISION"
+  [ "$resolved" = "$REVISION" ] ||
+    fail "reviewed revision resolved unexpectedly: $resolved"
+}
+
+verify_existing_checkout() {
   checkout=$1
   [ -z "$(run_git -C "$checkout" status --porcelain)" ] ||
-    fail "checkout has local changes; commit or stash them before updating: $checkout"
-  run_git -C "$checkout" fetch --prune origin ||
-    fail 'could not fetch the latest nix-config commit'
-  default_ref=$(run_git -C "$checkout" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null || true)
-  [ -n "$default_ref" ] || default_ref=origin/main
-  run_git -C "$checkout" merge-base --is-ancestor HEAD "$default_ref" ||
-    fail "checkout has local commits or diverged from $default_ref; resolve them before updating"
-  run_git -C "$checkout" merge --ff-only "$default_ref" ||
-    fail "could not fast-forward checkout to $default_ref"
-  log "Using latest commit from $default_ref"
+    fail "checkout has local changes; commit or stash them before installing: $checkout"
+  fetch_pinned_revision "$checkout"
+  head=$(run_git -C "$checkout" rev-parse HEAD 2>/dev/null) ||
+    fail "checkout has no valid HEAD: $checkout"
+  [ "$head" = "$REVISION" ] ||
+    fail "checkout is at $head, not reviewed revision $REVISION; select the reviewed commit explicitly"
+  log "Using reviewed commit $REVISION"
 }
 
 clone_repository() {
   destination=$1
   if [ -e "$destination" ]; then
+    [ -d "$destination/.git" ] ||
+      fail "destination is not a Git checkout: $destination"
+    origin=$(run_git -C "$destination" remote get-url origin 2>/dev/null) ||
+      fail "destination has no readable Git origin: $destination"
+    origin_is_trusted "$origin" ||
+      fail "destination origin is not trusted: $origin"
+    verify_existing_checkout "$destination"
     validate_checkout "$destination" ||
-      fail "destination is not a complete trusted nix-config checkout: $destination"
-    update_checkout "$destination"
+      fail "destination is not a complete checkout of reviewed revision $REVISION"
     return 0
   fi
 
@@ -173,11 +217,14 @@ clone_repository() {
   log "Cloning the public repository into $destination"
   run_git clone "$REPOSITORY_URL" "$staging" ||
     fail 'repository clone failed; rerun the same command after fixing connectivity'
+  fetch_pinned_revision "$staging"
+  run_git -C "$staging" reset --hard "$REVISION" ||
+    fail "could not select reviewed revision $REVISION; the staged clone was left for inspection"
   validate_checkout "$staging" ||
-    fail "repository clone is incomplete or untrusted at $staging; it was left in place for inspection"
+    fail "repository clone is incomplete or not at reviewed revision $REVISION; it was left in place for inspection"
   mv "$staging" "$destination" ||
     fail "could not finalize cloned checkout; retry the same command"
-  update_checkout "$destination"
+  log "Using reviewed commit $REVISION"
 }
 
 main() {
@@ -188,6 +235,7 @@ main() {
     ;;
   esac
 
+  validate_revision
   platform=$(detect_platform)
   destination=${1:-${NIX_CONFIG_REPOSITORY:-$DEFAULT_DESTINATION}}
 

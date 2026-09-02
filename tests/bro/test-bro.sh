@@ -82,6 +82,14 @@ grep -Fq 'nix build --impure --no-link' "$log" || {
   echo 'bro test: apply did not build with the active user identity' >&2
   exit 1
 }
+grep -Fq "nix flake metadata path:$checkout" "$log" || {
+  echo 'bro test: apply used a Git flake that hides untracked configuration' >&2
+  exit 1
+}
+grep -Fq "path:$checkout#homeConfigurations.x86_64-linux.activationPackage" "$log" || {
+  echo 'bro test: activation build did not include the complete working tree' >&2
+  exit 1
+}
 grep -Eq '^tmux source-file .*/\.config/tmux/tmux\.conf$' "$log" || {
   echo 'bro test: apply did not reload an active managed tmux server' >&2
   exit 1

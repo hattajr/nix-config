@@ -431,16 +431,6 @@ tailscale_running() {
     && tailscale status --json 2>/dev/null | jq -e '.BackendState == "Running"' >/dev/null 2>&1
 }
 
-install_tailscale() {
-  command -v curl >/dev/null 2>&1 || {
-    warn 'Tailscale installation requires curl, which is not installed.'
-    return 1
-  }
-  log 'Tailscale is missing; the official installer will request sudo if needed.'
-  sudo -v || return 1
-  curl -fsSL https://tailscale.com/install.sh | sh
-}
-
 configure_tailscale() {
   section 'Tailscale'
   if [ "$(uname -s)" != Linux ]; then
@@ -448,17 +438,10 @@ configure_tailscale() {
     return
   fi
   if ! command -v tailscale >/dev/null 2>&1; then
-    log 'Tailscale is optional and its installation requires sudo.'
-    ask_optional 'Install and configure Tailscale now?' no
-    case "$CHOICE" in
-      no) STATUS_TAILSCALE='not used'; return ;;
-      skip) STATUS_TAILSCALE='skipped for now'; return ;;
-    esac
-    if ! install_tailscale; then
-      STATUS_TAILSCALE='installation not completed'
-      warn 'Tailscale installation is incomplete.'
-      return
-    fi
+    STATUS_TAILSCALE='unavailable; install Tailscale through its signed system package repository'
+    warn "$STATUS_TAILSCALE"
+    log 'Installation instructions: https://tailscale.com/download/linux'
+    return
   fi
   if ! tailscale status --json >/dev/null 2>&1; then
     log 'Starting the Tailscale daemon; sudo may request your password.'

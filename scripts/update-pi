@@ -4,6 +4,7 @@ set -euo pipefail
 
 repo=${1:?usage: update-pi <nix-config-repository>}
 pi_nix="$repo/home/modules/pi.nix"
+patch_package="$repo/scripts/patch-pi-package.sh"
 for command in curl jq nix tar python3; do
   command -v "$command" >/dev/null 2>&1 || {
     printf 'bro: ERROR: Pi update requires %s\n' "$command" >&2
@@ -57,8 +58,9 @@ for package_name in "${packages[@]}"; do
   }
 done
 
-# Mirror pi.nix's postPatch before deriving the fixed-output dependency hash.
-sed -i '78,89d' "$package/package.json"
+# Mirror pi.nix's structural postPatch before deriving the fixed-output
+# dependency hash. This is portable across GNU/Linux and macOS.
+"$patch_package" "$package/package.json"
 integrity_arguments=()
 for package_name in "${packages[@]}"; do
   integrity_arguments+=("$package_name=${integrities[$package_name]}")

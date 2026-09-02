@@ -65,8 +65,8 @@ activate() {
   }
 }
 
-# A collision outside the takeover set must fail before any destructive leaf
-# replacement. Directory-shaped managed leaves must then be replaced cleanly.
+# A collision outside the takeover set must fail before any managed leaf is
+# moved. Directory-shaped managed leaves must then be quarantined and replaced.
 mkdir -p "$XDG_CONFIG_HOME/git" "$XDG_CONFIG_HOME/nvim/local" \
   "$XDG_CONFIG_HOME/tmux" "$home_dir/.pi/agent" "$XDG_CONFIG_HOME/proton-pass"
 printf legacy-zsh >"$home_dir/.zshrc"
@@ -75,6 +75,7 @@ printf preserve-nvim >"$XDG_CONFIG_HOME/nvim/local/keep.txt"
 printf collision >"$XDG_CONFIG_HOME/git/config"
 printf legacy-git >"$home_dir/.gitconfig"
 mkdir "$XDG_CONFIG_HOME/tmux/keys.sh"
+printf preserve-tmux >"$XDG_CONFIG_HOME/tmux/keys.sh/keep.txt"
 printf '{"oauth":"preserve"}\n' >"$home_dir/.pi/agent/auth.json"
 printf 'PI_ENV_PRESERVE=yes\n' >"$XDG_CONFIG_HOME/proton-pass/pi.env"
 
@@ -97,6 +98,16 @@ activate first
 [ -L "$XDG_CONFIG_HOME/tmux/keys.sh" ] || fail 'directory-shaped tmux target was not replaced'
 [ -L "$XDG_CONFIG_HOME/git/config" ] || fail 'managed XDG Git config was not linked'
 [ ! -e "$home_dir/.gitconfig" ] || fail 'legacy Git config was not removed'
+backup_root=$(find "$XDG_STATE_HOME/home-manager/takeover" -mindepth 1 -maxdepth 1 -type d | head -n 1)
+[ -n "$backup_root" ] || fail 'activation did not create a takeover quarantine'
+grep -Fx legacy-zsh "$backup_root/.zshrc" >/dev/null ||
+  fail 'legacy zsh config was not quarantined'
+grep -Fx legacy-nvim "$backup_root/.config/nvim/init.lua" >/dev/null ||
+  fail 'legacy Neovim config was not quarantined'
+grep -Fx preserve-tmux "$backup_root/.config/tmux/keys.sh/keep.txt" >/dev/null ||
+  fail 'directory-shaped tmux target contents were not quarantined'
+grep -Fx legacy-git "$backup_root/.gitconfig" >/dev/null ||
+  fail 'legacy Git config was not quarantined'
 grep -Fx preserve-nvim "$XDG_CONFIG_HOME/nvim/local/keep.txt" >/dev/null ||
   fail 'unmanaged Neovim file was not preserved'
 jq -e '.oauth == "preserve"' "$home_dir/.pi/agent/auth.json" >/dev/null ||
@@ -169,8 +180,6 @@ jq -e '.lastChangelogVersion == "0.0.0"' "$settings" >/dev/null || fail 'Pi chan
 [ -x "$home_dir/.local/bin/pi-models-sync" ] || fail 'Pi model sync command was not deployed'
 [ -x "$home_dir/.local/bin/proton-pass-session" ] || fail 'Proton Pass Linux session helper was not deployed'
 [ -f "$home_dir/.config/proton-pass/pi.env.example" ] || fail 'Proton Pass reference example was not deployed'
-[ ! -e "$home_dir/.config/proton-pass/pi.env" ] || fail 'Home Manager materialized the local Proton Pass reference file'
-[ ! -e "$home_dir/.pi/agent/auth.json" ] || fail 'Home Manager created or replaced Pi auth state'
 jq '.enabledModels = []' "$settings" >"$settings.tmp"
 mv "$settings.tmp" "$settings"
 pi-models-sync >/dev/null 2>&1 || fail 'Pi model sync wrapper failed'

@@ -17,7 +17,7 @@ let
     # packages. Add the registry-published values before Nix prefetches npm
     # dependencies; the package is otherwise unchanged.
     postPatch = ''
-      sed -i '78,89d' package.json
+      JQ=${pkgs.jq}/bin/jq ${pkgs.bash}/bin/bash ${../../scripts/patch-pi-package.sh} package.json
       sed -i '/pi-agent-core-0.84.2.tgz/ a\
           "integrity": "sha512-8Pn3wSCxj0cfo5I6jxQYVB/3uuQRmHhAlEclyjqpOuMEdQMIODHizRogv56FLdbU+dTiGnybeHQ2N+sV1/L2YA==",' npm-shrinkwrap.json
       sed -i '/pi-ai-0.84.2.tgz/ a\
@@ -57,7 +57,11 @@ let
     (lib.filesystem.listFilesRecursive piStaticRoot);
   piStaticHomeFiles = builtins.listToAttrs (map (source: {
     name = ".pi/agent/${lib.removePrefix "${toString piStaticRoot}/" (toString source)}";
-    value = { inherit source; force = true; };
+    value = {
+      inherit source;
+      force = true;
+      executable = lib.hasPrefix "${toString piStaticRoot}/intercepted-commands/" (toString source);
+    };
   }) piStaticFiles);
 in
 {

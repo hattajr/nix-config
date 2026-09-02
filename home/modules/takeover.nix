@@ -44,10 +44,11 @@ let
   ] ++ relativeFiles nvimRoot ".config/nvim" ++ piTargets;
 
   # Home Manager's force flag skips collision checks, but its linker cannot
-  # replace a directory occupying a file target. Remove each forced leaf only
-  # after every non-forced target has passed collision validation.
-  removeForcedTargets = lib.concatMapStringsSep "\n"
-    (target: ''rm -rf -- "$HOME"/${lib.escapeShellArg target}'')
+  # replace a directory occupying a file target. Managed symlinks are safe to
+  # unlink; regular files and directories are quarantined so activation never
+  # destroys a colliding user path.
+  backupForcedTargets = lib.concatMapStringsSep "\n"
+    (target: ''backupManagedTarget ${lib.escapeShellArg target}'')
     forcedTargets;
 in
 {
@@ -67,11 +68,38 @@ in
   home.activation.overwriteManagedLeaves = lib.hm.dag.entryBetween
     [ "linkGeneration" ]
     [ "checkLinkTargets" ]
-    removeForcedTargets;
+    ''
+      takeoverBackupRoot=""
+
+      backupManagedTarget() {
+        local relative=$1 target backup stateHome takeoverRoot
+        target="$HOME/$relative"
+        if [ -L "$target" ]; then
+          rm -f -- "$target"
+          return
+        fi
+        [ -e "$target" ] || return 0
+
+        if [ -z "$takeoverBackupRoot" ]; then
+          stateHome="''${XDG_STATE_HOME:-$HOME/.local/state}"
+          takeoverRoot="$stateHome/home-manager/takeover"
+          mkdir -p "$takeoverRoot"
+          takeoverBackupRoot=$(mktemp -d "$takeoverRoot/activation.XXXXXX")
+          printf 'Backing up colliding managed paths to %s\n' "$takeoverBackupRoot"
+        fi
+
+        backup="$takeoverBackupRoot/$relative"
+        mkdir -p "$(dirname "$backup")"
+        mv -- "$target" "$backup"
+      }
+
+      ${backupForcedTargets}
+    '';
 
   # programs.git owns the XDG config. Retire the legacy global path only after
-  # collision validation and successful managed-link creation.
+  # collision validation and successful managed-link creation, preserving an
+  # existing regular file or directory in the same activation quarantine.
   home.activation.removeLegacyGitConfig = lib.hm.dag.entryAfter [ "linkGeneration" ] ''
-    rm -rf -- "$HOME/.gitconfig"
+    backupManagedTarget .gitconfig
   '';
 }
