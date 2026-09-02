@@ -9,13 +9,14 @@ log() { printf 'bro: %s\n' "$*"; }
 fail() { printf 'bro: ERROR: %s\n' "$*" >&2; exit 1; }
 usage() {
   cat <<'EOF'
-Usage: bro <health|apply|sync|auth> [--push]
+Usage: bro <health|apply|sync|update|auth> [--push]
 
-  bro health        Check core shell health and optional account setup.
+  bro health        Check core shell and account setup; does not change versions.
   bro apply         Build and activate this checkout; does not update Git.
   bro sync           Fast-forward from upstream, then apply.
   bro sync --push    As above, and explicitly push local commits after applying.
-  bro auth          Interactively configure accounts and API keys.
+  bro update         Interactively update pinned Nixpkgs and/or Pi versions.
+  bro auth           Interactively configure accounts and API keys.
 
 BRO_REPOSITORY overrides the installed checkout location.
 EOF
@@ -216,6 +217,67 @@ health() {
   [ "$auth_failed" -eq 0 ] || return 1
 }
 
+update() {
+  local repo=$1 target=$2 choice update_nixpkgs=no update_pi=no
+  [ -t 0 ] && [ -t 1 ] || fail 'bro update requires an interactive terminal'
+  [ -z "$(run_git -C "$repo" status --porcelain)" ] || fail 'working tree has changes'
+
+  # Start from the shared configuration before calculating new upstream pins.
+  sync "$repo" "$target"
+
+  printf '\nSelect updates to prepare:\n' >&2
+  select choice in 'Nixpkgs (normal Nix-managed apps)' 'Pi (custom Nix package)' 'Both' 'Cancel'; do
+    case $REPLY in
+      1) update_nixpkgs=yes; break ;;
+      2) update_pi=yes; break ;;
+      3) update_nixpkgs=yes; update_pi=yes; break ;;
+      4) log 'update cancelled'; return 0 ;;
+      *) printf 'Choose a number from 1 to 4.\n' >&2 ;;
+    esac
+  done
+
+  if [ "$update_nixpkgs" = yes ]; then
+    log 'updating nixpkgs pin'
+    run_nix_with_dns_retry nix flake update nixpkgs
+  fi
+  if [ "$update_pi" = yes ]; then
+    log 'updating Pi pin'
+    "$repo/scripts/update-pi" "$repo"
+  fi
+
+  if run_git -C "$repo" diff --quiet; then
+    log 'all selected pins are already current'
+    return 0
+  fi
+  run_git -C "$repo" diff --check || fail 'update produced invalid whitespace'
+  printf '\nProposed version-pin changes:\n' >&2
+  run_git -C "$repo" diff
+  printf '\nApply these changes on this machine? [y/N] ' >&2
+  read -r choice
+  case $choice in
+    y|Y|yes|YES) ;;
+    *)
+      run_git -C "$repo" restore --source=HEAD -- flake.lock home/modules/pi.nix
+      log 'update discarded'
+      return 0
+      ;;
+  esac
+
+  apply "$repo" "$target"
+  printf 'Commit these version-pin changes? [y/N] ' >&2
+  read -r choice
+  case $choice in
+    y|Y|yes|YES)
+      run_git -C "$repo" add flake.lock home/modules/pi.nix
+      run_git -C "$repo" commit -m 'Update managed package pins'
+      printf 'Push the commit for other machines to sync? [y/N] ' >&2
+      read -r choice
+      case $choice in y|Y|yes|YES) run_git -C "$repo" push ;; esac
+      ;;
+    *) log 'changes applied locally but left uncommitted' ;;
+  esac
+}
+
 sync() {
   local repo=$1 target=$2 push=${3:-no} upstream ahead behind
   [ -z "$(run_git -C "$repo" status --porcelain)" ] || fail 'working tree has changes'
@@ -235,7 +297,7 @@ sync() {
 
 main() {
   local command=${1:-} repo target
-  case "$command" in health|apply|sync|auth) ;; -h|--help|'') usage; [ -n "$command" ] && exit 0 || exit 2 ;; *) usage >&2; exit 2;; esac
+  case "$command" in health|apply|sync|update|auth) ;; -h|--help|'') usage; [ -n "$command" ] && exit 0 || exit 2 ;; *) usage >&2; exit 2;; esac
   shift
   local push=no
   if [ "$command" = sync ] && [ "${1:-}" = --push ]; then push=yes; shift; fi
@@ -245,6 +307,7 @@ main() {
     apply) apply "$repo" "$target";;
     health) health "$repo" "$target";;
     sync) sync "$repo" "$target" "$push";;
+    update) update "$repo" "$target";;
     auth) auth;;
   esac
 }

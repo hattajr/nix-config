@@ -1,0 +1,120 @@
+#!/usr/bin/env bash
+# Update Pi's custom Nix package pin from the npm registry.
+set -euo pipefail
+
+repo=${1:?usage: update-pi <nix-config-repository>}
+pi_nix="$repo/home/modules/pi.nix"
+for command in curl jq nix tar python3; do
+  command -v "$command" >/dev/null 2>&1 || {
+    printf 'bro: ERROR: Pi update requires %s\n' "$command" >&2
+    exit 1
+  }
+done
+
+metadata=$(curl --fail --silent --show-error 'https://registry.npmjs.org/@earendil-works%2Fpi-coding-agent/latest')
+version=$(jq -r '.version' <<<"$metadata")
+tarball=$(jq -r '.dist.tarball' <<<"$metadata")
+current_version=$(python3 - "$pi_nix" <<'PY'
+import re
+import sys
+
+text = open(sys.argv[1], encoding="utf-8").read()
+match = re.search(r'^\s*version = "([^"]+)";', text, re.M)
+if not match:
+    raise SystemExit("could not find Pi version")
+print(match.group(1))
+PY
+)
+
+if [ "$version" = "$current_version" ]; then
+  printf 'bro: Pi is already pinned to %s\n' "$version"
+  exit 0
+fi
+
+work=$(mktemp -d "${TMPDIR:-/tmp}/bro-update-pi.XXXXXX")
+trap 'rm -rf "$work"' EXIT
+curl --fail --silent --show-error --location "$tarball" --output "$work/pi.tgz"
+tar -xzf "$work/pi.tgz" -C "$work"
+package="$work/package"
+
+# Pi's published shrinkwrap currently omits integrity fields for these sibling
+# packages. The Nix module adds them during postPatch, so obtain the exact
+# published values and use the same patched lockfile to calculate npmDepsHash.
+packages=(pi-agent-core pi-ai pi-client pi-protocol pi-telemetry pi-tui)
+declare -A integrities
+for package_name in "${packages[@]}"; do
+  dependency_version=$(jq -r --arg name "@earendil-works/$package_name" \
+    '.packages["node_modules/" + $name].version // empty' "$package/npm-shrinkwrap.json")
+  [ -n "$dependency_version" ] || {
+    printf 'bro: ERROR: Pi shrinkwrap has no %s dependency version; updater needs adjustment\n' "$package_name" >&2
+    exit 1
+  }
+  integrities[$package_name]=$(curl --fail --silent --show-error \
+    "https://registry.npmjs.org/@earendil-works%2F${package_name}/${dependency_version}" | jq -r '.dist.integrity')
+  [ "${integrities[$package_name]}" != null ] || {
+    printf 'bro: ERROR: npm did not provide integrity for %s\n' "$package_name" >&2
+    exit 1
+  }
+done
+
+# Mirror pi.nix's postPatch before deriving the fixed-output dependency hash.
+sed -i '78,89d' "$package/package.json"
+integrity_arguments=()
+for package_name in "${packages[@]}"; do
+  integrity_arguments+=("$package_name=${integrities[$package_name]}")
+done
+python3 - "$package/npm-shrinkwrap.json" "${integrity_arguments[@]}" <<'PY'
+import json
+import sys
+
+path, *entries = sys.argv[1:]
+lock = json.load(open(path, encoding="utf-8"))
+for entry in entries:
+    name, integrity = entry.split("=", 1)
+    lock["packages"][f"node_modules/@earendil-works/{name}"]["integrity"] = integrity
+with open(path, "w", encoding="utf-8") as output:
+    json.dump(lock, output, indent=2)
+    output.write("\n")
+PY
+npm_deps_hash=$(nix run nixpkgs#prefetch-npm-deps -- "$package/npm-shrinkwrap.json")
+src_hash=$(nix store prefetch-file --json "$tarball" | jq -r '.hash')
+
+PI_VERSION="$version" PI_TARBALL="$tarball" PI_SRC_HASH="$src_hash" PI_NPM_DEPS_HASH="$npm_deps_hash" \
+PI_AGENT_CORE_INTEGRITY="${integrities[pi-agent-core]}" PI_AI_INTEGRITY="${integrities[pi-ai]}" \
+PI_CLIENT_INTEGRITY="${integrities[pi-client]}" PI_PROTOCOL_INTEGRITY="${integrities[pi-protocol]}" \
+PI_TELEMETRY_INTEGRITY="${integrities[pi-telemetry]}" PI_TUI_INTEGRITY="${integrities[pi-tui]}" \
+python3 - "$pi_nix" <<'PY'
+import os
+import re
+import sys
+
+path = sys.argv[1]
+text = open(path, encoding="utf-8").read()
+version = os.environ["PI_VERSION"]
+replacements = {
+    r'(version = ")[^"]+(";)': rf'\g<1>{version}\g<2>',
+    r'(url = ")https://registry\.npmjs\.org/@earendil-works/pi-coding-agent/-/pi-coding-agent-[^"]+(";)':
+        rf'\g<1>{os.environ["PI_TARBALL"]}\g<2>',
+    r'(hash = ")sha256-[^"]+(";)': rf'\g<1>{os.environ["PI_SRC_HASH"]}\g<2>',
+    r'(npmDepsHash = ")[^"]+(";)': rf'\g<1>{os.environ["PI_NPM_DEPS_HASH"]}\g<2>',
+}
+for pattern, replacement in replacements.items():
+    text, count = re.subn(pattern, replacement, text, count=1)
+    if count != 1:
+        raise SystemExit(f"could not update Pi field matching {pattern}")
+for name, environment in {
+    "pi-agent-core": "PI_AGENT_CORE_INTEGRITY",
+    "pi-ai": "PI_AI_INTEGRITY",
+    "pi-client": "PI_CLIENT_INTEGRITY",
+    "pi-protocol": "PI_PROTOCOL_INTEGRITY",
+    "pi-telemetry": "PI_TELEMETRY_INTEGRITY",
+    "pi-tui": "PI_TUI_INTEGRITY",
+}.items():
+    pattern = rf'({re.escape(name)}-)[0-9][^/]*(\.tgz/ a\\\n\s*"integrity": ")[^"]+("[,])'
+    text, count = re.subn(pattern, rf'\g<1>{version}\g<2>{os.environ[environment]}\g<3>', text, count=1)
+    if count != 1:
+        raise SystemExit(f"could not update Pi integrity for {name}; updater needs adjustment")
+open(path, "w", encoding="utf-8").write(text)
+PY
+
+printf 'bro: updated Pi pin from %s to %s\n' "$current_version" "$version"

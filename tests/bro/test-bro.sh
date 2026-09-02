@@ -152,6 +152,19 @@ if PATH="$mockbin:$PATH" "$bro" health >/dev/null 2>&1; then
 fi
 rm "$checkout/dirty"
 : >"$log"
+if PATH="$mockbin:$PATH" "$bro" update </dev/null >/dev/null 2>&1; then
+  echo 'bro test: non-interactive update succeeded' >&2
+  exit 1
+fi
+! grep -Fq 'nix flake update nixpkgs' "$log" || {
+  echo 'bro test: non-interactive update changed a pin' >&2
+  exit 1
+}
+grep -q 'bro update' <(PATH="$mockbin:$PATH" "$bro" --help) || {
+  echo 'bro test: help did not document update' >&2
+  exit 1
+}
+: >"$log"
 BRO_GIT_MODE=sync PATH="$mockbin:$PATH" "$bro" sync >/dev/null
 ! grep -Eq '^git .* push($| )' "$log" || {
   echo 'bro test: ordinary sync pushed' >&2
@@ -192,4 +205,4 @@ grep -q '^setup ' "$log" || {
   echo 'bro test: auth fallback did not run setup' >&2
   exit 1
 }
-echo 'bro test: PASSED (apply safety, sync push boundary, auth wrapper, dirty refusal, health)'
+echo 'bro test: PASSED (apply safety, sync push boundary, update safety, auth wrapper, dirty refusal, health)'

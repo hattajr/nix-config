@@ -28,12 +28,15 @@ Home Manager uses the active user's `$USER` and `$HOME`, so it works for arbitra
 ## `bro` commands
 
 ```text
-bro health        Check shell and account setup health
+bro health        Check shell and account setup health; does not change versions
 bro apply         Build and activate this checkout
 bro sync           Fast-forward from upstream, then apply
 bro sync --push    Sync, apply, then push local commits
-bro auth          Configure accounts and API keys
+bro update         Interactively update Nixpkgs and/or the custom Pi pin
+bro auth           Configure accounts and API keys
 ```
+
+`bro sync` makes a machine match the versions committed in this repository. `bro update` is the intentional version-change workflow: it first syncs, lets you select Nixpkgs (normal Nix-managed apps), Pi, or both, shows the resulting diff, then optionally applies, commits, and pushes it. Other machines receive the committed update with `bro sync`.
 
 ## Multipass validation
 
