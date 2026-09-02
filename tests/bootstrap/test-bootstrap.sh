@@ -349,7 +349,8 @@ shell_log="$workdir/managed-shell.log"
 cat >"$home/.nix-profile/bin/zsh" <<'EOF_ZSH'
 #!/usr/bin/env bash
 [ "${1:-}" = -lic ] && exit 0
-printf 'managed-tty=%s\n' "$(tty)" >>"$MOCK_SHELL_LOG"
+if printf '\r' >&0 2>/dev/null; then stdin_mode=read-write; else stdin_mode=read-only; fi
+printf 'managed-tty=%s stdin-mode=%s\n' "$(tty)" "$stdin_mode" >>"$MOCK_SHELL_LOG"
 EOF_ZSH
 chmod +x "$home/.nix-profile/bin/zsh"
 export BOOTSTRAP_UNDER_TEST="$bootstrap" BOOTSTRAP_CHECKOUT="$repo_root" MOCK_SHELL_LOG="$shell_log" SYSTEM_BASH="$system_bash"
@@ -378,11 +379,11 @@ _, status = os.waitpid(pid, 0)
 if not os.WIFEXITED(status) or os.WEXITSTATUS(status) != 0:
     sys.exit(1)
 PY_PTY
-grep -Eq '^managed-tty=/dev/.+' "$shell_log" || {
-  printf '%s\n' 'bootstrap test: managed shell did not receive a concrete terminal' >&2
+grep -Eq '^managed-tty=/dev/.+ stdin-mode=read-write$' "$shell_log" || {
+  printf '%s\n' 'bootstrap test: managed shell did not receive a read-write concrete terminal' >&2
   exit 1
 }
-! grep -Fxq 'managed-tty=/dev/tty' "$shell_log" || {
+! grep -Eq '^managed-tty=/dev/tty ' "$shell_log" || {
   printf '%s\n' 'bootstrap test: managed shell received the /dev/tty alias' >&2
   exit 1
 }

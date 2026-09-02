@@ -86,7 +86,10 @@ start_managed_shell() {
       return
     }
   log 'Entering the managed zsh login shell'
-  exec "$managed_zsh" -l <"$terminal_device" >"$terminal_device" 2>&1
+  # Open the terminal read-write once, then duplicate that descriptor. tmux uses
+  # its stdin terminal descriptor for both input and screen output; separate
+  # read-only/write-only opens leave an attached tmux client unable to redraw.
+  exec "$managed_zsh" -l <>"$terminal_device" 1>&0 2>&0
 }
 should_apply() {
   local preset=${NIX_CONFIG_APPLY:-} answer terminal_device
