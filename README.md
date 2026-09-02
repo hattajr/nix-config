@@ -33,10 +33,11 @@ bro apply         Build and activate this checkout
 bro sync           Fast-forward from upstream, then apply
 bro sync --push    Sync, apply, then push local commits
 bro update         Interactively update Nixpkgs and/or the custom Pi pin
+bro update --verbose  Also show the complete generated Git diff
 bro auth           Configure accounts and API keys
 ```
 
-`bro sync` makes a machine match the versions committed in this repository. `bro update` is the intentional version-change workflow: it first syncs, lets you select Nixpkgs (normal Nix-managed apps), Pi, or both, shows the resulting diff, then optionally applies, commits, and pushes it. Other machines receive the committed update with `bro sync`.
+`bro sync` makes a machine match the versions committed in this repository. `bro update` is the intentional version-change workflow: it first syncs, lets you select Nixpkgs (normal Nix-managed apps), Pi, or both, then shows a concise old-to-new version summary before optionally applying, committing, and pushing it. Use `bro update --verbose` to also inspect the complete generated Git diff. Other machines receive the committed update with `bro sync`.
 
 ## Multipass validation
 

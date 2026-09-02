@@ -9,13 +9,14 @@ log() { printf 'bro: %s\n' "$*"; }
 fail() { printf 'bro: ERROR: %s\n' "$*" >&2; exit 1; }
 usage() {
   cat <<'EOF'
-Usage: bro <health|apply|sync|update|auth> [--push]
+Usage: bro <health|apply|sync|update|auth> [--push|--verbose]
 
   bro health        Check core shell and account setup; does not change versions.
   bro apply         Build and activate this checkout; does not update Git.
   bro sync           Fast-forward from upstream, then apply.
   bro sync --push    As above, and explicitly push local commits after applying.
   bro update         Interactively update pinned Nixpkgs and/or Pi versions.
+  bro update --verbose  Also show the complete generated Git diff.
   bro auth           Interactively configure accounts and API keys.
 
 BRO_REPOSITORY overrides the installed checkout location.
@@ -218,7 +219,7 @@ health() {
 }
 
 update() {
-  local repo=$1 target=$2 choice update_nixpkgs=no update_pi=no
+  local repo=$1 target=$2 verbose=${3:-no} choice update_nixpkgs=no update_pi=no
   [ -t 0 ] && [ -t 1 ] || fail 'bro update requires an interactive terminal'
   [ -z "$(run_git -C "$repo" status --porcelain)" ] || fail 'working tree has changes'
 
@@ -250,8 +251,11 @@ update() {
     return 0
   fi
   run_git -C "$repo" diff --check || fail 'update produced invalid whitespace'
-  printf '\nProposed version-pin changes:\n' >&2
-  run_git -C "$repo" diff
+  print_update_summary "$repo"
+  if [ "$verbose" = yes ]; then
+    printf '\nComplete generated diff:\n' >&2
+    run_git -C "$repo" diff
+  fi
   printf '\nApply these changes on this machine? [y/N] ' >&2
   read -r choice
   case $choice in
@@ -278,6 +282,21 @@ update() {
   esac
 }
 
+print_update_summary() {
+  local repo=$1 old_pi new_pi old_nixpkgs new_nixpkgs
+  printf '\nProposed version updates:\n' >&2
+  if ! run_git -C "$repo" diff --quiet -- home/modules/pi.nix; then
+    old_pi=$(run_git -C "$repo" show HEAD:home/modules/pi.nix | sed -n 's/^[[:space:]]*version = "\([^"]*\)";.*/\1/p' | head -n 1)
+    new_pi=$(sed -n 's/^[[:space:]]*version = "\([^"]*\)";.*/\1/p' "$repo/home/modules/pi.nix" | head -n 1)
+    printf '  Pi:       %s → %s\n' "$old_pi" "$new_pi" >&2
+  fi
+  if ! run_git -C "$repo" diff --quiet -- flake.lock; then
+    old_nixpkgs=$(run_git -C "$repo" show HEAD:flake.lock | jq -r '.nodes.nixpkgs.locked.rev // "unknown"')
+    new_nixpkgs=$(jq -r '.nodes.nixpkgs.locked.rev // "unknown"' "$repo/flake.lock")
+    printf '  Nixpkgs:  %s → %s\n' "${old_nixpkgs:0:12}" "${new_nixpkgs:0:12}" >&2
+  fi
+}
+
 sync() {
   local repo=$1 target=$2 push=${3:-no} upstream ahead behind
   [ -z "$(run_git -C "$repo" status --porcelain)" ] || fail 'working tree has changes'
@@ -299,15 +318,19 @@ main() {
   local command=${1:-} repo target
   case "$command" in health|apply|sync|update|auth) ;; -h|--help|'') usage; [ -n "$command" ] && exit 0 || exit 2 ;; *) usage >&2; exit 2;; esac
   shift
-  local push=no
-  if [ "$command" = sync ] && [ "${1:-}" = --push ]; then push=yes; shift; fi
+  local push=no verbose=no
+  if [ "$command" = sync ] && [ "${1:-}" = --push ]; then
+    push=yes; shift
+  elif [ "$command" = update ] && [ "${1:-}" = --verbose ]; then
+    verbose=yes; shift
+  fi
   [ "$#" = 0 ] || { usage >&2; exit 2; }
   enable_nix_features; set_home_identity; repo=$(checkout); target=$(platform)
   case "$command" in
     apply) apply "$repo" "$target";;
     health) health "$repo" "$target";;
     sync) sync "$repo" "$target" "$push";;
-    update) update "$repo" "$target";;
+    update) update "$repo" "$target" "$verbose";;
     auth) auth;;
   esac
 }

@@ -164,6 +164,10 @@ grep -q 'bro update' <(PATH="$mockbin:$PATH" "$bro" --help) || {
   echo 'bro test: help did not document update' >&2
   exit 1
 }
+if PATH="$mockbin:$PATH" "$bro" update --verbose </dev/null >/dev/null 2>&1; then
+  echo 'bro test: non-interactive verbose update succeeded' >&2
+  exit 1
+fi
 : >"$log"
 BRO_GIT_MODE=sync PATH="$mockbin:$PATH" "$bro" sync >/dev/null
 ! grep -Eq '^git .* push($| )' "$log" || {
