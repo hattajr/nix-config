@@ -50,17 +50,11 @@ let
 
   piSettings = ../../config/pi/agent/settings.json;
   piStaticRoot = ../../config/pi/agent;
-  piQuestionExtension = piStaticRoot + "/extensions/rpiv-ask-user-question";
   # Never link an entire Pi directory: Pi keeps sessions, OAuth, npm state, and
-  # locally installed extensions below the same writable parents.  Each static
-  # reference file is instead linked independently, except multi-file
-  # extensions. Their relative TypeScript imports resolve from the symlink's
-  # real Nix-store path, so every file in a multi-file extension must share one
-  # source directory.
-  piStaticFiles = builtins.filter (source:
-    toString source != toString piSettings
-    && !lib.hasPrefix "${toString piQuestionExtension}/" (toString source)
-  ) (lib.filesystem.listFilesRecursive piStaticRoot);
+  # locally installed extensions below the same writable parents. Each static
+  # reference file is linked independently instead.
+  piStaticFiles = builtins.filter (source: toString source != toString piSettings)
+    (lib.filesystem.listFilesRecursive piStaticRoot);
   piStaticHomeFiles = builtins.listToAttrs (map (source: {
     name = ".pi/agent/${lib.removePrefix "${toString piStaticRoot}/" (toString source)}";
     value = { inherit source; force = true; };
@@ -87,10 +81,6 @@ in
   '';
 
   home.file = piStaticHomeFiles // {
-    ".pi/agent/extensions/rpiv-ask-user-question" = {
-      source = piQuestionExtension;
-      force = true;
-    };
     ".pi/README.md" = { source = ../../config/pi/README.md; force = true; };
     ".pi/.gitignore" = { source = ../../config/pi/.gitignore; force = true; };
     ".pi/.nvmrc" = { source = ../../config/pi/.nvmrc; force = true; };

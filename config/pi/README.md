@@ -35,6 +35,7 @@ Typical flow:
 ```
 
 Notes:
+
 - First `/qa-check` is broad; later rounds recheck only still-open QA findings.
 - Reopened issues are routed through notes like `QA: Q1-03-01` in `issues/index.md`.
 - `PLANS/` stays git-ignored; parallel `/build` and `/qa-check` runs use a worktree snapshot hook so planning files are still available to workers.
@@ -103,9 +104,7 @@ Run `bro auth` after activation to configure this flow.
 If packages are missing:
 
 ```bash
-pi install npm:pi-subagents
 pi install npm:pi-web-access
-pi install npm:@juicesharp/rpiv-ask-user-question
 ```
 
 Pi extensions can be updated through Pi itself:
