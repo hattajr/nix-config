@@ -1,10 +1,9 @@
 #!/bin/sh
 # Public stage-zero installer. It contains no credentials and performs no
-# account login. Safe to invoke from a reviewed, preferably commit-pinned URL.
+# account login. It clones the public repository and then runs its bootstrap.
 set -eu
 
 REPOSITORY_URL=${NIX_CONFIG_REPOSITORY_URL:-https://github.com/hattajr/nix-config.git}
-REVISION=${NIX_CONFIG_REVISION:-}
 DEFAULT_DESTINATION=${HOME}/src/nix-config
 NIX_ROOT=${NIX_CONFIG_NIX_ROOT:-/nix}
 NIX_INSTALLER_URL=${NIX_CONFIG_NIX_INSTALLER_URL:-https://nixos.org/nix/install}
@@ -30,9 +29,8 @@ Supported platforms: aarch64-darwin, aarch64-linux, x86_64-linux.
 The destination defaults to ~/src/nix-config.
 
 NIX_CONFIG_PLATFORM may override detection for automation. NIX_CONFIG_REPOSITORY
-may set the destination. NIX_CONFIG_REVISION is required and must contain the
-full reviewed Git commit hash to install. After cloning, bootstrap prompts once
-to apply the configuration; set NIX_CONFIG_APPLY=yes to apply unattended or
+may set the destination. After cloning, bootstrap prompts once to apply the
+configuration; set NIX_CONFIG_APPLY=yes to apply unattended or
 NIX_CONFIG_APPLY=no to clone and validate only. Without a terminal, bootstrap
 fails closed unless one of those values is set. After activation, run bro auth to
 configure optional accounts and API keys.
@@ -41,17 +39,6 @@ The installer first reuses an existing working Nix installation, including one
 whose profile is not loaded in the current shell. Home Manager is the sole owner
 of its managed configuration paths and replaces legacy files during activation.
 EOF
-}
-
-validate_revision() {
-  case "$REVISION" in
-  '' | *[!0-9a-f]*)
-    fail 'NIX_CONFIG_REVISION must be a lowercase full reviewed Git commit hash'
-    ;;
-  esac
-  length=${#REVISION}
-  [ "$length" -eq 40 ] || [ "$length" -eq 64 ] ||
-    fail 'NIX_CONFIG_REVISION must contain a full 40- or 64-character commit hash'
 }
 
 sha256_file() {
@@ -168,31 +155,14 @@ validate_checkout() {
   [ -d "$checkout/.git" ] || return 1
   origin=$(run_git -C "$checkout" remote get-url origin 2>/dev/null) || return 1
   origin_is_trusted "$origin" || return 1
-  head=$(run_git -C "$checkout" rev-parse HEAD 2>/dev/null) || return 1
-  [ "$head" = "$REVISION" ] || return 1
   [ -f "$checkout/scripts/bootstrap.sh" ] || return 1
-}
-
-fetch_pinned_revision() {
-  checkout=$1
-  run_git -C "$checkout" fetch --prune origin ||
-    fail 'could not fetch the reviewed nix-config revision'
-  resolved=$(run_git -C "$checkout" rev-parse --verify "$REVISION^{commit}" 2>/dev/null) ||
-    fail "reviewed nix-config revision is unavailable: $REVISION"
-  [ "$resolved" = "$REVISION" ] ||
-    fail "reviewed revision resolved unexpectedly: $resolved"
 }
 
 verify_existing_checkout() {
   checkout=$1
   [ -z "$(run_git -C "$checkout" status --porcelain)" ] ||
     fail "checkout has local changes; commit or stash them before installing: $checkout"
-  fetch_pinned_revision "$checkout"
-  head=$(run_git -C "$checkout" rev-parse HEAD 2>/dev/null) ||
-    fail "checkout has no valid HEAD: $checkout"
-  [ "$head" = "$REVISION" ] ||
-    fail "checkout is at $head, not reviewed revision $REVISION; select the reviewed commit explicitly"
-  log "Using reviewed commit $REVISION"
+  log "Using existing checkout $checkout"
 }
 
 clone_repository() {
@@ -206,7 +176,7 @@ clone_repository() {
       fail "destination origin is not trusted: $origin"
     verify_existing_checkout "$destination"
     validate_checkout "$destination" ||
-      fail "destination is not a complete checkout of reviewed revision $REVISION"
+      fail 'destination is not a complete nix-config checkout'
     return 0
   fi
 
@@ -217,14 +187,11 @@ clone_repository() {
   log "Cloning the public repository into $destination"
   run_git clone "$REPOSITORY_URL" "$staging" ||
     fail 'repository clone failed; rerun the same command after fixing connectivity'
-  fetch_pinned_revision "$staging"
-  run_git -C "$staging" reset --hard "$REVISION" ||
-    fail "could not select reviewed revision $REVISION; the staged clone was left for inspection"
   validate_checkout "$staging" ||
-    fail "repository clone is incomplete or not at reviewed revision $REVISION; it was left in place for inspection"
+    fail 'repository clone is incomplete; it was left in place for inspection'
   mv "$staging" "$destination" ||
     fail "could not finalize cloned checkout; retry the same command"
-  log "Using reviewed commit $REVISION"
+  log 'Using the latest repository checkout'
 }
 
 main() {
@@ -235,7 +202,6 @@ main() {
     ;;
   esac
 
-  validate_revision
   platform=$(detect_platform)
   destination=${1:-${NIX_CONFIG_REPOSITORY:-$DEFAULT_DESTINATION}}
 
@@ -244,7 +210,7 @@ main() {
   clone_repository "$destination"
   bootstrap="$destination/scripts/bootstrap.sh"
   [ -f "$bootstrap" ] || fail "bootstrap script is missing: $bootstrap"
-  log "Continuing with the reviewed checkout for platform $platform"
+  log "Continuing with the cloned checkout for platform $platform"
   NIX_CONFIG_PLATFORM=$platform \
     exec /usr/bin/env bash "$bootstrap" "$destination"
 }

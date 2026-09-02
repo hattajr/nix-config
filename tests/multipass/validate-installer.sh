@@ -35,7 +35,6 @@ printf legacy-git >"$HOME/.gitconfig"
 
 curl -fsSL "file://$source_root/scripts/install.sh" |
   env NIX_CONFIG_REPOSITORY_URL="file://$source_root" \
-    NIX_CONFIG_REVISION="$revision" \
     NIX_CONFIG_APPLY=yes \
     NIX_CONFIG_START_SHELL=no \
     sh -s -- "$destination"

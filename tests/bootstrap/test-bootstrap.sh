@@ -146,25 +146,13 @@ install_mock_git() {
 }
 
 run_install() {
-  NIX_CONFIG_REVISION="$MOCK_REVISION" \
-    NIX_CONFIG_NIX_INSTALLER_SHA256="${MOCK_NIX_INSTALLER_SHA256:-9adda97297d9e8ab360df95c729eabff4f4f93d6db091953c3a68f29e3fb130c}" \
+  NIX_CONFIG_NIX_INSTALLER_SHA256="${MOCK_NIX_INSTALLER_SHA256:-9adda97297d9e8ab360df95c729eabff4f4f93d6db091953c3a68f29e3fb130c}" \
     PATH="$mockbin" "$install_script" "$@"
 }
 
 run_bootstrap() {
   PATH="$mockbin" "$bootstrap" "$@"
 }
-
-# Stage zero refuses to execute anything without a full reviewed revision.
-if PATH="$mockbin" "$install_script" "$home/src/unpinned" >/dev/null 2>&1; then
-  printf '%s\n' 'bootstrap test: unpinned installer unexpectedly succeeded' >&2
-  exit 1
-fi
-! grep -q '^nix ' "$logfile" || {
-  printf '%s\n' 'bootstrap test: unpinned installer reached Nix' >&2
-  exit 1
-}
-: >"$logfile"
 
 # Invalid platform overrides fail before Nix or activation work.
 if NIX_CONFIG_PLATFORM=unsupported NIX_CONFIG_APPLY=yes run_bootstrap "$repo_root" >/dev/null 2>&1; then
@@ -499,7 +487,7 @@ grep -Fq "checkout-bootstrap platform=aarch64-darwin args=$darwin_destination" "
 }
 : >"$logfile"
 
-# Rerunning verifies the origin and exact reviewed revision without advancing it.
+# Rerunning reuses a clean checkout rather than cloning again.
 run_install "$destination" >/dev/null
 ! grep -q '^git clone ' "$logfile" || {
   printf '%s\n' 'bootstrap test: rerun recloned repository' >&2
@@ -509,30 +497,5 @@ grep -Fq "git -C $destination remote get-url origin" "$logfile" || {
   printf '%s\n' 'bootstrap test: rerun did not verify repository origin' >&2
   exit 1
 }
-grep -Fq "git -C $destination fetch --prune origin" "$logfile" || {
-  printf '%s\n' 'bootstrap test: rerun did not fetch the reviewed commit' >&2
-  exit 1
-}
-grep -Fq "git -C $destination rev-parse --verify $MOCK_REVISION^{commit}" "$logfile" || {
-  printf '%s\n' 'bootstrap test: rerun did not resolve the reviewed commit' >&2
-  exit 1
-}
-! grep -q 'merge --ff-only' "$logfile" || {
-  printf '%s\n' 'bootstrap test: pinned rerun advanced the checkout' >&2
-  exit 1
-}
 
-# A clean checkout at another commit is not silently advanced or rewound.
-: >"$logfile"
-export MOCK_HEAD_REVISION=2222222222222222222222222222222222222222
-if run_install "$destination" >/dev/null 2>&1; then
-  printf '%s\n' 'bootstrap test: installer accepted a checkout at an unreviewed commit' >&2
-  exit 1
-fi
-unset MOCK_HEAD_REVISION
-! grep -Eq 'reset --hard|merge --ff-only' "$logfile" || {
-  printf '%s\n' 'bootstrap test: installer mutated a checkout at another commit' >&2
-  exit 1
-}
-
-printf '%s\n' 'bootstrap test: PASSED (pinned checkout, verified installer, platform detection, activation, and rerun)'
+printf '%s\n' 'bootstrap test: PASSED (public checkout, verified installer, platform detection, activation, and rerun)'

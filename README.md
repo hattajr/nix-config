@@ -11,17 +11,13 @@ Personal Home Manager configuration for macOS (Apple Silicon) and Linux (x86-64,
 
 ## Install
 
-Clone without executing repository code, inspect the checkout, then bind the installation to the exact commit you reviewed:
+Install with one command:
 
 ```sh
-git clone https://github.com/hattajr/nix-config.git ~/src/nix-config
-cd ~/src/nix-config
-git log -1 --show-signature --stat
-# Review the commit and configuration before continuing.
-NIX_CONFIG_REVISION=$(git rev-parse HEAD) ./scripts/install.sh
+curl -fsSL https://raw.githubusercontent.com/hattajr/nix-config/main/scripts/install.sh | sh
 ```
 
-`NIX_CONFIG_REVISION` is required and accepts only a full commit hash. The installer detects the platform, reuses a working Nix installation when available, otherwise downloads the official multi-user Nix installer and verifies its reviewed SHA-256 checksum before execution. It refuses an existing checkout unless it is clean and already at the selected commit, then prompts to apply the configuration. Routine updates remain a separate `bro sync` action.
+The installer detects the platform, reuses a working Nix installation when available, otherwise downloads the official multi-user Nix installer and verifies its reviewed SHA-256 checksum before execution. It clones the repository to `~/src/nix-config`, then prompts to apply the configuration. If that checkout already exists, it must be clean. Routine updates remain a separate `bro sync` action.
 
 Home Manager is the sole owner of each configuration file it manages. Activation replaces conflicting files at those managed leaves, including files previously managed by Chezmoi, while preserving unrelated files in shared directories. A colliding regular file or directory is moved under `$XDG_STATE_HOME/home-manager/takeover/` before replacement; existing managed symlinks are simply refreshed. The legacy `~/.gitconfig` is quarantined there after `~/.config/git/config` is linked. Runtime state and secrets outside the managed paths remain writable.
 
