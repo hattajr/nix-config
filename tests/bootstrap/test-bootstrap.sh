@@ -325,7 +325,7 @@ install_mock_git
 # Explicit ARM64 override builds and activates, then runs noninteractive health.
 NIX_CONFIG_PLATFORM=aarch64-linux NIX_CONFIG_APPLY=yes \
   run_bootstrap "$repo_root" >/dev/null
-grep -Fq 'homeConfigurations.aarch64-linux.activationPackage' "$logfile" || {
+grep -Fq 'system = "aarch64-linux"' "$logfile" || {
   printf '%s\n' 'bootstrap test: ARM64 override did not select the ARM output' >&2
   exit 1
 }

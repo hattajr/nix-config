@@ -32,18 +32,26 @@ chmod 700 "$home_dir"
 nix shell nixpkgs#git --command git config --global --add safe.directory "$source_root"
 
 printf '%s: checking locked flake metadata and evaluation\n' "$validation_name"
-# `nix flake check` treats Home Manager's configuration object as a generic
-# flake output and rejects its nested `type` attr. Show/eval validates the
-# locked flake and synthetic configuration without masking that limitation.
+# The committed outputs are pure, so `nix flake check` is meaningful here and
+# builds the owner's activation rather than silently skipping every output.
 nix flake metadata "$flake_source" >/tmp/flake-metadata.txt
-nix flake show --impure "$flake_source" --json >/tmp/flake-show.json
+nix flake show "$flake_source" --json >/tmp/flake-show.json
+nix flake check "$flake_source" --no-build
 activation_drv=$(nix eval --impure --raw "$flake_ref.activationPackage.drvPath")
-darwin_arm_drv=$(nix eval --impure --raw \
-  "$flake_source#homeConfigurations.aarch64-darwin.activationPackage.drvPath")
-linux_arm_drv=$(nix eval --impure --raw \
-  "$flake_source#homeConfigurations.aarch64-linux.activationPackage.drvPath")
-linux_x86_drv=$(nix eval --impure --raw \
-  "$flake_source#homeConfigurations.x86_64-linux.activationPackage.drvPath")
+
+# Platform coverage goes through the builder, which is how the installer
+# activates an account that is not committed in this repository.
+platform_drv() {
+  nix eval --impure --raw --expr \
+    "((builtins.getFlake \"$flake_source\").lib.mkHome {
+        system = \"$1\";
+        username = \"test\";
+        homeDirectory = \"$home_dir\";
+      }).activationPackage.drvPath"
+}
+darwin_arm_drv=$(platform_drv aarch64-darwin)
+linux_arm_drv=$(platform_drv aarch64-linux)
+linux_x86_drv=$(platform_drv x86_64-linux)
 printf '%s\n' "$activation_drv" >/tmp/activation.drv
 printf '%s\n' "$darwin_arm_drv" >/tmp/aarch64-darwin-activation.drv
 printf '%s\n' "$linux_arm_drv" >/tmp/aarch64-linux-activation.drv

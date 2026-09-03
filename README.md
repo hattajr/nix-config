@@ -27,6 +27,18 @@ Browsers on macOS are intentionally installed and updated manually. Home Manager
 
 Home Manager uses the active user's `$USER` and `$HOME`, so it works for arbitrary local account names; automation may override them with `NIX_CONFIG_USERNAME` and `NIX_CONFIG_HOME`. Run `bro auth` after activation to configure optional accounts and API keys.
 
+The flake itself stays pure: it never reads the environment during evaluation. `bro` and the installer resolve the identity in the shell and pass it to the `lib.mkHome` builder as an explicit argument, so any account can be activated without committing it. The owner's own machines are also committed as named configurations, which keeps `nix flake check`, evaluation caching, and the stock `home-manager switch --flake .` CLI working:
+
+```sh
+home-manager switch --flake ~/nix-config          # resolves hattajr@latte
+nix build ~/nix-config#homeConfigurations."hattajr@latte".activationPackage
+
+# any other account, without editing the flake
+nix build --impure --expr '((builtins.getFlake "path:'"$PWD"'").lib.mkHome {
+  system = "x86_64-linux"; username = "alice"; homeDirectory = "/home/alice";
+}).activationPackage'
+```
+
 ## `bro` commands
 
 ```text

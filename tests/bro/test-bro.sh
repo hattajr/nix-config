@@ -86,8 +86,12 @@ grep -Fq "nix flake metadata path:$checkout" "$log" || {
   echo 'bro test: apply used a Git flake that hides untracked configuration' >&2
   exit 1
 }
-grep -Fq "path:$checkout#homeConfigurations.x86_64-linux.activationPackage" "$log" || {
+grep -Fq "(builtins.getFlake \"path:$checkout\").lib.mkHome" "$log" || {
   echo 'bro test: activation build did not include the complete working tree' >&2
+  exit 1
+}
+grep -Fq 'username = "apply-user"' "$log" || {
+  echo 'bro test: activation build did not pass the active identity explicitly' >&2
   exit 1
 }
 grep -Eq '^tmux source-file .*/\.config/tmux/tmux\.conf$' "$log" || {

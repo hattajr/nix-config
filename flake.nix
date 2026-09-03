@@ -11,19 +11,42 @@
 
   };
 
-  outputs = inputs:
+  outputs = { self, ... }@inputs:
     let
-      platforms = import ./platforms;
-      mkHome = platform: import ./lib/mkHome.nix ({ inherit inputs; } // platform);
+      mkHome = import ./lib/mkHome.nix inputs;
     in
     {
+      # The installer activates accounts that are not committed here. Exposing
+      # the builder rather than reading $USER during evaluation keeps every
+      # flake output pure, so `nix flake check` and evaluation caching work.
+      lib = { inherit mkHome; };
+
       homeConfigurations = {
-        multipass-test = import ./lib/mkHome.nix {
-          inherit inputs;
+        "hattajr@latte" = mkHome {
+          system = "x86_64-linux";
+          username = "hattajr";
+          homeDirectory = "/home/hattajr";
+        };
+
+        "hattajr@mbp" = mkHome {
+          system = "aarch64-darwin";
+          username = "hattajr";
+          homeDirectory = "/Users/hattajr";
+        };
+
+        multipass-test = mkHome {
           system = "x86_64-linux";
           username = "test";
           homeDirectory = "/home/test";
         };
-      } // builtins.mapAttrs (_: platform: mkHome platform) platforms;
+      };
+
+      checks = {
+        x86_64-linux.activation =
+          self.homeConfigurations."hattajr@latte".activationPackage;
+
+        aarch64-darwin.activation =
+          self.homeConfigurations."hattajr@mbp".activationPackage;
+      };
     };
 }
