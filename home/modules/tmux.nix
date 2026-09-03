@@ -106,6 +106,9 @@ in
       # Match tmux's bracketed-paste behavior for terminal TUIs.
       bind ] paste-buffer -p
       bind -n MouseDown2Pane select-pane -t = \; if -F "#{||:#{pane_in_mode},#{mouse_any_flag}}" { send-keys -M } { paste-buffer -p }
+      # Keep active-pane highlighting visible when a pane touches the terminal edge.
+      set -g pane-border-status top
+      set -g pane-border-format ' #{pane_index} · #{pane_title} '
       set -g pane-active-border-style 'fg=#50fa7b,bold'
       set -g pane-border-style 'fg=#44475a'
     '';
