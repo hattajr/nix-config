@@ -39,6 +39,7 @@ in
       n = "nvim";
       dbui = "nvim -c 'Lazy load vim-dadbod-ui' -c DBUI";
       lzd = "lazydocker";
+      t = "tmux";
     } // lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
       pbcopy = "xclip -selection clipboard";
     };
@@ -46,37 +47,25 @@ in
     initContent = ''
       PROMPT='%{$fg[green]%}%n@%m%{$reset_color%} %(?:%{$fg[cyan]%}%1{➜%} :%{$fg[red]%}%1{➜%} ) %{$reset_color%}%~ $(git_prompt_info) '
 
-      # tmux helper; tmux itself is configured by the dedicated tmux module.
-      t() {
-        case "$1" in
-          s)
-            local name="$2"
-            if [ -z "$name" ]; then echo "usage: t s <slug>" >&2; return 1; fi
-            if [ -n "$TMUX" ]; then
-              tmux has-session -t "$name" 2>/dev/null || tmux new-session -d -s "$name"
-              tmux switch-client -t "$name"
-            else
-              tmux new-session -A -s "$name"
-            fi
-            ;;
-          a)
-            local name="$2"
-            if [ -z "$name" ]; then echo "usage: t a <slug>" >&2; return 1; fi
-            if [ -n "$TMUX" ]; then
-              tmux switch-client -t "$name"
-            else
-              tmux attach-session -t "$name"
-            fi
-            ;;
-          ls) tmux ls ;;
-          kda)
-            tmux kill-server 2>/dev/null && echo "killed all tmux sessions" || echo "no tmux server running"
-            ;;
-          *)
-            echo "usage: t {s <slug>|a <slug>|ls|kda}" >&2
-            return 1
-            ;;
-        esac
+      # Bare `tmux` opens or reattaches a session named after the current
+      # directory, so each project keeps one stable session. Any argument falls
+      # through to the real binary untouched.
+      tmux() {
+        if [ "$#" -gt 0 ]; then
+          command tmux "$@"
+          return
+        fi
+        local name="''${PWD##*/}"
+        # tmux treats "." and ":" as session/window/pane separators.
+        name="''${name//[.:]/_}"
+        [ -z "$name" ] && name="root"
+        if [ -n "$TMUX" ]; then
+          command tmux has-session -t "=$name" 2>/dev/null \
+            || command tmux new-session -d -s "$name" -c "$PWD"
+          command tmux switch-client -t "=$name"
+        else
+          command tmux new-session -A -s "$name" -c "$PWD"
+        fi
       }
 
       # Serve a directory over HTTP on the LAN using the Nix-provided uv.
