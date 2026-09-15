@@ -35,7 +35,7 @@ bro
 ```text
   1) Apply        activate this checkout
   2) Sync         fast-forward from upstream, then apply
-  3) Update       change pinned Nixpkgs or Pi versions
+  3) Update       change pinned versions or update Pi extensions
   4) Accounts     configure logins and API keys
   5) Health       check shell, accounts, and PATH
   6) Clean up     quarantine binaries shadowing Nix
@@ -48,9 +48,16 @@ that needs them. A step that fails returns to the menu rather than ending the
 session.
 
 `Sync` makes a machine match the versions committed here. `Update` is the
-intentional version-change workflow: it syncs first, asks which pins may change,
-shows an old-to-new summary, then asks before applying, committing, and pushing.
-Other machines receive the result with `Sync`.
+intentional version-change workflow: it syncs first, asks what may change, shows
+an old-to-new summary, then asks before applying, committing, and pushing. Other
+machines receive the result with `Sync`.
+
+`Update` offers Nixpkgs, Pi, Pi extensions, or everything. Nixpkgs and Pi are
+pins in tracked files, so they go through that review-and-commit flow. Pi
+extensions are the npm packages listed in `config/pi/agent/settings.json`, which
+Pi installs into its own writable state; choosing them runs `pi update
+--extensions` on this machine only and changes nothing in the repository, so
+each machine updates them itself.
 
 ### How ownership works
 

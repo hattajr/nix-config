@@ -210,4 +210,33 @@ rm "$auth_home/.local/bin/proton-pass-session"
 run_menu "$auth_home" '4\n7\n' >/dev/null
 grep -q '^setup ' "$log" || { echo 'bro test: Accounts fallback did not run setup' >&2; exit 1; }
 
-echo 'bro test: PASSED (menu-only entry, apply identity, DNS retry, sync push boundary, accounts wrapper)'
+# --- Update: Pi extensions --------------------------------------------------
+
+# Extensions are Pi's own npm packages, so choosing them must reach Pi and must
+# not touch the pinned files or their review, apply, and commit flow.
+extensions_home="$work/extensions-home"
+mkdir -p "$extensions_home/.local/bin"
+record_checkout "$extensions_home"
+command cat >"$extensions_home/.local/bin/pi" <<'EOF'
+#!/bin/sh
+printf 'pi %s (skip=%s)\n' "$*" "${PI_SKIP_PROTON_PASS:-}" >>"$MOCK_LOG"
+EOF
+chmod +x "$extensions_home/.local/bin/pi"
+
+: >"$log"
+run_menu "$extensions_home" '3\n3\n7\n' env MOCK_GIT_MODE=sync MOCK_GIT_AHEAD=0 >/dev/null
+grep -Fq 'pi update --extensions (skip=1)' "$log" || {
+  echo 'bro test: Update did not offer a working Pi extension update' >&2; exit 1; }
+! grep -Eq '^git .* (add|commit)($| )' "$log" || {
+  echo 'bro test: updating Pi extensions touched the pinned files' >&2; exit 1; }
+! grep -Fq 'nix flake update' "$log" || {
+  echo 'bro test: updating Pi extensions also moved the nixpkgs pin' >&2; exit 1; }
+
+# Without Pi installed the step explains itself rather than failing silently.
+rm "$extensions_home/.local/bin/pi"
+: >"$log"
+output=$(run_menu "$extensions_home" '3\n3\n7\n' env MOCK_GIT_MODE=sync MOCK_GIT_AHEAD=0 2>&1)
+grep -Fq 'Pi is not installed for this account yet' <<<"$output" || {
+  echo 'bro test: a missing Pi did not explain the extension update failure' >&2; exit 1; }
+
+echo 'bro test: PASSED (menu-only entry, apply identity, DNS retry, sync push boundary, accounts wrapper, Pi extensions)'

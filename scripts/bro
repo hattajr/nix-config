@@ -35,7 +35,7 @@ main() {
     choose "nix-config  ($target)" \
       $'Apply\tactivate this checkout' \
       $'Sync\tfast-forward from upstream, then apply' \
-      $'Update\tchange pinned Nixpkgs or Pi versions' \
+      $'Update\tchange pinned versions or update Pi extensions' \
       $'Accounts\tconfigure logins and API keys' \
       $'Health\tcheck shell, accounts, and PATH' \
       $'Clean up\tquarantine binaries shadowing Nix' \

@@ -5,6 +5,7 @@
 readonly SHADOW_SCANNER="$HOME/.local/share/nix-config/shadow-scan"
 readonly ACCOUNT_SETUP="$HOME/.local/bin/nix-config-setup"
 readonly PROTON_PASS_SESSION="$HOME/.local/bin/proton-pass-session"
+readonly PI_WRAPPER="$HOME/.local/bin/pi"
 
 # Sync and Update rewrite tracked files, so both refuse to run over uncommitted
 # work. Naming that work is the difference between a dead end and a next step.
@@ -81,24 +82,24 @@ print_update_summary() {
   fi
 }
 
-update() {
-  local repo=$1 target=$2 update_nixpkgs=no update_pi=no
-  require_clean_tree "$repo" Update || return 1
+# Pi's extensions are npm packages that Pi installs into its own writable
+# state, so they are updated through Pi rather than pinned in this repository.
+# Skip the Proton Pass injection: extension updates reach npm, not a model
+# provider, and must not fail on a locked keyring.
+update_pi_extensions() {
+  [ -x "$PI_WRAPPER" ] || {
+    warn 'Pi is not installed for this account yet; apply the configuration first'
+    return 1
+  }
+  log 'updating Pi extensions'
+  PI_SKIP_PROTON_PASS=1 "$PI_WRAPPER" update --extensions
+}
 
-  # Start from the shared configuration before calculating new upstream pins.
-  sync "$repo" "$target"
-
-  choose 'Which pins should change?' \
-    $'Nixpkgs\tnormal Nix-managed apps' \
-    $'Pi\tthe custom Nix package' \
-    $'Both\tNixpkgs and Pi' \
-    $'Cancel\tleave every pin as it is' || return 0
-  case "$CHOICE_INDEX" in
-    1) update_nixpkgs=yes ;;
-    2) update_pi=yes ;;
-    3) update_nixpkgs=yes; update_pi=yes ;;
-    4) log 'update cancelled'; return 0 ;;
-  esac
+# The pins live in tracked files and go through review, apply, and commit. Pi's
+# extensions are runtime state, so they are updated separately and afterwards,
+# against whichever Pi this machine ends up running.
+update_pins() {
+  local repo=$1 target=$2 update_nixpkgs=$3 update_pi=$4
 
   if [ "$update_nixpkgs" = yes ]; then
     log 'updating the nixpkgs pin'
@@ -134,6 +135,35 @@ update() {
   run_git -C "$repo" commit -m 'Update managed package pins'
   if confirm 'Push the commit so other machines can sync it?' no; then
     run_git -C "$repo" push
+  fi
+}
+
+update() {
+  local repo=$1 target=$2 update_nixpkgs=no update_pi=no update_extensions=no
+  require_clean_tree "$repo" Update || return 1
+
+  # Start from the shared configuration before calculating new upstream pins.
+  sync "$repo" "$target"
+
+  choose 'What should be updated?' \
+    $'Nixpkgs\tnormal Nix-managed apps' \
+    $'Pi\tthe custom Nix package' \
+    $'Extensions\tPi\'s own npm packages, not a repository pin' \
+    $'Everything\tNixpkgs, Pi, and Pi extensions' \
+    $'Cancel\tleave every version as it is' || return 0
+  case "$CHOICE_INDEX" in
+    1) update_nixpkgs=yes ;;
+    2) update_pi=yes ;;
+    3) update_extensions=yes ;;
+    4) update_nixpkgs=yes; update_pi=yes; update_extensions=yes ;;
+    5) log 'update cancelled'; return 0 ;;
+  esac
+
+  if [ "$update_nixpkgs" = yes ] || [ "$update_pi" = yes ]; then
+    update_pins "$repo" "$target" "$update_nixpkgs" "$update_pi" || return 1
+  fi
+  if [ "$update_extensions" = yes ]; then
+    update_pi_extensions
   fi
 }
 
