@@ -39,7 +39,6 @@ in
       n = "nvim";
       dbui = "nvim -c 'Lazy load vim-dadbod-ui' -c DBUI";
       lzd = "lazydocker";
-      t = "tmux";
     } // lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
       pbcopy = "xclip -selection clipboard";
     };
@@ -47,24 +46,28 @@ in
     initContent = ''
       PROMPT='%{$fg[green]%}%n@%m%{$reset_color%} %(?:%{$fg[cyan]%}%1{➜%} :%{$fg[red]%}%1{➜%} ) %{$reset_color%}%~ $(git_prompt_info) '
 
-      # Bare `tmux` opens or reattaches a session named after the current
-      # directory, so each project keeps one stable session. Any argument falls
-      # through to the real binary untouched.
-      tmux() {
-        if [ "$#" -gt 0 ]; then
-          command tmux "$@"
-          return
-        fi
+      # `t` opens or reattaches a session named after the current directory,
+      # so each project keeps one stable session. `tmux` itself is untouched.
+      t() {
         local name="''${PWD##*/}"
         # tmux treats "." and ":" as session/window/pane separators.
         name="''${name//[.:]/_}"
         [ -z "$name" ] && name="root"
-        if [ -n "$TMUX" ]; then
-          command tmux has-session -t "=$name" 2>/dev/null \
-            || command tmux new-session -d -s "$name" -c "$PWD"
-          command tmux switch-client -t "=$name"
+
+        # "=" forces an exact match; a bare name also matches by prefix.
+        if tmux has-session -t "=$name" 2>/dev/null; then
+          if [ -n "$TMUX" ]; then
+            tmux switch-client -t "=$name"
+          else
+            tmux attach-session -t "=$name"
+          fi
         else
-          command tmux new-session -A -s "$name" -c "$PWD"
+          if [ -n "$TMUX" ]; then
+            tmux new-session -d -s "$name" -c "$PWD"
+            tmux switch-client -t "=$name"
+          else
+            tmux new-session -s "$name" -c "$PWD"
+          fi
         fi
       }
 
