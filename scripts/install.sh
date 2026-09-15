@@ -6,7 +6,7 @@ set -eu
 
 REPOSITORY_URL='https://github.com/hattajr/nix-config.git'
 REPOSITORY_SSH='git@github.com:hattajr/nix-config.git'
-DESTINATION="${HOME}/src/nix-config"
+DESTINATION="${HOME}/nix-config"
 NIX_INSTALLER_URL='https://nixos.org/nix/install'
 # Reviewed 2026-09-02. Updating the installer is an explicit checksum change.
 NIX_INSTALLER_SHA256='9adda97297d9e8ab360df95c729eabff4f4f93d6db091953c3a68f29e3fb130c'

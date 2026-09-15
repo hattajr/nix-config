@@ -18,7 +18,7 @@ curl -fsSL https://raw.githubusercontent.com/hattajr/nix-config/main/scripts/ins
 ```
 
 It shows what it is about to do, then asks before each step: installing Nix if
-it is missing, cloning to `~/src/nix-config`, activating, configuring accounts,
+it is missing, cloning to `~/nix-config`, activating, configuring accounts,
 and entering the managed shell. Declining any step leaves the machine unchanged.
 The platform is detected from the machine and the destination is fixed, so there
 is nothing to pass and nothing to set.
