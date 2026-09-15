@@ -39,6 +39,8 @@
   };
 
   # programs.ssh manages client configuration but does not consistently add
-  # the client executable to home.packages across Home Manager versions.
-  home.packages = [ pkgs.openssh ];
+  # the client executable to home.packages across Home Manager versions. The
+  # GSSAPI build is the one that recognizes the GSSAPIAuthentication keyword
+  # Ubuntu sets in /etc/ssh/ssh_config, so ssh stops warning on every call.
+  home.packages = [ pkgs.openssh_gssapi ];
 }

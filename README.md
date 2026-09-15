@@ -65,7 +65,7 @@ managed paths remain writable.
 
 ### Manual macOS ownership
 
-Browsers on macOS are intentionally installed and updated manually. Home Manager does not install Chrome or take ownership of browser profiles. Tailscale and Proton split DNS are external host state on every platform: install Tailscale through its signed system package repository, then enable and maintain it through the host tools. The managed `devtunnel` command defaults to the `mbp` SSH hostname and only uses ordinary SSH forwarding.
+Browsers on macOS are intentionally installed and updated manually. Home Manager does not install Chrome or take ownership of browser profiles. Tailscale and Proton split DNS are external host state on every platform: install Tailscale through its signed system package repository, then enable and maintain it through the host tools. The managed `devtunnel` command defaults to the `mbp` SSH hostname and only uses ordinary SSH forwarding. The managed SSH client is the GSSAPI build, because hosts such as Ubuntu set `GSSAPIAuthentication` in `/etc/ssh/ssh_config` and a client built without that keyword warns on every connection.
 
 ### Identity
 
