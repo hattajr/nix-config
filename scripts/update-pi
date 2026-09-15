@@ -3,9 +3,9 @@
 set -euo pipefail
 
 repo=${1:?usage: update-pi <nix-config-repository>}
+repo=$(CDPATH='' cd -- "$repo" && pwd)
 pi_nix="$repo/home/modules/pi.nix"
-patch_package="$repo/scripts/patch-pi-package.sh"
-for command in curl jq nix tar python3; do
+for command in curl jq nix nix-store tar python3; do
   command -v "$command" >/dev/null 2>&1 || {
     printf 'bro: ERROR: Pi update requires %s\n' "$command" >&2
     exit 1
@@ -33,90 +33,148 @@ if [ "$version" = "$current_version" ]; then
 fi
 
 work=$(mktemp -d "${TMPDIR:-/tmp}/bro-update-pi.XXXXXX")
-trap 'rm -rf "$work"' EXIT
+original_pi_nix="$work/pi.nix.original"
+cp "$pi_nix" "$original_pi_nix"
+restore_pi_nix=no
+cleanup() {
+  status=$?
+  # A half-written pin evaluates but builds the wrong closure, so an aborted
+  # update must leave the module exactly as it was found.
+  if [ "$restore_pi_nix" = yes ] && [ "$status" -ne 0 ]; then
+    cp "$original_pi_nix" "$pi_nix"
+    printf 'bro: restored %s after a failed Pi update\n' "$pi_nix" >&2
+  fi
+  rm -rf "$work"
+}
+trap cleanup EXIT
+
 curl --fail --silent --show-error --location "$tarball" --output "$work/pi.tgz"
 tar -xzf "$work/pi.tgz" -C "$work"
-package="$work/package"
+shrinkwrap="$work/package/npm-shrinkwrap.json"
 
-# Pi's published shrinkwrap currently omits integrity fields for these sibling
-# packages. The Nix module adds them during postPatch, so obtain the exact
-# published values and use the same patched lockfile to calculate npmDepsHash.
-packages=(pi-agent-core pi-ai pi-client pi-protocol pi-telemetry pi-tui)
-declare -A integrities
+# Pi's published shrinkwrap omits integrity fields for its sibling
+# @earendil-works packages, and upstream adds and drops siblings between
+# releases. Discover the set from the lockfile rather than pinning a list, so
+# a reshuffle upstream does not need a matching edit here.
+mapfile -t packages < <(jq -r '
+  .packages
+  | to_entries[]
+  | select(.key | startswith("node_modules/@earendil-works/"))
+  | select((.value.resolved // "") | startswith("https://"))
+  | select(.value.integrity | not)
+  | .key | sub("^node_modules/@earendil-works/"; "")
+' "$shrinkwrap")
+
+[ "${#packages[@]}" -gt 0 ] || {
+  printf 'bro: ERROR: Pi shrinkwrap lists no sibling package missing integrity; updater needs adjustment\n' >&2
+  exit 1
+}
+
+siblings=()
 for package_name in "${packages[@]}"; do
   dependency_version=$(jq -r --arg name "@earendil-works/$package_name" \
-    '.packages["node_modules/" + $name].version // empty' "$package/npm-shrinkwrap.json")
+    '.packages["node_modules/" + $name].version // empty' "$shrinkwrap")
   [ -n "$dependency_version" ] || {
     printf 'bro: ERROR: Pi shrinkwrap has no %s dependency version; updater needs adjustment\n' "$package_name" >&2
     exit 1
   }
-  integrities[$package_name]=$(curl --fail --silent --show-error \
+  integrity=$(curl --fail --silent --show-error \
     "https://registry.npmjs.org/@earendil-works%2F${package_name}/${dependency_version}" | jq -r '.dist.integrity')
-  [ "${integrities[$package_name]}" != null ] || {
+  [ "$integrity" != null ] || {
     printf 'bro: ERROR: npm did not provide integrity for %s\n' "$package_name" >&2
     exit 1
   }
+  siblings+=("$package_name=$dependency_version=$integrity")
 done
 
-# Mirror pi.nix's structural postPatch before deriving the fixed-output
-# dependency hash. This is portable across GNU/Linux and macOS.
-"$patch_package" "$package/package.json"
-integrity_arguments=()
-for package_name in "${packages[@]}"; do
-  integrity_arguments+=("$package_name=${integrities[$package_name]}")
-done
-python3 - "$package/npm-shrinkwrap.json" "${integrity_arguments[@]}" <<'PY'
-import json
-import sys
+printf 'bro: Pi %s sibling packages: %s\n' "$version" "${packages[*]}"
 
-path, *entries = sys.argv[1:]
-lock = json.load(open(path, encoding="utf-8"))
-for entry in entries:
-    name, integrity = entry.split("=", 1)
-    lock["packages"][f"node_modules/@earendil-works/{name}"]["integrity"] = integrity
-with open(path, "w", encoding="utf-8") as output:
-    json.dump(lock, output, indent=2)
-    output.write("\n")
-PY
-npm_deps_hash=$(nix run nixpkgs#prefetch-npm-deps -- "$package/npm-shrinkwrap.json")
 src_hash=$(nix store prefetch-file --json "$tarball" | jq -r '.hash')
 
-PI_VERSION="$version" PI_TARBALL="$tarball" PI_SRC_HASH="$src_hash" PI_NPM_DEPS_HASH="$npm_deps_hash" \
-PI_AGENT_CORE_INTEGRITY="${integrities[pi-agent-core]}" PI_AI_INTEGRITY="${integrities[pi-ai]}" \
-PI_CLIENT_INTEGRITY="${integrities[pi-client]}" PI_PROTOCOL_INTEGRITY="${integrities[pi-protocol]}" \
-PI_TELEMETRY_INTEGRITY="${integrities[pi-telemetry]}" PI_TUI_INTEGRITY="${integrities[pi-tui]}" \
-python3 - "$pi_nix" <<'PY'
+write_pi_nix() {
+  PI_VERSION="$version" PI_TARBALL="$tarball" PI_SRC_HASH="$src_hash" PI_NPM_DEPS_HASH="$1" \
+  python3 - "$pi_nix" "${siblings[@]}" <<'PY'
 import os
 import re
 import sys
 
-path = sys.argv[1]
+path, *entries = sys.argv[1:]
 text = open(path, encoding="utf-8").read()
-version = os.environ["PI_VERSION"]
 replacements = {
-    r'(version = ")[^"]+(";)': rf'\g<1>{version}\g<2>',
+    r'(version = ")[^"]+(";)': os.environ["PI_VERSION"],
     r'(url = ")https://registry\.npmjs\.org/@earendil-works/pi-coding-agent/-/pi-coding-agent-[^"]+(";)':
-        rf'\g<1>{os.environ["PI_TARBALL"]}\g<2>',
-    r'(hash = ")sha256-[^"]+(";)': rf'\g<1>{os.environ["PI_SRC_HASH"]}\g<2>',
-    r'(npmDepsHash = ")[^"]+(";)': rf'\g<1>{os.environ["PI_NPM_DEPS_HASH"]}\g<2>',
+        os.environ["PI_TARBALL"],
+    r'(hash = ")sha256-[^"]+(";)': os.environ["PI_SRC_HASH"],
+    r'(npmDepsHash = ")[^"]+(";)': os.environ["PI_NPM_DEPS_HASH"],
 }
-for pattern, replacement in replacements.items():
-    text, count = re.subn(pattern, replacement, text, count=1)
+for pattern, value in replacements.items():
+    text, count = re.subn(pattern, lambda match: match.group(1) + value + match.group(2), text, count=1)
     if count != 1:
         raise SystemExit(f"could not update Pi field matching {pattern}")
-for name, environment in {
-    "pi-agent-core": "PI_AGENT_CORE_INTEGRITY",
-    "pi-ai": "PI_AI_INTEGRITY",
-    "pi-client": "PI_CLIENT_INTEGRITY",
-    "pi-protocol": "PI_PROTOCOL_INTEGRITY",
-    "pi-telemetry": "PI_TELEMETRY_INTEGRITY",
-    "pi-tui": "PI_TUI_INTEGRITY",
-}.items():
-    pattern = rf'({re.escape(name)}-)[0-9][^/]*(\.tgz/ a\\\n\s*"integrity": ")[^"]+("[,])'
-    text, count = re.subn(pattern, rf'\g<1>{version}\g<2>{os.environ[environment]}\g<3>', text, count=1)
-    if count != 1:
-        raise SystemExit(f"could not update Pi integrity for {name}; updater needs adjustment")
+
+# Regenerate the whole block: the sibling set itself is upstream data. Lines are
+# written as Nix renders them inside the '' string, then indented to match.
+append = "a" + "\\"
+lines = []
+for entry in entries:
+    name, dependency_version, integrity = entry.split("=", 2)
+    lines.append(f"      sed -i '/{name}-{dependency_version}.tgz/ {append}")
+    lines.append(f"""          "integrity": "{integrity}",' npm-shrinkwrap.json""")
+block = "\n".join(lines)
+
+begin = "# BEGIN sibling integrity fields generated by scripts/update-pi"
+end = "# END sibling integrity fields generated by scripts/update-pi"
+marked = re.compile(
+    rf"(^[ \t]*{re.escape(begin)}\n).*?(^[ \t]*{re.escape(end)}$)",
+    re.S | re.M,
+)
+text, count = marked.subn(lambda match: match.group(1) + block + "\n" + match.group(2), text, count=1)
+if count != 1:
+    raise SystemExit("could not find the generated sibling integrity block in pi.nix")
 open(path, "w", encoding="utf-8").write(text)
 PY
+}
+
+npm_deps_derivation() {
+  local system activation
+  system=$(nix eval --raw --impure --expr 'builtins.currentSystem')
+  activation=$(nix eval --raw --impure --expr "((builtins.getFlake \"path:$repo\").lib.mkHome {
+      system = \"$system\";
+      username = \"validate\";
+      homeDirectory = \"/home/validate\";
+    }).activationPackage.drvPath")
+  nix-store --query --requisites "$activation" \
+    | grep -E -- '-pi-coding-agent-.*-npm-deps\.drv$' \
+    | head -1
+}
+
+# npmDepsHash covers the lockfile byte for byte and the fetcher's own cache
+# layout, so it cannot be reproduced by patching a copy of the lockfile here.
+# Pin a placeholder, then let Nix report the hash its own build produced.
+write_pi_nix 'sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA='
+restore_pi_nix=yes
+deps_derivation=$(npm_deps_derivation)
+[ -n "$deps_derivation" ] || {
+  printf 'bro: ERROR: could not locate Pi npm dependency derivation; updater needs adjustment\n' >&2
+  exit 1
+}
+if build_log=$(nix build --no-link "$deps_derivation^out" 2>&1); then
+  printf 'bro: ERROR: Pi npm dependencies built with the placeholder hash; updater needs adjustment\n' >&2
+  exit 1
+fi
+npm_deps_hash=$(grep -oE 'got:[[:space:]]+sha256-[A-Za-z0-9+/=]+' <<<"$build_log" \
+  | head -1 | grep -oE 'sha256-[A-Za-z0-9+/=]+')
+[ -n "$npm_deps_hash" ] || {
+  printf 'bro: ERROR: Nix did not report a Pi npm dependency hash\n%s\n' "$build_log" >&2
+  exit 1
+}
+
+write_pi_nix "$npm_deps_hash"
+deps_derivation=$(npm_deps_derivation)
+nix build --no-link "$deps_derivation^out" >/dev/null || {
+  printf 'bro: ERROR: Pi npm dependencies still do not match the recorded hash\n' >&2
+  exit 1
+}
+restore_pi_nix=no
 
 printf 'bro: updated Pi pin from %s to %s\n' "$current_version" "$version"
