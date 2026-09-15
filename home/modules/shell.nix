@@ -107,6 +107,8 @@
     "$HOME/bin"
     "$HOME/.config/bin"
     "$HOME/.local/bin"
+    # zsh never reads ~/.profile, where the Nix installer puts its hook.
+    "$HOME/.nix-profile/bin"
   ];
 
   home.sessionVariables = {
