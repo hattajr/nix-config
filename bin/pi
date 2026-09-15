@@ -45,17 +45,17 @@ if [ -f "$pass_env" ]; then
       exec proton-pass-session "$self" "$@"
     fi
     printf 'error: the Linux kernel keyring is unavailable\n' >&2
-    printf 'hint: run bro auth to repair the Proton Pass session\n' >&2
+    printf 'hint: run bro and choose Accounts to repair the Proton Pass session\n' >&2
     exit 1
   fi
   if ! command -v pass-cli >/dev/null 2>&1; then
     printf 'error: %s exists but pass-cli is unavailable\n' "$pass_env" >&2
-    printf 'hint: run bro auth to repair account setup\n' >&2
+    printf 'hint: run bro and choose Accounts to repair account setup\n' >&2
     exit 127
   fi
   if ! command -v proton-pass-pi-env >/dev/null 2>&1; then
     printf 'error: proton-pass-pi-env is unavailable\n' >&2
-    printf 'hint: run bro auth to repair account setup\n' >&2
+    printf 'hint: run bro and choose Accounts to repair account setup\n' >&2
     exit 127
   fi
   if pass_exports=$(proton-pass-pi-env "$pass_env"); then

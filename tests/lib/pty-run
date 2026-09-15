@@ -1,0 +1,50 @@
+#!/usr/bin/env python3
+"""Run a command on a pseudo-terminal, feeding it answers from stdin.
+
+Every entry point is interactive by design, so the suite drives real prompts
+instead of setting environment variables. Output is copied to stdout and the
+command's exit status is propagated.
+"""
+
+import errno
+import os
+import pty
+import sys
+
+
+def main() -> int:
+    if len(sys.argv) < 2:
+        print("usage: pty-run COMMAND [ARG...]", file=sys.stderr)
+        return 2
+
+    answers = sys.stdin.buffer.read()
+    pid, controller = pty.fork()
+    if pid == 0:
+        os.execvp(sys.argv[1], sys.argv[1:])
+
+    if answers:
+        os.write(controller, answers)
+
+    output = bytearray()
+    while True:
+        try:
+            chunk = os.read(controller, 4096)
+        except OSError as error:
+            # A pty reports EIO rather than EOF once the child closes it.
+            if error.errno == errno.EIO:
+                break
+            raise
+        if not chunk:
+            break
+        output.extend(chunk)
+
+    _, status = os.waitpid(pid, 0)
+    sys.stdout.buffer.write(bytes(output))
+    sys.stdout.buffer.flush()
+    if os.WIFEXITED(status):
+        return os.WEXITSTATUS(status)
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

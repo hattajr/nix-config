@@ -144,7 +144,7 @@ missing_output=$(pi 2>&1)
 missing_status=$?
 set -e
 [ "$missing_status" -eq 127 ] || { printf '%s\n' 'pi wrapper test: missing pass-cli did not fail' >&2; exit 1; }
-grep -Fq 'run bro auth' <<<"$missing_output" || {
+grep -Fq 'choose Accounts' <<<"$missing_output" || {
   printf '%s\n' 'pi wrapper test: missing pass-cli did not direct setup repair' >&2
   exit 1
 }

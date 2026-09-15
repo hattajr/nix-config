@@ -5,8 +5,8 @@ set -euo pipefail
 repo_root=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)
 export NIX_CONFIG="${NIX_CONFIG:+$NIX_CONFIG$'\n'}experimental-features = nix-command flakes"
 
-# Mirrors how bro and the installer activate an account that is not committed
-# in this repository.
+# Mirrors how the menu and the installer activate an account that is not
+# committed in this repository.
 eval_home() {
   nix eval --impure --raw --expr \
     "((builtins.getFlake \"path:$repo_root\").lib.mkHome {
@@ -19,8 +19,9 @@ eval_home() {
 [ "$(eval_home username)" = alice ] || { echo 'identity test: explicit username was ignored' >&2; exit 1; }
 [ "$(eval_home homeDirectory)" = /home/alice ] || { echo 'identity test: explicit home directory was ignored' >&2; exit 1; }
 
-# A committed configuration must never absorb the ambient account.
-committed=$(NIX_CONFIG_USERNAME=alice NIX_CONFIG_HOME=/home/alice USER=alice \
+# A committed configuration must never absorb the ambient account. Identity is
+# read from the account itself, so USER is what a committed output must ignore.
+committed=$(USER=alice \
   nix eval --raw "path:$repo_root#homeConfigurations.\"x86_64-linux\".config.home.username")
 [ "$committed" = hattajr ] || {
   echo "identity test: committed configuration was altered by the environment ($committed)" >&2

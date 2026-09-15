@@ -8,6 +8,7 @@
     ./modules/packages.nix
     ./modules/pi.nix
     ./modules/proton-pass.nix
+    ./modules/shadowed-binaries.nix
     ./modules/shell.nix
     ./modules/ssh.nix
     ./modules/tmux.nix

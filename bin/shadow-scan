@@ -1,0 +1,221 @@
+#!/usr/bin/env bash
+# Reports unmanaged binaries that outrank the Nix profile on PATH and
+# quarantines them on request. It is deliberately installed outside PATH: the
+# bro menu and the activation warning are its only entry points, and removing a
+# binary stays an explicit user action rather than an activation side effect.
+set -euo pipefail
+
+profile_bin=${NIX_CONFIG_PROFILE_DIR:-$HOME/.nix-profile}/bin
+state_home=${XDG_STATE_HOME:-$HOME/.local/state}
+quarantine_root=$state_home/home-manager/shadowed
+quarantine_dir=''
+store_dir=${NIX_STORE_DIR:-/nix/store}
+
+# The shell module exports both lists so the scan order matches sessionPath.
+default_dirs=$HOME/bin:$HOME/.config/bin:$HOME/.local/bin
+IFS=: read -r -a search_dirs <<<"${NIX_CONFIG_SHADOW_DIRS:-$default_dirs}"
+IFS=: read -r -a allowed_shadows <<<"${NIX_CONFIG_SHADOW_ALLOW:-claude}"
+
+shadow_names=()
+shadow_paths=()
+allowed_found=()
+CHOICE=''
+
+log() {
+  printf '  %s\n' "$1"
+}
+
+warn() {
+  printf '  ! %s\n' "$1" >&2
+}
+
+fail() {
+  printf 'shadow-scan: ERROR: %s\n' "$1" >&2
+  exit 1
+}
+
+usage() {
+  cat <<'EOF'
+Usage: shadow-scan [--check|--warn|--all]
+
+Backs the "Clean up" entry in the bro menu. Without options it lists unmanaged
+binaries that take precedence over the Nix profile and offers to quarantine
+each one. Quarantined files move under $XDG_STATE_HOME/home-manager/shadowed
+and are never deleted.
+
+--check  report findings without prompting; exits 1 when any are found
+--warn   print a one-line notice to stderr and always exit 0
+--all    quarantine every finding without prompting
+EOF
+}
+
+has_tty() {
+  [ -r /dev/tty ] && [ -w /dev/tty ]
+}
+
+is_managed() {
+  # Home Manager links its own wrappers into these directories. A symlink into
+  # the store is deliberate precedence, not a stale installation.
+  local resolved
+  resolved=$(readlink -f -- "$1" 2>/dev/null) || return 1
+  case "$resolved" in
+    "$store_dir"/*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+is_allowed() {
+  local name=$1 entry
+  for entry in "${allowed_shadows[@]}"; do
+    if [ "$entry" = "$name" ]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+scan() {
+  shadow_names=()
+  shadow_paths=()
+  allowed_found=()
+
+  [ -d "$profile_bin" ] || fail "no Nix profile binaries at $profile_bin"
+
+  local candidate name dir intruder
+  for candidate in "$profile_bin"/*; do
+    [ -x "$candidate" ] || continue
+    name=${candidate##*/}
+    for dir in "${search_dirs[@]}"; do
+      intruder=$dir/$name
+      [ -x "$intruder" ] || continue
+      if is_managed "$intruder"; then
+        continue
+      fi
+      if is_allowed "$name"; then
+        allowed_found+=("$name")
+        continue
+      fi
+      shadow_names+=("$name")
+      shadow_paths+=("$intruder")
+    done
+  done
+}
+
+display_path() {
+  printf '%s' "~${1#"$HOME"}"
+}
+
+report() {
+  local index name path stamp
+  printf '\n== Shadowed Nix binaries ==\n'
+  printf '\nThese unmanaged files take precedence over %s:\n\n' "$(display_path "$profile_bin")"
+  for index in "${!shadow_names[@]}"; do
+    name=${shadow_names[index]}
+    path=${shadow_paths[index]}
+    stamp=$(date -r "$path" '+%Y-%m-%d' 2>/dev/null || printf 'unknown')
+    printf '  %-14s %-34s installed %s\n' "$name" "$(display_path "$path")" "$stamp"
+  done
+  if [ ${#allowed_found[@]} -gt 0 ]; then
+    printf '\nDeliberate, left alone: %s\n' "${allowed_found[*]}"
+  fi
+  printf '\n'
+}
+
+quarantine() {
+  local source=$1 target
+  if [ -z "$quarantine_dir" ]; then
+    mkdir -p "$quarantine_root"
+    quarantine_dir=$(mktemp -d "$quarantine_root/shadow.XXXXXX")
+    log "Quarantining into $(display_path "$quarantine_dir")"
+  fi
+  target=$quarantine_dir/${source#"$HOME/"}
+  mkdir -p "$(dirname "$target")"
+  mv -- "$source" "$target"
+}
+
+ask_quarantine() {
+  local name=$1 path=$2 answer
+  while true; do
+    printf 'Quarantine %s (%s)? [y/N/a/q] ' "$name" "$(display_path "$path")" >/dev/tty
+    IFS= read -r answer </dev/tty || true
+    case "$answer" in
+      y|Y|yes|YES) CHOICE=yes; return 0 ;;
+      ''|n|N|no|NO) CHOICE=no; return 0 ;;
+      a|A|all|ALL) CHOICE=all; return 0 ;;
+      q|Q|quit|QUIT) CHOICE=quit; return 0 ;;
+      *) warn 'Please answer y, n, a (all remaining), or q (quit).' ;;
+    esac
+  done
+}
+
+quarantine_all() {
+  local index
+  for index in "${!shadow_names[@]}"; do
+    quarantine "${shadow_paths[index]}"
+    log "Quarantined ${shadow_names[index]}"
+  done
+}
+
+run_interactive() {
+  local index take_all=0
+  report
+  has_tty || {
+    warn 'No terminal available; rerun from a shell to quarantine interactively.'
+    return 0
+  }
+  for index in "${!shadow_names[@]}"; do
+    if [ "$take_all" = 0 ]; then
+      ask_quarantine "${shadow_names[index]}" "${shadow_paths[index]}"
+      case "$CHOICE" in
+        no) continue ;;
+        quit) break ;;
+        all) take_all=1 ;;
+      esac
+    fi
+    quarantine "${shadow_paths[index]}"
+    log "Quarantined ${shadow_names[index]}"
+  done
+}
+
+mode=interactive
+case "${1:-}" in
+  '') ;;
+  --check) mode=check ;;
+  --warn) mode=warn ;;
+  --all) mode=all ;;
+  -h|--help) usage; exit 0 ;;
+  *) usage >&2; exit 2 ;;
+esac
+
+scan
+
+if [ ${#shadow_names[@]} -eq 0 ]; then
+  case "$mode" in
+    warn) ;;
+    *) printf 'No unmanaged binaries shadow the Nix profile.\n' ;;
+  esac
+  exit 0
+fi
+
+case "$mode" in
+  # Activation calls this. It must stay quiet enough to read and must never
+  # fail a switch over binaries the user may have installed on purpose.
+  warn)
+    printf 'warning: %d unmanaged %s shadowing the Nix profile (%s).\n' \
+      "${#shadow_names[@]}" \
+      "$([ ${#shadow_names[@]} -eq 1 ] && printf 'binary is' || printf 'binaries are')" \
+      "${shadow_names[*]}" >&2
+    printf '         Run bro and choose Clean up to review them.\n' >&2
+    ;;
+  check)
+    report
+    exit 1
+    ;;
+  all)
+    report
+    quarantine_all
+    ;;
+  interactive)
+    run_interactive
+    ;;
+esac

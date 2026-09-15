@@ -99,7 +99,7 @@ keys can stay in Proton Pass: when `~/.config/proton-pass/pi.env` exists, the
 managed `pi` wrapper resolves its non-secret `pass://` references before
 starting Pi directly, preserving Pi's terminal descriptors while supplying the
 keys through its process environment.
-Run `bro auth` after activation to configure this flow.
+Run `bro` after activation and choose Accounts to configure this flow.
 
 If packages are missing:
 

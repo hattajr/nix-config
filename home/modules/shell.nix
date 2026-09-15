@@ -1,5 +1,10 @@
 { lib, pkgs, ... }:
 
+let
+  # Shared with the shadowed-binary checker so a report can never disagree
+  # with the PATH an interactive shell actually receives.
+  precedingPathDirs = import ../../lib/path-dirs.nix;
+in
 {
   programs.zsh = {
     enable = true;
@@ -103,13 +108,11 @@
     enableZshIntegration = true;
   };
 
-  home.sessionPath = [
-    "$HOME/bin"
-    "$HOME/.config/bin"
-    "$HOME/.local/bin"
-    # zsh never reads ~/.profile, where the Nix installer puts its hook.
-    "$HOME/.nix-profile/bin"
-  ];
+  # zsh never reads ~/.profile, where the Nix installer puts its hook, so the
+  # profile is appended here. It deliberately ranks below the directories that
+  # hold Home Manager's own wrappers; the bro menu reports unmanaged
+  # binaries that exploit that ordering to shadow a managed package.
+  home.sessionPath = precedingPathDirs ++ [ "$HOME/.nix-profile/bin" ];
 
   home.sessionVariables = {
     COLORTERM = "truecolor";

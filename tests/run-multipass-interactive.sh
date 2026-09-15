@@ -82,11 +82,18 @@ cat <<EOF
 
 test-interactive: current working tree staged in $instance at /home/ubuntu/nix-config-fixture.
 
-Inside the VM, run this interactive local-source installation:
+Inside the VM, prepare a fixture installer and run it. The installer takes no
+arguments and reads no configuration, so a local-source run patches its two
+constants on a copy:
 
   cd /home/ubuntu/nix-config-fixture
-  NIX_CONFIG_REPOSITORY_URL=file:///home/ubuntu/nix-config-fixture \\
-    ./scripts/install.sh /home/ubuntu/installed-nix-config
+  sed -e "s|^REPOSITORY_URL=.*|REPOSITORY_URL='file:///home/ubuntu/nix-config-fixture'|" \\
+      -e "s|^DESTINATION=.*|DESTINATION='/home/ubuntu/installed-nix-config'|" \\
+      scripts/install.sh >/tmp/install-fixture.sh
+  chmod +x /tmp/install-fixture.sh
+  /tmp/install-fixture.sh
+
+It will prompt for each step. Afterwards run \`bro\` for the menu.
 
 After host edits, run \`make test-interactive\` again to refresh the local fixture,
 then rerun the installer command above. The VM is persistent; delete it when finished with:

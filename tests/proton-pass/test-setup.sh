@@ -289,8 +289,8 @@ grep -Fq 'Moonshot: found and verified llm-moonshotai.' <<<"$guided_output" || {
   printf '%s\n' 'setup test: Moonshot was not auto-discovered' >&2
   exit 1
 }
-grep -Fq 'Rerun bro auth whenever you want to finish a skipped item.' <<<"$guided_output" || {
-  printf '%s\n' 'setup test: summary did not direct users to bro auth' >&2
+grep -Fq 'Run bro and choose Accounts whenever you want to finish a skipped item.' <<<"$guided_output" || {
+  printf '%s\n' 'setup test: summary did not direct users to the Accounts menu entry' >&2
   exit 1
 }
 grep -Fxq 'DEEPSEEK_API_KEY=pass://share-dev/item-deepseek/API%20Key' "$home/.config/proton-pass/pi.env" || exit 1

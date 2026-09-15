@@ -3,10 +3,10 @@
 Run the account wizard after Home Manager activation:
 
 ```text
-bro auth
+bro   # choose Accounts
 ```
 
-On Linux, `bro auth` automatically places the wizard in a valid kernel-keyring
+On Linux, the Accounts entry automatically places the wizard in a valid kernel-keyring
 session. The wizard handles Proton Pass login, discovery, validation, optional
 skips, and account logins without opening an editor or asking for environment
 variables, opaque IDs, or `pass://` syntax.
@@ -51,5 +51,5 @@ entries, the wizard offers to open Pi and directs the user through `/logout`;
 those local entries otherwise override Proton Pass.
 
 On Linux, `proton-pass-session` repairs revoked SSH keyring sessions. Kernel
-keys are cleared on reboot, so rerun `bro auth` when Proton Pass reports that it
+keys are cleared on reboot, so rerun Accounts when Proton Pass reports that it
 is logged out.

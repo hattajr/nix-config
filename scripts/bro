@@ -1,362 +1,61 @@
 #!/usr/bin/env bash
-# Everyday management commands for this Nix configuration checkout.
+# The single interactive front door. Every operation is reachable from the menu
+# and nothing is configured by typing a flag or an environment variable.
 set -euo pipefail
 
-readonly EXPECTED_ORIGIN=${NIX_CONFIG_REPOSITORY_URL:-https://github.com/hattajr/nix-config.git}
-readonly STATE_FILE="${XDG_STATE_HOME:-$HOME/.local/state}/bro/checkout"
+LIB_DIR=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")/lib" && pwd -P)
+# shellcheck source=lib/core.sh
+. "$LIB_DIR/core.sh"
+# shellcheck source=lib/nix.sh
+. "$LIB_DIR/nix.sh"
+# shellcheck source=lib/actions.sh
+. "$LIB_DIR/actions.sh"
 
-log() { printf 'bro: %s\n' "$*"; }
-fail() { printf 'bro: ERROR: %s\n' "$*" >&2; exit 1; }
-usage() {
-  cat <<'EOF'
-Usage: bro <health|apply|sync|update|auth> [--push|--verbose]
-
-  bro health        Check core shell and account setup; does not change versions.
-  bro apply         Build and activate this checkout; does not update Git.
-  bro sync           Fast-forward from upstream, then apply.
-  bro sync --push    As above, and explicitly push local commits after applying.
-  bro update         Interactively update pinned Nixpkgs and/or Pi versions.
-  bro update --verbose  Also show the complete generated Git diff.
-  bro auth           Interactively configure accounts and API keys.
-
-BRO_REPOSITORY overrides the installed checkout location.
-EOF
-}
-
-checkout() {
-  local candidate
-  if [ -n "${BRO_REPOSITORY:-}" ]; then candidate=$BRO_REPOSITORY
-  elif [ -r "$STATE_FILE" ]; then candidate=$(cat "$STATE_FILE")
-  else candidate=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
-  fi
-  [ -d "$candidate/.git" ] || fail "not a Git checkout: $candidate"
-  candidate=$(CDPATH='' cd -- "$candidate" && pwd -P)
-  local origin
-  origin=$(run_git -C "$candidate" remote get-url origin 2>/dev/null || true)
-  case "$origin:$EXPECTED_ORIGIN" in
-    "$EXPECTED_ORIGIN:$EXPECTED_ORIGIN"|git@github.com:hattajr/nix-config.git:https://github.com/hattajr/nix-config.git) ;;
-    *) fail "checkout origin is not $EXPECTED_ORIGIN" ;;
-  esac
-  printf '%s\n' "$candidate"
-}
-
-platform() {
-  local target=${NIX_CONFIG_PLATFORM:-}
-  if [ -z "$target" ]; then
-    case "$(uname -s):$(uname -m)" in
-      Darwin:arm64|Darwin:aarch64) target=aarch64-darwin ;;
-      Linux:arm64|Linux:aarch64) target=aarch64-linux ;;
-      Linux:x86_64|Linux:amd64) target=x86_64-linux ;;
-      *) fail "unsupported platform: $(uname -s)/$(uname -m)" ;;
-    esac
-  fi
-  case "$target" in
-    aarch64-darwin|aarch64-linux|x86_64-linux) printf '%s\n' "$target" ;;
-    *) fail "unsupported platform: $target" ;;
-  esac
-}
-
-enable_nix_features() {
-  export NIX_CONFIG="${NIX_CONFIG:+$NIX_CONFIG$'\n'}experimental-features = nix-command flakes"
-}
-
-run_nix_with_dns_retry() {
-  local attempt=1 max_attempts=5 delay=1 status
-  local stdout_file stderr_file
-  stdout_file=$(mktemp "${TMPDIR:-/tmp}/bro-nix-stdout.XXXXXX") || fail 'could not create Nix output file'
-  stderr_file=$(mktemp "${TMPDIR:-/tmp}/bro-nix-stderr.XXXXXX") || {
-    rm -f "$stdout_file"
-    fail 'could not create Nix error file'
-  }
-
-  while true; do
-    : >"$stdout_file"
-    : >"$stderr_file"
-    if "$@" >"$stdout_file" 2>"$stderr_file"; then
-      cat "$stderr_file" >&2
-      cat "$stdout_file"
-      rm -f "$stdout_file" "$stderr_file"
-      return 0
-    else
-      status=$?
-    fi
-    cat "$stderr_file" >&2
-    [ ! -s "$stdout_file" ] || cat "$stdout_file" >&2
-
-    if ! grep -Eiq \
-      'could not resolve (host(name)?|proxy)|temporary failure in name resolution|name or service not known' \
-      "$stderr_file" "$stdout_file"; then
-      rm -f "$stdout_file" "$stderr_file"
-      return "$status"
-    fi
-    if [ "$attempt" -ge "$max_attempts" ]; then
-      log "DNS resolution failed after $max_attempts attempts" >&2
-      rm -f "$stdout_file" "$stderr_file"
-      return "$status"
-    fi
-
-    log "DNS resolution failed; retrying in ${delay}s (attempt $((attempt + 1))/$max_attempts)" >&2
-    sleep "$delay"
-    attempt=$((attempt + 1))
-    delay=$((delay * 2))
-  done
-}
-
-set_home_identity() {
-  local username=${NIX_CONFIG_USERNAME:-${USER:-}}
-  local home_directory=${NIX_CONFIG_HOME:-${HOME:-}}
-  [ -n "$username" ] || fail 'NIX_CONFIG_USERNAME or USER must be set'
-  [ -n "$home_directory" ] || fail 'NIX_CONFIG_HOME or HOME must be set'
-  [ "${home_directory#/}" != "$home_directory" ] \
-    || fail "home directory must be absolute: $home_directory"
-  reject_nix_metacharacters "$username$home_directory" 'identity'
-  export NIX_CONFIG_USERNAME=$username NIX_CONFIG_HOME=$home_directory
-}
-
-# The identity reaches Nix as a quoted string literal, so a value able to close
-# that literal would change the expression rather than the configuration.
-reject_nix_metacharacters() {
-  case "$1" in
-    *'"'* | *'\'* | *'${'*)
-      fail "$2 must not contain quotes, backslashes, or Nix interpolation" ;;
-  esac
-}
-
-# Home Manager identity belongs to the account running bro, not to the
-# repository. Passing it as an explicit builder argument keeps every committed
-# flake output pure while still activating arbitrary local accounts.
-home_expr() {
-  local repo=$1 platform=$2 attribute=$3
-  printf '((builtins.getFlake "path:%s").lib.mkHome { system = "%s"; username = "%s"; homeDirectory = "%s"; }).%s' \
-    "$repo" "$platform" "$NIX_CONFIG_USERNAME" "$NIX_CONFIG_HOME" "$attribute"
-}
-
-run_git() {
-  if command -v git >/dev/null 2>&1; then
-    git "$@"
-  else
-    command -v nix >/dev/null 2>&1 || fail 'Git is missing and Nix is unavailable'
-    nix shell --accept-flake-config nixpkgs#git --command git "$@"
-  fi
-}
-
-apply() {
-  local repo=$1 target=$2 source="path:$1" package
-  command -v nix >/dev/null 2>&1 || fail 'Nix is required'
-  run_nix_with_dns_retry nix flake metadata "$source" >/dev/null || fail 'flake metadata validation failed'
-  run_nix_with_dns_retry nix eval --impure --raw \
-    --expr "$(home_expr "$repo" "$target" 'activationPackage.drvPath')" >/dev/null \
-    || fail "platform output is unavailable or invalid: $target"
-  package=$(run_nix_with_dns_retry nix build --impure --no-link --print-out-paths \
-    --expr "$(home_expr "$repo" "$target" activationPackage)") \
-    || fail 'Home Manager activation package build failed'
-  [ -x "$package/activate" ] || fail 'built activation package has no executable activate script'
-  log "activating $target"
-  "$package/activate"
-  # Home Manager updates the configuration link, but an already-running tmux
-  # server keeps its previous status-line/plugin state until it is reloaded.
-  # Do not start a server merely to reload it.
-  local tmux_binary="$HOME/.nix-profile/bin/tmux"
-  local tmux_config="${XDG_CONFIG_HOME:-$HOME/.config}/tmux/tmux.conf"
-  if [ -x "$tmux_binary" ] && [ -r "$tmux_config" ] \
-    && "$tmux_binary" source-file "$tmux_config" >/dev/null 2>&1; then
-    log 'reloaded active tmux configuration'
-  fi
-}
-
-auth() {
-  local setup=${HOME}/.local/bin/nix-config-setup
-  local pass_session=${HOME}/.local/bin/proton-pass-session
-  [ -x "$setup" ] || fail 'account setup is unavailable; run bro apply first'
-  if [ "$(uname -s)" = Linux ] && [ -x "$pass_session" ]; then
-    exec "$pass_session" "$setup"
-  fi
-  exec "$setup"
-}
-
-health() {
-  local repo=$1 target=$2 setup=${HOME}/.local/bin/nix-config-setup
-  local core_failed=0 auth_failed=0 locale_output startup_file tmux_socket
-
-  command -v nix >/dev/null 2>&1 || { log 'CORE FAIL: Nix is unavailable'; core_failed=1; }
-  if run_nix_with_dns_retry nix flake metadata "path:$repo" >/dev/null; then
-    log 'OK: checkout metadata'
-  else
-    log 'CORE FAIL: flake metadata validation failed'; core_failed=1
-  fi
-  if run_nix_with_dns_retry nix eval --impure --raw \
-    --expr "$(home_expr "$repo" "$target" 'activationPackage.drvPath')" >/dev/null; then
-    log "OK: $target flake output"
-  else
-    log "CORE FAIL: platform output is unavailable: $target"; core_failed=1
-  fi
-
-  locale_output=$(locale 2>&1) || {
-    log "CORE FAIL: current locale is invalid: ${locale_output//$'\n'/ }"
-    if env -u LC_ALL locale >/dev/null 2>&1; then
-      log 'CORE FAIL: inherited LC_ALL is the cause; bro apply in a terminal refreshes it'
-    fi
-    core_failed=1
-  }
-  [ -z "${LC_ALL:-}" ] || log 'CORE WARN: LC_ALL is set; managed shells inherit the OS locale'
-
-  for startup_file in "$HOME/.zshenv" "$HOME/.zprofile" "$HOME/.zshrc" "$HOME/.profile" "$HOME/.bash_profile" "$HOME/.bashrc"; do
-    if [ -f "$startup_file" ] && grep -Eq '^[[:space:]]*(export[[:space:]]+)?LC_ALL=' "$startup_file"; then
-      log "CORE FAIL: stale LC_ALL assignment in $startup_file"
-      core_failed=1
-    fi
-  done
-
-  if [ -x "$HOME/.nix-profile/bin/zsh" ] && env -u LC_ALL "$HOME/.nix-profile/bin/zsh" -lic 'exit' >/dev/null 2>&1; then
-    log 'OK: managed zsh startup'
-  else
-    log 'CORE FAIL: managed zsh startup'; core_failed=1
-  fi
-
-  if [ -x "$HOME/.nix-profile/bin/tmux" ] && [ -r "${XDG_CONFIG_HOME:-$HOME/.config}/tmux/tmux.conf" ]; then
-    tmux_socket="bro-health-$$"
-    if "$HOME/.nix-profile/bin/tmux" -L "$tmux_socket" -f "${XDG_CONFIG_HOME:-$HOME/.config}/tmux/tmux.conf" new-session -d -s health \
-      && "$HOME/.nix-profile/bin/tmux" -L "$tmux_socket" has-session -t health; then
-      "$HOME/.nix-profile/bin/tmux" -L "$tmux_socket" kill-server >/dev/null 2>&1 || true
-      log 'OK: managed tmux server'
-    else
-      "$HOME/.nix-profile/bin/tmux" -L "$tmux_socket" kill-server >/dev/null 2>&1 || true
-      log 'CORE FAIL: managed tmux server'; core_failed=1
-    fi
-  else
-    log 'CORE FAIL: managed tmux or configuration is unavailable'; core_failed=1
-  fi
-
-  if [ -x "$setup" ]; then
-    if "$setup" --check; then
-      log 'OK: optional account setup check'
-    else
-      log 'AUTH FAIL: configured account setup has errors; run bro auth'
-      auth_failed=1
-    fi
-  else
-    log 'AUTH OPTIONAL: account setup is not installed yet; run bro apply first'
-  fi
-
-  [ "$core_failed" -eq 0 ] || return 1
-  [ "$auth_failed" -eq 0 ] || return 1
-}
-
-update() {
-  local repo=$1 target=$2 verbose=${3:-no} choice update_nixpkgs=no update_pi=no
-  [ -t 0 ] && [ -t 1 ] || fail 'bro update requires an interactive terminal'
-  [ -z "$(run_git -C "$repo" status --porcelain)" ] || fail 'working tree has changes'
-
-  # Start from the shared configuration before calculating new upstream pins.
-  sync "$repo" "$target"
-
-  printf '\nSelect updates to prepare:\n' >&2
-  select choice in 'Nixpkgs (normal Nix-managed apps)' 'Pi (custom Nix package)' 'Both' 'Cancel'; do
-    case $REPLY in
-      1) update_nixpkgs=yes; break ;;
-      2) update_pi=yes; break ;;
-      3) update_nixpkgs=yes; update_pi=yes; break ;;
-      4) log 'update cancelled'; return 0 ;;
-      *) printf 'Choose a number from 1 to 4.\n' >&2 ;;
-    esac
-  done
-
-  if [ "$update_nixpkgs" = yes ]; then
-    log 'updating nixpkgs pin'
-    run_nix_with_dns_retry nix flake update nixpkgs
-  fi
-  if [ "$update_pi" = yes ]; then
-    log 'updating Pi pin'
-    "$repo/scripts/update-pi" "$repo"
-  fi
-
-  if run_git -C "$repo" diff --quiet; then
-    log 'all selected pins are already current'
-    return 0
-  fi
-  run_git -C "$repo" diff --check || fail 'update produced invalid whitespace'
-  print_update_summary "$repo"
-  if [ "$verbose" = yes ]; then
-    printf '\nComplete generated diff:\n' >&2
-    run_git -C "$repo" diff
-  fi
-  printf '\nApply these changes on this machine? [y/N] ' >&2
-  read -r choice
-  case $choice in
-    y|Y|yes|YES) ;;
-    *)
-      run_git -C "$repo" restore --source=HEAD -- flake.lock home/modules/pi.nix
-      log 'update discarded'
-      return 0
-      ;;
-  esac
-
-  apply "$repo" "$target"
-  printf 'Commit these version-pin changes? [y/N] ' >&2
-  read -r choice
-  case $choice in
-    y|Y|yes|YES)
-      run_git -C "$repo" add flake.lock home/modules/pi.nix
-      run_git -C "$repo" commit -m 'Update managed package pins'
-      printf 'Push the commit for other machines to sync? [y/N] ' >&2
-      read -r choice
-      case $choice in y|Y|yes|YES) run_git -C "$repo" push ;; esac
-      ;;
-    *) log 'changes applied locally but left uncommitted' ;;
-  esac
-}
-
-print_update_summary() {
-  local repo=$1 old_pi new_pi old_nixpkgs new_nixpkgs
-  printf '\nProposed version updates:\n' >&2
-  if ! run_git -C "$repo" diff --quiet -- home/modules/pi.nix; then
-    old_pi=$(run_git -C "$repo" show HEAD:home/modules/pi.nix | sed -n 's/^[[:space:]]*version = "\([^"]*\)";.*/\1/p' | head -n 1)
-    new_pi=$(sed -n 's/^[[:space:]]*version = "\([^"]*\)";.*/\1/p' "$repo/home/modules/pi.nix" | head -n 1)
-    printf '  Pi:       %s → %s\n' "$old_pi" "$new_pi" >&2
-  fi
-  if ! run_git -C "$repo" diff --quiet -- flake.lock; then
-    old_nixpkgs=$(run_git -C "$repo" show HEAD:flake.lock | jq -r '.nodes.nixpkgs.locked.rev // "unknown"')
-    new_nixpkgs=$(jq -r '.nodes.nixpkgs.locked.rev // "unknown"' "$repo/flake.lock")
-    printf '  Nixpkgs:  %s → %s\n' "${old_nixpkgs:0:12}" "${new_nixpkgs:0:12}" >&2
-  fi
-}
-
-sync() {
-  local repo=$1 target=$2 push=${3:-no} upstream ahead behind
-  [ -z "$(run_git -C "$repo" status --porcelain)" ] || fail 'working tree has changes'
-  upstream=$(run_git -C "$repo" rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null) || fail 'branch has no upstream'
-  run_git -C "$repo" fetch --prune || fail 'fetch failed'
-  ahead=$(run_git -C "$repo" rev-list --count "$upstream..HEAD")
-  behind=$(run_git -C "$repo" rev-list --count "HEAD..$upstream")
-  [ "$ahead" = 0 ] || [ "$behind" = 0 ] || fail 'branch diverged from upstream; resolve it manually'
-  if [ "$behind" != 0 ]; then run_git -C "$repo" merge --ff-only "$upstream" || fail 'fast-forward failed'; fi
-  apply "$repo" "$target"
-  if [ "$push" = yes ]; then
-    run_git -C "$repo" push || fail 'push failed'
-  elif [ "$ahead" != 0 ]; then
-    log 'local commits are ahead; use bro sync --push to publish them'
-  fi
+run_step() {
+  # A failed step returns to the menu: an unusable network or a dirty tree is
+  # something to correct and retry, not a reason to drop the session. The
+  # subshell matters, because actions report problems with fail, which exits.
+  ( "$@" ) || warn 'returning to the menu'
 }
 
 main() {
-  local command=${1:-} repo target
-  case "$command" in health|apply|sync|update|auth) ;; -h|--help|'') usage; [ -n "$command" ] && exit 0 || exit 2 ;; *) usage >&2; exit 2;; esac
-  shift
-  local push=no verbose=no
-  if [ "$command" = sync ] && [ "${1:-}" = --push ]; then
-    push=yes; shift
-  elif [ "$command" = update ] && [ "${1:-}" = --verbose ]; then
-    verbose=yes; shift
-  fi
-  [ "$#" = 0 ] || { usage >&2; exit 2; }
-  enable_nix_features; set_home_identity; repo=$(checkout); target=$(platform)
-  reject_nix_metacharacters "$repo" 'checkout path'
-  case "$command" in
-    apply) apply "$repo" "$target";;
-    health) health "$repo" "$target";;
-    sync) sync "$repo" "$target" "$push";;
-    update) update "$repo" "$target" "$verbose";;
-    auth) auth;;
-  esac
+  [ "$#" -eq 0 ] || {
+    printf 'bro takes no arguments; run bro on its own to open the menu.\n' >&2
+    exit 2
+  }
+  has_tty || fail 'bro is interactive; run it from a terminal'
+
+  enable_nix_features
+  resolve_identity
+  local repo target
+  repo=$(resolve_checkout)
+  target=$(detect_platform)
+
+  while true; do
+    choose "nix-config  ($target)" \
+      $'Apply\tactivate this checkout' \
+      $'Sync\tfast-forward from upstream, then apply' \
+      $'Update\tchange pinned Nixpkgs or Pi versions' \
+      $'Accounts\tconfigure logins and API keys' \
+      $'Health\tcheck shell, accounts, and PATH' \
+      $'Clean up\tquarantine binaries shadowing Nix' \
+      $'Quit\tleave the menu' || return 0
+    case "$CHOICE_INDEX" in
+      1) run_step apply "$repo" "$target" ;;
+      2) run_step sync "$repo" "$target" ;;
+      3) run_step update "$repo" "$target" ;;
+      4) run_step auth ;;
+      5)
+        run_step health "$repo" "$target"
+        if shadowed_binaries_present \
+          && confirm 'Review the shadowed binaries now?' no; then
+          run_step shadow_review
+        fi
+        ;;
+      6) run_step shadow_review ;;
+      7) return 0 ;;
+    esac
+  done
 }
+
 main "$@"

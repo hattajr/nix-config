@@ -1,44 +1,33 @@
 #!/bin/sh
-# Public stage-zero installer. It contains no credentials and performs no
-# account login. It clones the public repository and then runs its bootstrap.
+# Public stage-zero installer. It holds no credentials and performs no account
+# login: it makes Nix available, clones the public repository, and hands over to
+# the interactive bootstrap. It takes no arguments and reads no configuration.
 set -eu
 
-REPOSITORY_URL=${NIX_CONFIG_REPOSITORY_URL:-https://github.com/hattajr/nix-config.git}
-DEFAULT_DESTINATION=${HOME}/src/nix-config
-NIX_ROOT=${NIX_CONFIG_NIX_ROOT:-/nix}
-NIX_INSTALLER_URL=${NIX_CONFIG_NIX_INSTALLER_URL:-https://nixos.org/nix/install}
+REPOSITORY_URL='https://github.com/hattajr/nix-config.git'
+REPOSITORY_SSH='git@github.com:hattajr/nix-config.git'
+DESTINATION="${HOME}/src/nix-config"
+NIX_INSTALLER_URL='https://nixos.org/nix/install'
 # Reviewed 2026-09-02. Updating the installer is an explicit checksum change.
-NIX_INSTALLER_SHA256=${NIX_CONFIG_NIX_INSTALLER_SHA256:-9adda97297d9e8ab360df95c729eabff4f4f93d6db091953c3a68f29e3fb130c}
-PLATFORMS="aarch64-darwin aarch64-linux x86_64-linux"
+NIX_INSTALLER_SHA256='9adda97297d9e8ab360df95c729eabff4f4f93d6db091953c3a68f29e3fb130c'
 
-log() {
-  printf 'nix-install: %s\n' "$1"
-}
-
+log() { printf 'nix-install: %s\n' "$1"; }
 fail() {
   printf 'nix-install: ERROR: %s\n' "$1" >&2
   exit 1
 }
 
-usage() {
-  cat <<'EOF'
-Usage: install.sh [destination]
+# "curl | sh" leaves the script on stdin, so every prompt uses the terminal.
+has_tty() { [ -r /dev/tty ] && [ -w /dev/tty ]; }
 
-The platform is detected from the operating system and CPU architecture.
-Supported platforms: aarch64-darwin, aarch64-linux, x86_64-linux.
-The destination defaults to ~/src/nix-config.
-
-NIX_CONFIG_PLATFORM may override detection for automation. NIX_CONFIG_REPOSITORY
-may set the destination. After cloning, bootstrap prompts once to apply the
-configuration; set NIX_CONFIG_APPLY=yes to apply unattended or
-NIX_CONFIG_APPLY=no to clone and validate only. Without a terminal, bootstrap
-fails closed unless one of those values is set. After activation, run bro auth to
-configure optional accounts and API keys.
-
-The installer first reuses an existing working Nix installation, including one
-whose profile is not loaded in the current shell. Home Manager is the sole owner
-of its managed configuration paths and replaces legacy files during activation.
-EOF
+confirm() {
+  answer=''
+  printf '%s [Y/n] ' "$1" >/dev/tty
+  IFS= read -r answer </dev/tty || return 1
+  case "${answer:-yes}" in
+  y | Y | yes | YES) return 0 ;;
+  *) return 1 ;;
+  esac
 }
 
 sha256_file() {
@@ -51,33 +40,20 @@ sha256_file() {
   fi
 }
 
-contains_platform() {
-  candidate=$1
-  for platform in $PLATFORMS; do
-    [ "$platform" = "$candidate" ] && return 0
-  done
-  return 1
-}
-
 detect_platform() {
-  selected=${NIX_CONFIG_PLATFORM:-}
-  if [ -z "$selected" ]; then
-    os=$(uname -s)
-    arch=$(uname -m)
-    case "$os:$arch" in
-    Darwin:arm64 | Darwin:aarch64) selected=aarch64-darwin ;;
-    Linux:arm64 | Linux:aarch64) selected=aarch64-linux ;;
-    Linux:x86_64 | Linux:amd64) selected=x86_64-linux ;;
-    *) fail "unsupported platform: $os/$arch" ;;
-    esac
-  fi
-  contains_platform "$selected" || fail "unsupported platform override: $selected"
-  printf '%s' "$selected"
+  os=$(uname -s)
+  arch=$(uname -m)
+  case "$os:$arch" in
+  Darwin:arm64 | Darwin:aarch64) printf 'aarch64-darwin' ;;
+  Linux:arm64 | Linux:aarch64) printf 'aarch64-linux' ;;
+  Linux:x86_64 | Linux:amd64) printf 'x86_64-linux' ;;
+  *) fail "unsupported platform: $os/$arch" ;;
+  esac
 }
 
 load_nix_environment() {
   for hook in \
-    "$NIX_ROOT/var/nix/profiles/default/etc/profile.d/nix-daemon.sh" \
+    /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh \
     "${HOME}/.nix-profile/etc/profile.d/nix.sh"; do
     if [ -f "$hook" ]; then
       # shellcheck disable=SC1090
@@ -86,28 +62,24 @@ load_nix_environment() {
   done
 }
 
-nix_is_usable() {
-  command -v nix >/dev/null 2>&1 && nix --version >/dev/null 2>&1
-}
+nix_is_usable() { command -v nix >/dev/null 2>&1 && nix --version >/dev/null 2>&1; }
 
 ensure_nix() {
   # A shell that has not sourced nix.sh is not a fresh installation. Always try
-  # known profile hooks before deciding that Nix is absent.
+  # the known profile hooks before deciding that Nix is absent.
   load_nix_environment
   if nix_is_usable; then
-    log 'Using existing Nix installation'
+    log 'Using the existing Nix installation'
     return 0
   fi
 
-  # The daemon installer owns /nix as root, so an existing root-owned /nix is
-  # expected and must be left for the official installer to manage.
-  log 'Nix is not installed; downloading the official multi-user installer (sudo is required)'
+  confirm 'Nix is not installed. Install it now? (needs sudo)' ||
+    fail 'Nix is required; nothing was changed'
 
   command -v curl >/dev/null 2>&1 || fail 'Nix is missing and curl is unavailable'
   installer=$(mktemp "${TMPDIR:-/tmp}/nix-install.XXXXXX") ||
     fail 'could not create a temporary installer file'
-  cleanup_installer() { rm -f "$installer"; }
-  trap cleanup_installer 0 1 2 15
+  trap 'rm -f "$installer"' 0 1 2 15
 
   curl --proto '=https' --tlsv1.2 -fsSL \
     --retry 5 --retry-all-errors --retry-delay 1 \
@@ -116,8 +88,8 @@ ensure_nix() {
   installer_sha256=$(sha256_file "$installer")
   [ "$installer_sha256" = "$NIX_INSTALLER_SHA256" ] ||
     fail "Nix installer checksum mismatch: expected $NIX_INSTALLER_SHA256, got $installer_sha256"
-  sh "$installer" --daemon --yes || fail 'official multi-user Nix installer failed'
-  cleanup_installer
+  sh "$installer" --daemon --yes || fail 'the official multi-user Nix installer failed'
+  rm -f "$installer"
   trap - 0 1 2 15
 
   load_nix_environment
@@ -126,12 +98,8 @@ ensure_nix() {
 }
 
 enable_nix_features() {
-  if [ -n "${NIX_CONFIG:-}" ]; then
-    NIX_CONFIG="${NIX_CONFIG}
-experimental-features = nix-command flakes"
-  else
-    NIX_CONFIG='experimental-features = nix-command flakes'
-  fi
+  NIX_CONFIG="${NIX_CONFIG:+$NIX_CONFIG
+}experimental-features = nix-command flakes"
   export NIX_CONFIG
 }
 
@@ -145,74 +113,58 @@ run_git() {
 
 origin_is_trusted() {
   case "$1" in
-  "$REPOSITORY_URL" | git@github.com:hattajr/nix-config.git) return 0 ;;
+  "$REPOSITORY_URL" | "$REPOSITORY_SSH") return 0 ;;
   *) return 1 ;;
   esac
 }
 
-validate_checkout() {
-  checkout=$1
-  [ -d "$checkout/.git" ] || return 1
-  origin=$(run_git -C "$checkout" remote get-url origin 2>/dev/null) || return 1
-  origin_is_trusted "$origin" || return 1
-  [ -f "$checkout/scripts/bootstrap.sh" ] || return 1
-}
-
-verify_existing_checkout() {
-  checkout=$1
-  [ -z "$(run_git -C "$checkout" status --porcelain)" ] ||
-    fail "checkout has local changes; commit or stash them before installing: $checkout"
-  log "Using existing checkout $checkout"
-}
-
 clone_repository() {
-  destination=$1
-  if [ -e "$destination" ]; then
-    [ -d "$destination/.git" ] ||
-      fail "destination is not a Git checkout: $destination"
-    origin=$(run_git -C "$destination" remote get-url origin 2>/dev/null) ||
-      fail "destination has no readable Git origin: $destination"
-    origin_is_trusted "$origin" ||
-      fail "destination origin is not trusted: $origin"
-    verify_existing_checkout "$destination"
-    validate_checkout "$destination" ||
+  if [ -e "$DESTINATION" ]; then
+    [ -d "$DESTINATION/.git" ] || fail "destination is not a Git checkout: $DESTINATION"
+    origin=$(run_git -C "$DESTINATION" remote get-url origin 2>/dev/null) ||
+      fail "destination has no readable Git origin: $DESTINATION"
+    origin_is_trusted "$origin" || fail "destination origin is not trusted: $origin"
+    [ -z "$(run_git -C "$DESTINATION" status --porcelain)" ] ||
+      fail "checkout has local changes; commit or stash them first: $DESTINATION"
+    [ -f "$DESTINATION/scripts/bootstrap.sh" ] ||
       fail 'destination is not a complete nix-config checkout'
+    log "Using the existing checkout $DESTINATION"
     return 0
   fi
 
-  mkdir -p "$(dirname "$destination")"
-  staging="${destination}.nix-config-install.$$"
+  mkdir -p "$(dirname "$DESTINATION")"
+  staging="${DESTINATION}.nix-config-install.$$"
   [ ! -e "$staging" ] ||
     fail "an interrupted clone is present at $staging; inspect it before retrying"
-  log "Cloning the public repository into $destination"
+  log "Cloning into $DESTINATION"
   run_git clone "$REPOSITORY_URL" "$staging" ||
     fail 'repository clone failed; rerun the same command after fixing connectivity'
-  validate_checkout "$staging" ||
-    fail 'repository clone is incomplete; it was left in place for inspection'
-  mv "$staging" "$destination" ||
-    fail "could not finalize cloned checkout; retry the same command"
-  log 'Using the latest repository checkout'
+  [ -f "$staging/scripts/bootstrap.sh" ] ||
+    fail 'the clone is incomplete; it was left in place for inspection'
+  mv "$staging" "$DESTINATION" || fail 'could not finalise the cloned checkout; retry'
 }
 
 main() {
-  case "${1:-}" in
-  -h | --help)
-    usage
-    exit 0
-    ;;
-  esac
+  [ "$#" -eq 0 ] || fail 'install.sh takes no arguments'
+  has_tty || fail 'installation is interactive; run it from a terminal'
 
   platform=$(detect_platform)
-  destination=${1:-${NIX_CONFIG_REPOSITORY:-$DEFAULT_DESTINATION}}
+  printf '\n== nix-config ==\n\n'
+  printf '  platform     %s\n' "$platform"
+  printf '  checkout     %s\n' "$DESTINATION"
+  printf '  repository   %s\n\n' "$REPOSITORY_URL"
+  printf 'This clones the public repository and then asks before changing anything.\n'
+  confirm 'Continue?' || {
+    log 'Nothing was changed'
+    exit 0
+  }
 
   ensure_nix
   enable_nix_features
-  clone_repository "$destination"
-  bootstrap="$destination/scripts/bootstrap.sh"
+  clone_repository
+  bootstrap="$DESTINATION/scripts/bootstrap.sh"
   [ -f "$bootstrap" ] || fail "bootstrap script is missing: $bootstrap"
-  log "Continuing with the cloned checkout for platform $platform"
-  NIX_CONFIG_PLATFORM=$platform \
-    exec /usr/bin/env bash "$bootstrap" "$destination"
+  exec /usr/bin/env bash "$bootstrap" "$DESTINATION"
 }
 
 main "$@"

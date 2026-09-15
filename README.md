@@ -11,23 +11,69 @@ Personal Home Manager configuration for macOS (Apple Silicon) and Linux (x86-64,
 
 ## Install
 
-Install with one command:
+One command, no arguments, no configuration:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/hattajr/nix-config/main/scripts/install.sh | sh
 ```
 
-The installer detects the platform, reuses a working Nix installation when available, otherwise downloads the official multi-user Nix installer and verifies its reviewed SHA-256 checksum before execution. It clones the repository to `~/src/nix-config`, then prompts to apply the configuration. If that checkout already exists, it must be clean. Routine updates remain a separate `bro sync` action.
+It shows what it is about to do, then asks before each step: installing Nix if
+it is missing, cloning to `~/src/nix-config`, activating, configuring accounts,
+and entering the managed shell. Declining any step leaves the machine unchanged.
+The platform is detected from the machine and the destination is fixed, so there
+is nothing to pass and nothing to set.
 
-Home Manager is the sole owner of each configuration file it manages. Activation replaces conflicting files at those managed leaves, including files previously managed by Chezmoi, while preserving unrelated files in shared directories. A colliding regular file or directory is moved under `$XDG_STATE_HOME/home-manager/takeover/` before replacement; existing managed symlinks are simply refreshed. The legacy `~/.gitconfig` is quarantined there after `~/.config/git/config` is linked. Runtime state and secrets outside the managed paths remain writable.
+Installation needs a terminal. There is no unattended mode: every choice is a
+prompt, and running without a terminal fails rather than guessing an answer.
+
+### Everything else is one menu
+
+```sh
+bro
+```
+
+```text
+  1) Apply        activate this checkout
+  2) Sync         fast-forward from upstream, then apply
+  3) Update       change pinned Nixpkgs or Pi versions
+  4) Accounts     configure logins and API keys
+  5) Health       check shell, accounts, and PATH
+  6) Clean up     quarantine binaries shadowing Nix
+  7) Quit         leave the menu
+```
+
+`bro` takes no arguments and no flags. Choices that used to be flags, such as
+pushing after a sync or showing a generated diff, are prompts inside the step
+that needs them. A step that fails returns to the menu rather than ending the
+session.
+
+`Sync` makes a machine match the versions committed here. `Update` is the
+intentional version-change workflow: it syncs first, asks which pins may change,
+shows an old-to-new summary, then asks before applying, committing, and pushing.
+Other machines receive the result with `Sync`.
+
+### How ownership works
+
+Home Manager is the sole owner of each configuration file it manages. Activation
+replaces conflicting files at those managed leaves, including files previously
+managed by Chezmoi, while preserving unrelated files in shared directories. A
+colliding regular file or directory is moved under
+`$XDG_STATE_HOME/home-manager/takeover/` before replacement; existing managed
+symlinks are simply refreshed. The legacy `~/.gitconfig` is quarantined there
+after `~/.config/git/config` is linked. Runtime state and secrets outside the
+managed paths remain writable.
 
 ### Manual macOS ownership
 
 Browsers on macOS are intentionally installed and updated manually. Home Manager does not install Chrome or take ownership of browser profiles. Tailscale and Proton split DNS are external host state on every platform: install Tailscale through its signed system package repository, then enable and maintain it through the host tools. The managed `devtunnel` command defaults to the `mbp` SSH hostname and only uses ordinary SSH forwarding.
 
-Home Manager uses the active user's `$USER` and `$HOME`, so it works for arbitrary local account names; automation may override them with `NIX_CONFIG_USERNAME` and `NIX_CONFIG_HOME`. Run `bro auth` after activation to configure optional accounts and API keys.
+### Identity
 
-The flake itself stays pure: it never reads the environment during evaluation. `bro` and the installer resolve the identity in the shell and pass it to the `lib.mkHome` builder as an explicit argument, so any account can be activated without committing it. The owner's own configurations are also committed, keyed by system (`x86_64-linux`, `aarch64-linux`, `aarch64-darwin`) rather than by `user@host`, which keeps `nix flake check` and evaluation caching working and survives a host being renamed or replaced. Because the attribute is a system and not `$USER@$(hostname)`, `home-manager switch` must name it explicitly:
+Home Manager uses the active user's `$USER` and `$HOME`, so it works for arbitrary local account names. Identity is read from the account itself and cannot be set by hand.
+
+The flake itself stays pure: it never reads the environment during evaluation. The menu and the installer resolve the identity in the shell and pass it to the `lib.mkHome` builder as an explicit argument, so any account can be activated without committing it. The owner's own configurations are also committed, keyed by system (`x86_64-linux`, `aarch64-linux`, `aarch64-darwin`) rather than by `user@host`, which keeps `nix flake check` and evaluation caching working and survives a host being renamed or replaced.
+
+For direct Nix use outside the menu, the attribute is a system rather than `$USER@$(hostname)`, so it must be named explicitly:
 
 ```sh
 home-manager switch --flake ~/nix-config#x86_64-linux
@@ -39,19 +85,34 @@ nix build --impure --expr '((builtins.getFlake "path:'"$PWD"'").lib.mkHome {
 }).activationPackage'
 ```
 
-## `bro` commands
+## Shadowed binaries
 
-```text
-bro health        Check shell and account setup health; does not change versions
-bro apply         Build and activate this checkout
-bro sync           Fast-forward from upstream, then apply
-bro sync --push    Sync, apply, then push local commits
-bro update         Interactively update Nixpkgs and/or the custom Pi pin
-bro update --verbose  Also show the complete generated Git diff
-bro auth           Configure accounts and API keys
+`~/.local/bin` deliberately outranks `~/.nix-profile/bin` on PATH so that the
+wrappers this repository installs there, such as `pi` and `vim`, take
+precedence over the packages they wrap. A tool installed by hand into the same
+directory inherits that precedence and silently shadows its Nix-managed
+counterpart, which is how a stale `uv` keeps running after Nix ships a newer one.
+
+Every activation reports such files and never blocks on them:
+
+```
+warning: 2 unmanaged binaries are shadowing the Nix profile (rclone uv).
+         Run bro and choose Clean up to review them.
 ```
 
-`bro sync` makes a machine match the versions committed in this repository. `bro update` is the intentional version-change workflow: it first syncs, lets you select Nixpkgs (normal Nix-managed apps), Pi, or both, then shows a concise old-to-new version summary before optionally applying, committing, and pushing it. Use `bro update --verbose` to also inspect the complete generated Git diff. Other machines receive the committed update with `bro sync`.
+`Health` reports the same finding as `PATH WARN` and offers to review it there
+and then, and `Clean up` goes straight to the review. It stays a warning rather
+than a failure: a hand-installed tool in `~/.local/bin` is common enough that
+failing on one would break a first install.
+
+Reviewing walks each finding one at a time. Files move under
+`$XDG_STATE_HOME/home-manager/shadowed/` and are never deleted, so a tool kept
+on purpose can be restored from there.
+
+Symlinks into the Nix store are this repository's own wrappers and are never
+reported. Tools that update themselves into the user profile, currently
+`claude`, are expected to outrank the Nix copy and are listed in
+`allowedShadows` in `home/modules/shadowed-binaries.nix`.
 
 ## Multipass validation
 

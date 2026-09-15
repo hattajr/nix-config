@@ -33,11 +33,17 @@ printf legacy-nvim >"$HOME/.config/nvim/init.lua"
 printf preserve-nvim >"$HOME/.config/nvim/local/keep.txt"
 printf legacy-git >"$HOME/.gitconfig"
 
-curl -fsSL "file://$source_root/scripts/install.sh" |
-  env NIX_CONFIG_REPOSITORY_URL="file://$source_root" \
-    NIX_CONFIG_APPLY=yes \
-    NIX_CONFIG_START_SHELL=no \
-    sh -s -- "$destination"
+# The installer hardcodes its repository and destination so there is nothing to
+# configure by typing. A fixture run therefore patches those constants on a copy
+# rather than reintroducing an override, and answers the real prompts over a pty.
+fixture_installer=/home/ubuntu/install-fixture.sh
+sed -e "s|^REPOSITORY_URL=.*|REPOSITORY_URL='file://$source_root'|" \
+  -e "s|^DESTINATION=.*|DESTINATION='$destination'|" \
+  "$source_root/scripts/install.sh" >"$fixture_installer"
+chmod +x "$fixture_installer"
+
+# Continue, apply, skip the managed shell.
+printf 'y\ny\nn\n' | "$source_root/tests/lib/pty-run" "$fixture_installer"
 
 assert_takeover() {
   local managed
@@ -73,7 +79,9 @@ printf '{"oauth":"preserve"}\n' >"$HOME/.pi/agent/auth.json"
 printf 'PI_ENV_PRESERVE=yes\n' >"$HOME/.config/proton-pass/pi.env"
 # shellcheck disable=SC1091
 . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
-NIX_CONFIG_REPOSITORY_URL="file://$source_root" "$HOME/.local/bin/bro" apply
+
+# bro is menu-only: Apply, then Quit.
+printf '1\n7\n' | "$source_root/tests/lib/pty-run" "$HOME/.local/bin/bro"
 assert_takeover
 jq -e '.oauth == "preserve"' "$HOME/.pi/agent/auth.json" >/dev/null
 grep -Fx PI_ENV_PRESERVE=yes "$HOME/.config/proton-pass/pi.env"

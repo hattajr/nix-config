@@ -27,6 +27,7 @@ let
     ".local/bin/bro"
     ".local/bin/devtunnel"
     ".local/bin/nix-config-setup"
+    ".local/share/nix-config/shadow-scan"
     ".local/bin/pi"
     ".local/bin/pi-models-sync"
     ".local/bin/proton-pass-pi-env"

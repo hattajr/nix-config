@@ -9,6 +9,7 @@ test:
 	@./tests/proton-pass/test-pi-wrapper.sh
 	@./tests/proton-pass/test-session-wrapper.sh
 	@./tests/proton-pass/test-setup.sh
+	@./tests/shadow/test-shadow.sh
 
 multipass-validation:
 	@./tests/run-multipass.sh
