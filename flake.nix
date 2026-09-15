@@ -14,6 +14,14 @@
   outputs = { self, ... }@inputs:
     let
       mkHome = import ./lib/mkHome.nix inputs;
+
+      # Committed configurations are keyed by system rather than by
+      # user@host, so activation names a machine architecture and never has
+      # to be renamed when a host is renamed or replaced.
+      owner = system: homeDirectory: mkHome {
+        inherit system homeDirectory;
+        username = "hattajr";
+      };
     in
     {
       # The installer activates accounts that are not committed here. Exposing
@@ -22,17 +30,9 @@
       lib = { inherit mkHome; };
 
       homeConfigurations = {
-        "hattajr@latte" = mkHome {
-          system = "x86_64-linux";
-          username = "hattajr";
-          homeDirectory = "/home/hattajr";
-        };
-
-        "hattajr@mbp" = mkHome {
-          system = "aarch64-darwin";
-          username = "hattajr";
-          homeDirectory = "/Users/hattajr";
-        };
+        "x86_64-linux" = owner "x86_64-linux" "/home/hattajr";
+        "aarch64-linux" = owner "aarch64-linux" "/home/hattajr";
+        "aarch64-darwin" = owner "aarch64-darwin" "/Users/hattajr";
 
         multipass-test = mkHome {
           system = "x86_64-linux";
@@ -43,10 +43,13 @@
 
       checks = {
         x86_64-linux.activation =
-          self.homeConfigurations."hattajr@latte".activationPackage;
+          self.homeConfigurations."x86_64-linux".activationPackage;
+
+        aarch64-linux.activation =
+          self.homeConfigurations."aarch64-linux".activationPackage;
 
         aarch64-darwin.activation =
-          self.homeConfigurations."hattajr@mbp".activationPackage;
+          self.homeConfigurations."aarch64-darwin".activationPackage;
       };
     };
 }

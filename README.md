@@ -27,11 +27,11 @@ Browsers on macOS are intentionally installed and updated manually. Home Manager
 
 Home Manager uses the active user's `$USER` and `$HOME`, so it works for arbitrary local account names; automation may override them with `NIX_CONFIG_USERNAME` and `NIX_CONFIG_HOME`. Run `bro auth` after activation to configure optional accounts and API keys.
 
-The flake itself stays pure: it never reads the environment during evaluation. `bro` and the installer resolve the identity in the shell and pass it to the `lib.mkHome` builder as an explicit argument, so any account can be activated without committing it. The owner's own machines are also committed as named configurations, which keeps `nix flake check`, evaluation caching, and the stock `home-manager switch --flake .` CLI working:
+The flake itself stays pure: it never reads the environment during evaluation. `bro` and the installer resolve the identity in the shell and pass it to the `lib.mkHome` builder as an explicit argument, so any account can be activated without committing it. The owner's own configurations are also committed, keyed by system (`x86_64-linux`, `aarch64-linux`, `aarch64-darwin`) rather than by `user@host`, which keeps `nix flake check` and evaluation caching working and survives a host being renamed or replaced. Because the attribute is a system and not `$USER@$(hostname)`, `home-manager switch` must name it explicitly:
 
 ```sh
-home-manager switch --flake ~/nix-config          # resolves hattajr@latte
-nix build ~/nix-config#homeConfigurations."hattajr@latte".activationPackage
+home-manager switch --flake ~/nix-config#x86_64-linux
+nix build ~/nix-config#homeConfigurations."x86_64-linux".activationPackage
 
 # any other account, without editing the flake
 nix build --impure --expr '((builtins.getFlake "path:'"$PWD"'").lib.mkHome {

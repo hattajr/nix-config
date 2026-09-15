@@ -19,7 +19,7 @@ export NIX_CONFIG="${NIX_CONFIG:+$NIX_CONFIG$'\n'}experimental-features = nix-co
 
 # The committed outputs must evaluate without ambient state; a regression back
 # to builtins.getEnv would fail here rather than silently yield an empty identity.
-nix eval --raw "$flake_source#homeConfigurations.\"hattajr@latte\".activationPackage.drvPath" >/dev/null
+nix eval --raw "$flake_source#homeConfigurations.\"$native\".activationPackage.drvPath" >/dev/null
 nix flake check "$flake_source" --no-build
 
 # Every platform must still build for an account that is not committed here.

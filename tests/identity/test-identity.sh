@@ -21,7 +21,7 @@ eval_home() {
 
 # A committed configuration must never absorb the ambient account.
 committed=$(NIX_CONFIG_USERNAME=alice NIX_CONFIG_HOME=/home/alice USER=alice \
-  nix eval --raw "path:$repo_root#homeConfigurations.\"hattajr@latte\".config.home.username")
+  nix eval --raw "path:$repo_root#homeConfigurations.\"x86_64-linux\".config.home.username")
 [ "$committed" = hattajr ] || {
   echo "identity test: committed configuration was altered by the environment ($committed)" >&2
   exit 1
