@@ -24,4 +24,12 @@ if ! keyctl show >/dev/null 2>&1; then
     || { printf 'error: could not create a Linux keyring session\n' >&2; exit 1; }
 fi
 
+# A new session keyring starts empty, so pass-cli would not find the database
+# key it stored under the per-UID persistent keyring and would read the
+# existing on-disk session as a cold start. Linking that keyring keeps a login
+# reachable across sessions, and the read restarts the kernel's expiry
+# countdown so a regularly used machine never ages the key out. Kernels built
+# without persistent keyrings simply have nothing to link.
+keyctl get_persistent @s >/dev/null 2>&1 || true
+
 exec "$@"

@@ -20,6 +20,7 @@ printf 'keyctl %s\n' "$*" >>"$TEST_LOG"
 case "${1:-}" in
   show) [ "${TEST_KEYCTL_VALID:-0}" = 1 ] ;;
   new_session) exit 0 ;;
+  get_persistent) [ "${TEST_KEYCTL_PERSISTENT:-1}" = 1 ] ;;
   *) exit 2 ;;
 esac
 EOF_KEYCTL
@@ -40,12 +41,29 @@ grep -Fq 'keyctl new_session proton-pass' "$logfile" || {
   exit 1
 }
 grep -Fq 'target args=hello' "$logfile" || { printf '%s\n' 'session wrapper test: target did not run' >&2; exit 1; }
+grep -Fq 'keyctl get_persistent @s' "$logfile" || {
+  printf '%s\n' 'session wrapper test: persistent keyring was not linked into the new session' >&2
+  exit 1
+}
 
 # A valid keyring is retained so existing Proton Pass keys stay reachable.
 : >"$logfile"
 TEST_UNAME=Linux TEST_KEYCTL_VALID=1 "$repo_root/bin/proton-pass-session" target valid
 ! grep -q 'keyctl new_session' "$logfile" || { printf '%s\n' 'session wrapper test: valid keyring was replaced' >&2; exit 1; }
 grep -Fq 'target args=valid' "$logfile" || { printf '%s\n' 'session wrapper test: valid-session target did not run' >&2; exit 1; }
+grep -Fq 'keyctl get_persistent @s' "$logfile" || {
+  printf '%s\n' 'session wrapper test: valid keyring did not reach the persistent keyring' >&2
+  exit 1
+}
+
+# A kernel built without persistent keyrings still has a usable session.
+: >"$logfile"
+TEST_UNAME=Linux TEST_KEYCTL_VALID=1 TEST_KEYCTL_PERSISTENT=0 \
+  "$repo_root/bin/proton-pass-session" target nopersist
+grep -Fq 'target args=nopersist' "$logfile" || {
+  printf '%s\n' 'session wrapper test: missing persistent keyring aborted the target' >&2
+  exit 1
+}
 
 # macOS uses Keychain and executes directly.
 : >"$logfile"
@@ -53,4 +71,4 @@ TEST_UNAME=Darwin TEST_KEYCTL_VALID=0 "$repo_root/bin/proton-pass-session" targe
 grep -Fq 'target args=mac' "$logfile" || { printf '%s\n' 'session wrapper test: macOS did not execute target directly' >&2; exit 1; }
 ! grep -q '^keyctl ' "$logfile" || { printf '%s\n' 'session wrapper test: macOS accessed Linux keyring' >&2; exit 1; }
 
-printf '%s\n' 'session wrapper test: PASSED (revoked/valid Linux keyrings and macOS Keychain path)'
+printf '%s\n' 'session wrapper test: PASSED (revoked/valid Linux keyrings, persistent keyring, macOS Keychain path)'

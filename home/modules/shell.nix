@@ -4,6 +4,22 @@ let
   # Shared with the shadowed-binary checker so a report can never disagree
   # with the PATH an interactive shell actually receives.
   precedingPathDirs = import ../../lib/path-dirs.nix;
+
+  # A kernel session keyring belongs to the login session that created it. A
+  # shell outliving that session inherits a revoked keyring, and Proton Pass
+  # reports KeyRevoked before it can reach the persistent keyring holding its
+  # database key. Only the shell can replace its own session keyring, so this
+  # runs here: the repair inside proton-pass-session reaches the command it
+  # wraps but never the terminal the user keeps typing in.
+  keyringRepair = lib.optionalString pkgs.stdenv.hostPlatform.isLinux ''
+    if command -v keyctl >/dev/null 2>&1; then
+      keyctl show >/dev/null 2>&1 || keyctl new_session >/dev/null 2>&1
+      # A session keyring starts empty. Linking the per-UID persistent keyring
+      # is what keeps a Proton Pass login readable here, and the read restarts
+      # the kernel expiry so a machine in daily use never ages the key out.
+      keyctl get_persistent @s >/dev/null 2>&1 || true
+    fi
+  '';
 in
 {
   programs.zsh = {
@@ -44,6 +60,7 @@ in
     };
 
     initContent = ''
+      ${keyringRepair}
       PROMPT='%{$fg[green]%}%n@%m%{$reset_color%} %(?:%{$fg[cyan]%}%1{➜%} :%{$fg[red]%}%1{➜%} ) %{$reset_color%}%~ $(git_prompt_info) '
 
       # `t` opens or reattaches a session named after the current directory,

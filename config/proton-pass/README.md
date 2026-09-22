@@ -50,6 +50,20 @@ If `auth.json` contains old `deepseek`, `google`, or `moonshotai` API-key
 entries, the wizard offers to open Pi and directs the user through `/logout`;
 those local entries otherwise override Proton Pass.
 
-On Linux, `proton-pass-session` repairs revoked SSH keyring sessions. Kernel
-keys are cleared on reboot, so rerun Accounts when Proton Pass reports that it
-is logged out.
+On Linux, a kernel session keyring belongs to the login session that created
+it. A shell outliving that session inherits a revoked keyring, and pass-cli
+then reports `NoStorageAccess(KeyRevoked)`. Interactive zsh replaces a dead
+session keyring at startup, and `proton-pass-session` does the same for
+non-interactive callers such as the Pi launcher.
+
+Replacing the keyring is only half the repair. A new session keyring is empty,
+so both paths also link the per-UID persistent keyring, which is where pass-cli
+keeps its database key. Without that link pass-cli finds no key, reads the
+stored session as a cold start, and reports being logged out although the login
+is intact. Each link also restarts the kernel's expiry countdown
+(`/proc/sys/kernel/keys/persistent_keyring_expiry`, three days by default), so a
+machine in daily use keeps its login indefinitely.
+
+Kernel keyrings live in memory, so a reboot still clears the key. Rerun Accounts
+after a reboot, after three days of not opening a shell, or whenever Proton Pass
+reports an expired session.
