@@ -5,6 +5,20 @@ let
   # with the PATH an interactive shell actually receives.
   precedingPathDirs = import ../../lib/path-dirs.nix;
 
+  # /etc/zshrc sources the Nix installer hook, and it runs after ~/.zprofile
+  # has applied home.sessionPath, so the hook's own prepend leaves the Nix
+  # profile ahead of the directories path-dirs.nix documents as outranking it.
+  # A self-updating tool then keeps losing to the stale Nix copy. ~/.zshrc is
+  # the first file Home Manager owns that runs after /etc/zshrc, so the
+  # intended order is restored here. Each directory is dropped before it is
+  # prepended, which keeps the entry unique and re-sourcing idempotent.
+  restorePathPrecedence = ''
+    for _dir in ${lib.concatMapStringsSep " " (d: ''"${d}"'') (lib.reverseList precedingPathDirs)}; do
+      path=( "$_dir" "''${(@)path:#$_dir}" )
+    done
+    unset _dir
+  '';
+
   # A kernel session keyring belongs to the login session that created it. A
   # shell outliving that session inherits a revoked keyring, and Proton Pass
   # reports KeyRevoked before it can reach the persistent keyring holding its
@@ -60,6 +74,7 @@ in
     };
 
     initContent = ''
+      ${restorePathPrecedence}
       ${keyringRepair}
       PROMPT='%{$fg[green]%}%n@%m%{$reset_color%} %(?:%{$fg[cyan]%}%1{➜%} :%{$fg[red]%}%1{➜%} ) %{$reset_color%}%~ $(git_prompt_info) '
 
