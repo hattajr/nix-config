@@ -73,6 +73,19 @@ Home Manager and the Proton Pass Pi launcher do not manage this file:
 - `agent/scoped-models.json` — versioned scoped-model allowlist
 - `agent/keybindings.json` — custom keybindings
 
+## Model presets
+
+Use `/preset thinking`, `/preset medium`, or `/preset fast` to select a preset:
+
+| Preset | Model | Thinking level |
+| --- | --- | --- |
+| `thinking` | `openai-codex/gpt-6-astra` | high |
+| `medium` | `openai-codex/gpt-6-sol` | medium |
+| `fast` (default) | `openai-codex/gpt-6-luna` | medium |
+
+`/preset` without arguments or `Ctrl+Shift+U` cycles thinking → medium → fast.
+Presets are configured in `agent/presets.json`.
+
 ## Visual UI reviews
 
 `visual-reviewer` uses `openai-codex/gpt-5.6-sol` at medium thinking for screenshots, images, PDFs, and sampled video frames, with `openai-codex/gpt-5.6-sol:high` as its provider-error fallback. It is intentionally independent from the built-in `reviewer` agent: invoke it explicitly when you want visual feedback. No parallel visual calls are configured.

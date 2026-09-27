@@ -25,7 +25,7 @@ type Preset = {
 type Presets = Record<string, Preset>;
 
 const PRESETS_PATH = join(getAgentDir(), "presets.json");
-const PRESET_ORDER = ["thinking", "fast"];
+const PRESET_ORDER = ["thinking", "medium", "fast"];
 const DEFAULT_PRESET = "fast";
 
 function loadPresets(): Presets {
@@ -136,12 +136,12 @@ export default function modelPresets(pi: ExtensionAPI) {
   }
 
   pi.registerShortcut("ctrl+shift+u", {
-    description: "Toggle thinking/fast model preset",
+    description: "Cycle thinking/medium/fast model presets",
     handler: togglePreset,
   });
 
   pi.registerCommand("preset", {
-    description: "Switch model preset: /preset [thinking|fast]",
+    description: "Switch model preset: /preset [thinking|medium|fast]",
     handler: async (args, ctx) => {
       const name = args.trim();
       if (name) {

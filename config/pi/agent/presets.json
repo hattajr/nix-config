@@ -4,6 +4,11 @@
     "model": "gpt-6-astra",
     "thinkingLevel": "high"
   },
+  "medium": {
+    "provider": "openai-codex",
+    "model": "gpt-6-sol",
+    "thinkingLevel": "medium"
+  },
   "fast": {
     "provider": "openai-codex",
     "model": "gpt-6-luna",
