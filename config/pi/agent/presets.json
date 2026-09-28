@@ -7,7 +7,7 @@
   "medium": {
     "provider": "openai-codex",
     "model": "gpt-6-sol",
-    "thinkingLevel": "medium"
+    "thinkingLevel": "high"
   },
   "fast": {
     "provider": "openai-codex",

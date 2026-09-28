@@ -80,7 +80,7 @@ Use `/preset thinking`, `/preset medium`, or `/preset fast` to select a preset:
 | Preset | Model | Thinking level |
 | --- | --- | --- |
 | `thinking` | `openai-codex/gpt-6-astra` | high |
-| `medium` | `openai-codex/gpt-6-sol` | medium |
+| `medium` | `openai-codex/gpt-6-sol` | high |
 | `fast` (default) | `openai-codex/gpt-6-luna` | medium |
 
 `/preset` without arguments or `Ctrl+Shift+U` cycles thinking → medium → fast.
