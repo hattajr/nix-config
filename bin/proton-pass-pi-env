@@ -25,7 +25,7 @@ done <"$pass_env"
 # pass-cli child whose descriptors may be piped; Pi itself never is.
 exec pass-cli run --no-masking --env-file "$pass_env" -- bash -c '
   for name; do
-    if [[ ! -v $name ]]; then
+    if [[ -z ${!name+x} ]]; then
       printf "error: Proton Pass did not resolve %s\\n" "$name" >&2
       exit 1
     fi
