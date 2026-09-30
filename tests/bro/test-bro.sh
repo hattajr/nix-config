@@ -249,6 +249,36 @@ grep -Fq 'pi update --extensions (skip=1)' "$log" || {
 ! grep -Fq 'nix flake update' "$log" || {
   echo 'bro test: updating Pi extensions also moved the nixpkgs pin' >&2; exit 1; }
 
+# Pi + ext moves the Pi pin first, then updates extensions against it, and
+# leaves the nixpkgs pin alone.
+command cat >"$checkout/scripts/update-pi" <<'EOF'
+#!/bin/sh
+printf 'update-pi %s\n' "$*" >>"$MOCK_LOG"
+[ -z "${MOCK_UPDATE_PI_FAIL:-}" ] || exit 1
+EOF
+chmod +x "$checkout/scripts/update-pi"
+: >"$log"
+run_menu "$extensions_home" '3\n4\n7\n' env MOCK_GIT_MODE=sync MOCK_GIT_AHEAD=0 >/dev/null
+grep -Fq "update-pi $checkout" "$log" || {
+  echo 'bro test: Pi + ext did not update the Pi pin' >&2; exit 1; }
+grep -Fq 'pi update --extensions (skip=1)' "$log" || {
+  echo 'bro test: Pi + ext did not update Pi extensions' >&2; exit 1; }
+[ "$(grep -n '^update-pi ' "$log" | cut -d: -f1)" -lt "$(grep -n '^pi update ' "$log" | cut -d: -f1)" ] || {
+  echo 'bro test: Pi + ext updated extensions before the Pi pin' >&2; exit 1; }
+! grep -Fq 'nix flake update' "$log" || {
+  echo 'bro test: Pi + ext also moved the nixpkgs pin' >&2; exit 1; }
+
+# A failed pin update is reported as a failure, never as already current, and
+# stops before extensions update against a Pi that did not move.
+: >"$log"
+output=$(run_menu "$extensions_home" '3\n4\n7\n' env MOCK_GIT_MODE=sync MOCK_GIT_AHEAD=0 MOCK_UPDATE_PI_FAIL=1 2>&1)
+grep -Fq 'Pi pin update failed' <<<"$output" || {
+  echo 'bro test: a failed Pi pin update was not reported' >&2; exit 1; }
+! grep -Fq 'already current' <<<"$output" || {
+  echo 'bro test: a failed Pi pin update was reported as already current' >&2; exit 1; }
+! grep -q '^pi update ' "$log" || {
+  echo 'bro test: extensions updated after the Pi pin update failed' >&2; exit 1; }
+
 # Without Pi installed the step explains itself rather than failing silently.
 rm "$extensions_home/.local/bin/pi"
 : >"$log"
@@ -256,4 +286,4 @@ output=$(run_menu "$extensions_home" '3\n3\n7\n' env MOCK_GIT_MODE=sync MOCK_GIT
 grep -Fq 'Pi is not installed for this account yet' <<<"$output" || {
   echo 'bro test: a missing Pi did not explain the extension update failure' >&2; exit 1; }
 
-echo 'bro test: PASSED (menu-only entry, apply identity, DNS retry, sync push boundary, accounts wrapper, Pi extensions)'
+echo 'bro test: PASSED (menu-only entry, apply identity, DNS retry, sync push boundary, accounts wrapper, Pi extensions, Pi + ext)'

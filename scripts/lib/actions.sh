@@ -155,14 +155,16 @@ update() {
     $'Nixpkgs\tnormal Nix-managed apps' \
     $'Pi\tthe custom Nix package' \
     $'Extensions\tPi\'s own npm packages, not a repository pin' \
+    $'Pi + ext\tthe Pi package, then its extensions' \
     $'Everything\tNixpkgs, Pi, and Pi extensions' \
     $'Cancel\tleave every version as it is' || return 0
   case "$CHOICE_INDEX" in
     1) update_nixpkgs=yes ;;
     2) update_pi=yes ;;
     3) update_extensions=yes ;;
-    4) update_nixpkgs=yes; update_pi=yes; update_extensions=yes ;;
-    5) log 'update cancelled'; return 0 ;;
+    4) update_pi=yes; update_extensions=yes ;;
+    5) update_nixpkgs=yes; update_pi=yes; update_extensions=yes ;;
+    6) log 'update cancelled'; return 0 ;;
   esac
 
   if [ "$update_nixpkgs" = yes ] || [ "$update_pi" = yes ]; then
