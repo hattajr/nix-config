@@ -103,11 +103,17 @@ update_pins() {
 
   if [ "$update_nixpkgs" = yes ]; then
     log 'updating the nixpkgs pin'
-    run_nix_with_dns_retry nix flake update nixpkgs
+    run_nix_with_dns_retry nix flake update nixpkgs || {
+      warn 'nixpkgs pin update failed'
+      return 1
+    }
   fi
   if [ "$update_pi" = yes ]; then
     log 'updating the Pi pin'
-    "$repo/scripts/update-pi" "$repo"
+    "$repo/scripts/update-pi" "$repo" || {
+      warn 'Pi pin update failed'
+      return 1
+    }
   fi
 
   if run_git -C "$repo" diff --quiet; then
