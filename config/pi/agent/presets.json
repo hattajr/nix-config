@@ -6,12 +6,12 @@
   },
   "medium": {
     "provider": "openai-codex",
-    "model": "gpt-6-sol",
+    "model": "gpt-6.1-sol",
     "thinkingLevel": "high"
   },
   "fast": {
     "provider": "openai-codex",
     "model": "gpt-6-luna",
-    "thinkingLevel": "medium"
+    "thinkingLevel": "high"
   }
 }
