@@ -6,7 +6,9 @@ set -euo pipefail
 repo_root=$(CDPATH='' cd -- "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 bro="$repo_root/scripts/bro"
 pty_run="$repo_root/tests/lib/pty-run"
-work=$(mktemp -d)
+# bro records the checkout by its physical path, and on macOS mktemp's /var is
+# a symlink to /private/var, so resolve it for the paths asserted below.
+work=$(CDPATH='' cd -- "$(mktemp -d)" && pwd -P)
 trap 'rm -rf "$work"' EXIT
 checkout="$work/checkout"
 mockbin="$work/bin"
@@ -61,7 +63,18 @@ command cat >"$mockbin/sleep" <<'EOF'
 #!/bin/sh
 printf 'sleep %s\n' "$*" >>"$MOCK_LOG"
 EOF
-chmod +x "$mockbin/git" "$mockbin/nix" "$mockbin/sleep"
+# Platform-specific paths are asserted on every host, so the kernel name can be
+# overridden; everything else, including the architecture, stays real.
+real_uname=$(command -v uname)
+command cat >"$mockbin/uname" <<EOF
+#!/bin/sh
+if [ "\$*" = -s ] && [ -n "\${MOCK_UNAME_S:-}" ]; then
+  printf '%s\\n' "\$MOCK_UNAME_S"
+  exit 0
+fi
+exec "$real_uname" "\$@"
+EOF
+chmod +x "$mockbin/git" "$mockbin/nix" "$mockbin/sleep" "$mockbin/uname"
 export MOCK_LOG="$log" MOCK_ACTIVATION="$work/activation"
 
 # The checkout is recorded state; there is no variable to point bro elsewhere.
@@ -202,9 +215,13 @@ printf 'proton %s\n' "$*" >>"$MOCK_LOG"
 EOF
 chmod +x "$auth_home/.local/bin/nix-config-setup" "$auth_home/.local/bin/proton-pass-session"
 : >"$log"
-run_menu "$auth_home" '4\n7\n' >/dev/null
+run_menu "$auth_home" '4\n7\n' env MOCK_UNAME_S=Linux >/dev/null
 grep -Fq "proton $auth_home/.local/bin/nix-config-setup" "$log" || {
   echo 'bro test: Linux Accounts did not use the Proton Pass session' >&2; exit 1; }
+: >"$log"
+run_menu "$auth_home" '4\n7\n' env MOCK_UNAME_S=Darwin >/dev/null
+grep -q '^setup ' "$log" && ! grep -q '^proton ' "$log" || {
+  echo 'bro test: macOS Accounts did not run setup directly' >&2; exit 1; }
 rm "$auth_home/.local/bin/proton-pass-session"
 : >"$log"
 run_menu "$auth_home" '4\n7\n' >/dev/null
