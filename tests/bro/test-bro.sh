@@ -127,8 +127,12 @@ output=$(run_menu "$apply_home" '1\n7\n')
 grep -q '^activation$' "$log" || { echo 'bro test: Apply did not activate' >&2; exit 1; }
 grep -Fq 'nix build --impure --no-link' "$log" || {
   echo 'bro test: Apply did not build with the active user identity' >&2; exit 1; }
-grep -Fq "(builtins.getFlake \"path:$checkout\").lib.mkHome" "$log" || {
-  echo 'bro test: Apply used a Git flake that hides untracked configuration' >&2; exit 1; }
+grep -Fq "path = \"$checkout\"" "$log" || {
+  echo 'bro test: Apply did not snapshot the active checkout' >&2; exit 1; }
+grep -Fq 'filter = path: type: builtins.baseNameOf path != ".git"' "$log" || {
+  echo 'bro test: Apply allowed Nix to traverse mutable Git object storage' >&2; exit 1; }
+grep -Fq 'builtins.unsafeDiscardStringContext "path:${source}"' "$log" || {
+  echo 'bro test: Apply did not load the filtered working-tree snapshot' >&2; exit 1; }
 grep -Fq 'username = "apply-user"' "$log" || {
   echo 'bro test: Apply did not pass the active identity explicitly' >&2; exit 1; }
 grep -Eq '^tmux source-file .*/\.config/tmux/tmux\.conf$' "$log" || {

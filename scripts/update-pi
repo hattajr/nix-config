@@ -142,7 +142,17 @@ PY
 npm_deps_derivation() {
   local system activation
   system=$(nix eval --raw --impure --expr 'builtins.currentSystem')
-  activation=$(nix eval --raw --impure --expr "((builtins.getFlake \"path:$repo\").lib.mkHome {
+  activation=$(nix eval --raw --impure --expr "
+    let
+      source = builtins.path {
+        path = \"$repo\";
+        name = \"nix-config-source\";
+        filter = path: type: builtins.baseNameOf path != \".git\";
+      };
+      flake = builtins.getFlake
+        (builtins.unsafeDiscardStringContext \"path:\${source}\");
+    in
+    (flake.lib.mkHome {
       system = \"$system\";
       username = \"validate\";
       homeDirectory = \"/home/validate\";

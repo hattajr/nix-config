@@ -87,9 +87,12 @@ resolve_identity() {
 
 # Passing the identity as an explicit builder argument keeps every committed
 # flake output pure while still activating accounts this repository never names.
+# Copy the working tree so newly created configuration is visible, but never
+# traverse .git: maintenance may remove loose-object directories while Nix is
+# snapshotting the source immediately after Sync.
 home_expr() {
   local repo=$1 platform=$2 attribute=$3
-  printf '((builtins.getFlake "path:%s").lib.mkHome { system = "%s"; username = "%s"; homeDirectory = "%s"; }).%s' \
+  printf 'let source = builtins.path { path = "%s"; name = "nix-config-source"; filter = path: type: builtins.baseNameOf path != ".git"; }; flake = builtins.getFlake (builtins.unsafeDiscardStringContext "path:${source}"); in (flake.lib.mkHome { system = "%s"; username = "%s"; homeDirectory = "%s"; }).%s' \
     "$repo" "$platform" "$IDENTITY_USERNAME" "$IDENTITY_HOME" "$attribute"
 }
 

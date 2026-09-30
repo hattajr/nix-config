@@ -87,7 +87,17 @@ home-manager switch --flake ~/nix-config#x86_64-linux
 nix build ~/nix-config#homeConfigurations."x86_64-linux".activationPackage
 
 # any other account, without editing the flake
-nix build --impure --expr '((builtins.getFlake "path:'"$PWD"'").lib.mkHome {
+nix build --impure --expr '
+let
+  source = builtins.path {
+    path = "'"$PWD"'";
+    name = "nix-config-source";
+    filter = path: type: builtins.baseNameOf path != ".git";
+  };
+  flake = builtins.getFlake
+    (builtins.unsafeDiscardStringContext "path:${source}");
+in
+(flake.lib.mkHome {
   system = "x86_64-linux"; username = "alice"; homeDirectory = "/home/alice";
 }).activationPackage'
 ```
