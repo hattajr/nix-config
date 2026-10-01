@@ -90,9 +90,9 @@ Home Manager links shared files into both `~/.pi/agent/skills/` and
 checkout and Apply again—links are store-backed, not live checkout links.
 
 Shared instructions must work in both agents; keep names unique and supporting
-file paths relative. `design-md-import`, `grill-me`, and `web-browser` remain
-Pi-only. Unrelated local/synced skills are preserved; colliding managed files
-are backed up as described above.
+file paths relative. `grill-me` is shared; it uses each agent's question tool.
+`design-md-import` and `web-browser` remain Pi-only. Unrelated local/synced
+skills are preserved; colliding managed files are backed up as described above.
 
 ### Manual macOS ownership
 

@@ -161,7 +161,7 @@ while IFS= read -r source; do
     cmp "$source" "$root/$relative" || fail "shared skill content differs: $root/$relative"
   done
 done < <(find "$source_root/config/agents/skills" -type f)
-for skill in design-md-import grill-me web-browser; do
+for skill in design-md-import web-browser; do
   [ -f "$home_dir/.pi/agent/skills/$skill/SKILL.md" ] || fail "Pi-only skill missing: $skill"
   [ ! -e "$home_dir/.claude/skills/$skill" ] || fail "Pi-only skill leaked into Claude: $skill"
 done

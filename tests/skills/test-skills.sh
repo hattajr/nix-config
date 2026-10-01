@@ -54,7 +54,8 @@ jq -e '
   has(".claude/skills/new-claude/SKILL.md") and
   (has(".pi/agent/skills/new-claude/SKILL.md") | not) and
   (has(".claude/skills/design-md-import/SKILL.md") | not) and
-  (has(".claude/skills/grill-me/SKILL.md") | not) and
+  has(".pi/agent/skills/grill-me/SKILL.md") and
+  has(".claude/skills/grill-me/SKILL.md") and
   (has(".claude/skills/web-browser/SKILL.md") | not) and
   (has(".claude/skills") | not) and (has(".pi/agent/skills") | not)
 ' "$work/files.json" >/dev/null || fail 'skill isolation or leaf-only ownership failed'
