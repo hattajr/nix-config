@@ -6,6 +6,13 @@ let
       (source: "${prefix}/${lib.removePrefix "${toString root}/" (toString source)}")
       (lib.filesystem.listFilesRecursive root);
 
+  sharedSkillsRoot = ../../config/agents/skills;
+  claudeSkillsRoot = ../../config/claude/skills;
+  sharedSkillTargets = relativeFiles sharedSkillsRoot ".pi/agent/skills"
+    ++ relativeFiles sharedSkillsRoot ".claude/skills";
+  claudeSkillTargets = lib.optionals (builtins.pathExists claudeSkillsRoot)
+    (relativeFiles claudeSkillsRoot ".claude/skills");
+
   nvimRoot = ../../config/nvim;
   piRoot = ../../config/pi/agent;
   piSettings = ../../config/pi/agent/settings.json;
@@ -42,7 +49,8 @@ let
     ".config/proton-pass/README.md"
     ".config/proton-pass/pi.env.example"
     ".config/proton-pass/references.md"
-  ] ++ relativeFiles nvimRoot ".config/nvim" ++ piTargets;
+  ] ++ relativeFiles nvimRoot ".config/nvim" ++ piTargets
+    ++ sharedSkillTargets ++ claudeSkillTargets;
 
   # Home Manager's force flag skips collision checks, but its linker cannot
   # replace a directory occupying a file target. Managed symlinks are safe to

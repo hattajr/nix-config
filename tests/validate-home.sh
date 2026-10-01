@@ -86,6 +86,11 @@ mkdir "$XDG_CONFIG_HOME/tmux/keys.sh"
 printf preserve-tmux >"$XDG_CONFIG_HOME/tmux/keys.sh/keep.txt"
 printf '{"oauth":"preserve"}\n' >"$home_dir/.pi/agent/auth.json"
 printf 'PI_ENV_PRESERVE=yes\n' >"$XDG_CONFIG_HOME/proton-pass/pi.env"
+mkdir -p "$home_dir/.claude/skills/uv/SKILL.md" "$home_dir/.claude/skills/synced" \
+  "$home_dir/.claude/skills/local-only"
+printf legacy-skill >"$home_dir/.claude/skills/uv/SKILL.md/keep.txt"
+printf preserve-synced >"$home_dir/.claude/skills/synced/keep.txt"
+printf preserve-local-skill >"$home_dir/.claude/skills/local-only/SKILL.md"
 
 set +e
 "$activation_package/activate" >/tmp/home-collision.log 2>&1
@@ -116,6 +121,8 @@ grep -Fx preserve-tmux "$backup_root/.config/tmux/keys.sh/keep.txt" >/dev/null |
   fail 'directory-shaped tmux target contents were not quarantined'
 grep -Fx legacy-git "$backup_root/.gitconfig" >/dev/null ||
   fail 'legacy Git config was not quarantined'
+grep -Fx legacy-skill "$backup_root/.claude/skills/uv/SKILL.md/keep.txt" >/dev/null ||
+  fail 'directory-shaped Claude skill leaf was not quarantined'
 grep -Fx preserve-nvim "$XDG_CONFIG_HOME/nvim/local/keep.txt" >/dev/null ||
   fail 'unmanaged Neovim file was not preserved'
 jq -e '.oauth == "preserve"' "$home_dir/.pi/agent/auth.json" >/dev/null ||
@@ -145,6 +152,25 @@ grep -Fx PI_ENV_PRESERVE=yes "$XDG_CONFIG_HOME/proton-pass/pi.env" >/dev/null ||
   fail 'second activation removed the Proton Pass runtime environment'
 [ "$(nix hash file "$nvim_lockfile")" = "$user_lock_hash" ] ||
   fail 'second activation discarded a user-modified Lazy lockfile'
+
+printf '%s: checking shared skills and Claude runtime preservation\n' "$validation_name"
+while IFS= read -r source; do
+  relative=${source#"$source_root/config/agents/skills/"}
+  for root in "$home_dir/.pi/agent/skills" "$home_dir/.claude/skills"; do
+    [ -L "$root/$relative" ] || fail "shared skill leaf was not linked: $root/$relative"
+    cmp "$source" "$root/$relative" || fail "shared skill content differs: $root/$relative"
+  done
+done < <(find "$source_root/config/agents/skills" -type f)
+for skill in design-md-import grill-me web-browser; do
+  [ -f "$home_dir/.pi/agent/skills/$skill/SKILL.md" ] || fail "Pi-only skill missing: $skill"
+  [ ! -e "$home_dir/.claude/skills/$skill" ] || fail "Pi-only skill leaked into Claude: $skill"
+done
+grep -Fx preserve-synced "$home_dir/.claude/skills/synced/keep.txt" >/dev/null ||
+  fail 'activation removed Claude synced skills'
+grep -Fx preserve-local-skill "$home_dir/.claude/skills/local-only/SKILL.md" >/dev/null ||
+  fail 'activation removed unmanaged Claude skills'
+[ ! -L "$home_dir/.claude/skills" ] || fail 'Claude skills root is not writable'
+[ ! -L "$home_dir/.pi/agent/skills" ] || fail 'Pi skills root is not writable'
 
 profile_bin="$home_dir/.nix-profile/bin"
 [ -d "$profile_bin" ] || fail 'Home Manager profile bin directory was not created'

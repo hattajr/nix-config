@@ -70,6 +70,30 @@ symlinks are simply refreshed. The legacy `~/.gitconfig` is quarantined there
 after `~/.config/git/config` is linked. Runtime state and secrets outside the
 managed paths remain writable.
 
+### Agent skills
+
+| Source directory | Receives the skills |
+| --- | --- |
+| `config/agents/skills/` | Pi and Claude Code |
+| `config/pi/agent/skills/` | Pi only |
+| `config/claude/skills/` (create as needed) | Claude Code only |
+
+**Create or share a skill:**
+1. Ask Pi or Claude to create `config/agents/skills/<name>/SKILL.md` in this
+   checkout, with `name` and `description` frontmatter. To share an existing
+   local Pi skill, move its whole folder here from `~/.pi/agent/skills/`.
+2. Run `git add config/agents/skills/<name>`, then `bro` → **Apply**.
+3. Run `/reload` in Pi and restart Claude Code.
+
+Home Manager links shared files into both `~/.pi/agent/skills/` and
+`~/.claude/skills/`; no per-skill Nix edits are needed. Edit skills in this
+checkout and Apply again—links are store-backed, not live checkout links.
+
+Shared instructions must work in both agents; keep names unique and supporting
+file paths relative. `design-md-import`, `grill-me`, and `web-browser` remain
+Pi-only. Unrelated local/synced skills are preserved; colliding managed files
+are backed up as described above.
+
 ### Manual macOS ownership
 
 Browsers on macOS are intentionally installed and updated manually. Home Manager does not install Chrome or take ownership of browser profiles. Tailscale and Proton split DNS are external host state on every platform: install Tailscale through its signed system package repository, then enable and maintain it through the host tools. The managed `devtunnel` command defaults to the `mbp` SSH hostname and only uses ordinary SSH forwarding. The managed SSH client is the GSSAPI build, because hosts such as Ubuntu set `GSSAPIAuthentication` in `/etc/ssh/ssh_config` and a client built without that keyword warns on every connection.

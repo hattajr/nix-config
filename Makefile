@@ -5,6 +5,7 @@ test:
 	@./tests/bootstrap/test-bootstrap.sh
 	@./tests/identity/test-identity.sh
 	@./tests/pi/test-patch-pi-package.sh
+	@./tests/skills/test-skills.sh
 	@./tests/bro/test-bro.sh
 	@./tests/proton-pass/test-pi-wrapper.sh
 	@./tests/proton-pass/test-session-wrapper.sh

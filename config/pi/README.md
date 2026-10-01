@@ -64,7 +64,7 @@ Home Manager and the Proton Pass Pi launcher do not manage this file:
 - `agent/chains/` — saved workflows
 - `agent/extensions/` — custom slash commands and tools
 - `agent/scripts/` — helper scripts
-- `agent/skills/` — local skills
+- `agent/skills/` — Pi-only skills; shared sources live in `config/agents/skills/` in nix-config and deploy into both Pi and Claude Code
 - `agent/themes/` — local themes
 - `agent/intercepted-commands/` — Python and Poetry policy wrappers
 - `agent/scripts/` — executable Pi helper scripts
