@@ -59,6 +59,11 @@ Pi installs into its own writable state; choosing them runs `pi update
 --extensions` on this machine only and changes nothing in the repository, so
 each machine updates them itself.
 
+Pi updates also persist `home/modules/pi-package-lock.json`. If the npm tarball
+ships no lockfile, the updater uses npm to resolve runtime dependencies with
+install scripts disabled. This lockfile is reviewed, committed, or discarded
+alongside the Pi version and Nix dependency hash.
+
 ### How ownership works
 
 Home Manager is the sole owner of each configuration file it manages. Activation

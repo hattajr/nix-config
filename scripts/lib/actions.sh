@@ -125,9 +125,21 @@ update_pins() {
 
   if confirm 'Show the complete generated diff?' no; then
     run_git -C "$repo" diff
+    # A newly generated lockfile is not tracked until the user approves commit.
+    if [ -f "$repo/home/modules/pi-package-lock.json" ] && \
+      ! run_git -C "$repo" ls-files --error-unmatch home/modules/pi-package-lock.json >/dev/null 2>&1; then
+      run_git -C "$repo" diff --no-index -- /dev/null "$repo/home/modules/pi-package-lock.json" || {
+        [ "$?" -eq 1 ] || fail 'could not show the generated Pi lockfile diff'
+      }
+    fi
   fi
   if ! confirm 'Apply these changes on this machine?' no; then
     run_git -C "$repo" restore --source=HEAD -- flake.lock home/modules/pi.nix
+    if run_git -C "$repo" ls-files --error-unmatch home/modules/pi-package-lock.json >/dev/null 2>&1; then
+      run_git -C "$repo" restore --source=HEAD -- home/modules/pi-package-lock.json
+    else
+      rm -f "$repo/home/modules/pi-package-lock.json"
+    fi
     log 'update discarded'
     return 0
   fi
@@ -138,6 +150,9 @@ update_pins() {
     return 0
   fi
   run_git -C "$repo" add flake.lock home/modules/pi.nix
+  if [ -f "$repo/home/modules/pi-package-lock.json" ]; then
+    run_git -C "$repo" add home/modules/pi-package-lock.json
+  fi
   run_git -C "$repo" commit -m 'Update managed package pins'
   if confirm 'Push the commit so other machines can sync it?' no; then
     run_git -C "$repo" push

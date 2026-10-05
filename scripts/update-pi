@@ -5,6 +5,7 @@ set -euo pipefail
 repo=${1:?usage: update-pi <nix-config-repository>}
 repo=$(CDPATH='' cd -- "$repo" && pwd)
 pi_nix="$repo/home/modules/pi.nix"
+pi_lock="$repo/home/modules/pi-package-lock.json"
 for command in curl jq nix nix-store tar python3; do
   command -v "$command" >/dev/null 2>&1 || {
     printf 'bro: ERROR: Pi update requires %s\n' "$command" >&2
@@ -35,6 +36,9 @@ fi
 work=$(mktemp -d "${TMPDIR:-/tmp}/bro-update-pi.XXXXXX")
 original_pi_nix="$work/pi.nix.original"
 cp "$pi_nix" "$original_pi_nix"
+if [ -f "$pi_lock" ]; then
+  cp "$pi_lock" "$work/lock.original"
+fi
 restore_pi_nix=no
 cleanup() {
   status=$?
@@ -42,6 +46,11 @@ cleanup() {
   # update must leave the module exactly as it was found.
   if [ "$restore_pi_nix" = yes ] && [ "$status" -ne 0 ]; then
     cp "$original_pi_nix" "$pi_nix"
+    if [ -f "$work/lock.original" ]; then
+      cp "$work/lock.original" "$pi_lock"
+    else
+      rm -f "$pi_lock"
+    fi
     printf 'bro: restored %s after a failed Pi update\n' "$pi_nix" >&2
   fi
   rm -rf "$work"
@@ -50,59 +59,55 @@ trap cleanup EXIT
 
 curl --fail --silent --show-error --location "$tarball" --output "$work/pi.tgz"
 tar -xzf "$work/pi.tgz" -C "$work"
-shrinkwrap="$work/package/npm-shrinkwrap.json"
+lockfile="$work/package/npm-shrinkwrap.json"
+if [ ! -f "$lockfile" ]; then
+  lockfile="$work/package/package-lock.json"
+fi
+if [ ! -f "$lockfile" ]; then
+  command -v npm >/dev/null 2>&1 || {
+    printf 'bro: ERROR: Pi tarball has no lockfile; generating one requires npm\n' >&2
+    exit 1
+  }
+  printf 'bro: Pi %s has no published lockfile; resolving runtime dependencies\n' "$version"
+  "$repo/scripts/patch-pi-package.sh" "$work/package/package.json"
+  (cd "$work/package" && npm install --package-lock-only --lockfile-version=3 \
+    --ignore-scripts --omit=dev --no-audit --no-fund --registry=https://registry.npmjs.org)
+fi
 
-# Pi's published shrinkwrap omits integrity fields for its sibling
-# @earendil-works packages, and upstream adds and drops siblings between
-# releases. Discover the set from the lockfile rather than pinning a list, so
-# a reshuffle upstream does not need a matching edit here.
-# A read loop rather than mapfile: macOS ships bash 3.2, which lacks mapfile.
-packages=()
-while IFS= read -r package_name; do
-  packages+=("$package_name")
-done < <(jq -r '
-  .packages
-  | to_entries[]
-  | select(.key | startswith("node_modules/@earendil-works/"))
+# Older releases omit sibling integrity fields. An empty repair set is valid.
+# Write jq output to a file so parse failures cannot disappear in process substitution.
+jq -er '.packages | type == "object"' "$lockfile" >/dev/null
+jq -r '
+  .packages | to_entries[]
+  | select(.key | test("(^|/)node_modules/@earendil-works/"))
   | select((.value.resolved // "") | startswith("https://"))
   | select(.value.integrity | not)
-  | .key | sub("^node_modules/@earendil-works/"; "")
-' "$shrinkwrap")
-
-[ "${#packages[@]}" -gt 0 ] || {
-  printf 'bro: ERROR: Pi shrinkwrap lists no sibling package missing integrity; updater needs adjustment\n' >&2
-  exit 1
-}
-
-siblings=()
-for package_name in "${packages[@]}"; do
-  dependency_version=$(jq -r --arg name "@earendil-works/$package_name" \
-    '.packages["node_modules/" + $name].version // empty' "$shrinkwrap")
+  | [.key, .value.version] | @tsv
+' "$lockfile" >"$work/missing-integrity"
+while IFS=$'\t' read -r key dependency_version; do
+  package_name=${key##*/}
   [ -n "$dependency_version" ] || {
-    printf 'bro: ERROR: Pi shrinkwrap has no %s dependency version; updater needs adjustment\n' "$package_name" >&2
+    printf 'bro: ERROR: Pi lockfile has no %s dependency version\n' "$package_name" >&2
     exit 1
   }
   integrity=$(curl --fail --silent --show-error \
-    "https://registry.npmjs.org/@earendil-works%2F${package_name}/${dependency_version}" | jq -r '.dist.integrity')
-  [ "$integrity" != null ] || {
-    printf 'bro: ERROR: npm did not provide integrity for %s\n' "$package_name" >&2
-    exit 1
-  }
-  siblings+=("$package_name=$dependency_version=$integrity")
-done
-
-printf 'bro: Pi %s sibling packages: %s\n' "$version" "${packages[*]}"
+    "https://registry.npmjs.org/@earendil-works%2F${package_name}/${dependency_version}" \
+    | jq -er '.dist.integrity | select(type == "string" and length > 0)')
+  jq --arg key "$key" --arg integrity "$integrity" \
+    '.packages[$key].integrity = $integrity' "$lockfile" >"$work/lock.patched"
+  mv "$work/lock.patched" "$lockfile"
+done <"$work/missing-integrity"
 
 src_hash=$(nix store prefetch-file --json "$tarball" | jq -r '.hash')
 
 write_pi_nix() {
   PI_VERSION="$version" PI_TARBALL="$tarball" PI_SRC_HASH="$src_hash" PI_NPM_DEPS_HASH="$1" \
-  python3 - "$pi_nix" "${siblings[@]}" <<'PY'
+  python3 - "$pi_nix" <<'PY'
 import os
 import re
 import sys
 
-path, *entries = sys.argv[1:]
+path = sys.argv[1]
 text = open(path, encoding="utf-8").read()
 replacements = {
     r'(version = ")[^"]+(";)': os.environ["PI_VERSION"],
@@ -116,32 +121,24 @@ for pattern, value in replacements.items():
     if count != 1:
         raise SystemExit(f"could not update Pi field matching {pattern}")
 
-# Regenerate the whole block: the sibling set itself is upstream data. Lines are
-# written as Nix renders them inside the '' string, then indented to match.
-append = "a" + "\\"
-lines = []
-for entry in entries:
-    name, dependency_version, integrity = entry.split("=", 2)
-    lines.append(f"      sed -i '/{name}-{dependency_version}.tgz/ {append}")
-    lines.append(f"""          "integrity": "{integrity}",' npm-shrinkwrap.json""")
-block = "\n".join(lines)
-
-begin = "# BEGIN sibling integrity fields generated by scripts/update-pi"
-end = "# END sibling integrity fields generated by scripts/update-pi"
+# Persist the exact lockfile used by Nix, including generated runtime-only locks.
+block = "      cp ${./pi-package-lock.json} npm-shrinkwrap.json"
+begin = "# BEGIN npm lockfile generated by scripts/update-pi"
+end = "# END npm lockfile generated by scripts/update-pi"
 marked = re.compile(
     rf"(^[ \t]*{re.escape(begin)}\n).*?(^[ \t]*{re.escape(end)}$)",
     re.S | re.M,
 )
 text, count = marked.subn(lambda match: match.group(1) + block + "\n" + match.group(2), text, count=1)
 if count != 1:
-    raise SystemExit("could not find the generated sibling integrity block in pi.nix")
+    raise SystemExit("could not find the generated npm lockfile block in pi.nix")
 open(path, "w", encoding="utf-8").write(text)
 PY
 }
 
 npm_deps_derivation() {
   local system activation
-  system=$(nix eval --raw --impure --expr 'builtins.currentSystem')
+  system=$(nix eval --raw --impure --expr 'builtins.currentSystem') || return
   activation=$(nix eval --raw --impure --expr "
     let
       source = builtins.path {
@@ -156,7 +153,7 @@ npm_deps_derivation() {
       system = \"$system\";
       username = \"validate\";
       homeDirectory = \"/home/validate\";
-    }).activationPackage.drvPath")
+    }).activationPackage.drvPath") || return
   nix-store --query --requisites "$activation" \
     | grep -E -- '-pi-coding-agent-.*-npm-deps\.drv$' \
     | head -1
@@ -165,8 +162,9 @@ npm_deps_derivation() {
 # npmDepsHash covers the lockfile byte for byte and the fetcher's own cache
 # layout, so it cannot be reproduced by patching a copy of the lockfile here.
 # Pin a placeholder, then let Nix report the hash its own build produced.
-write_pi_nix 'sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA='
 restore_pi_nix=yes
+cp "$lockfile" "$pi_lock"
+write_pi_nix 'sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA='
 deps_derivation=$(npm_deps_derivation)
 [ -n "$deps_derivation" ] || {
   printf 'bro: ERROR: could not locate Pi npm dependency derivation; updater needs adjustment\n' >&2
@@ -177,7 +175,7 @@ if build_log=$(nix build --no-link "$deps_derivation^out" 2>&1); then
   exit 1
 fi
 npm_deps_hash=$(grep -oE 'got:[[:space:]]+sha256-[A-Za-z0-9+/=]+' <<<"$build_log" \
-  | head -1 | grep -oE 'sha256-[A-Za-z0-9+/=]+')
+  | head -1 | grep -oE 'sha256-[A-Za-z0-9+/=]+' || true)
 [ -n "$npm_deps_hash" ] || {
   printf 'bro: ERROR: Nix did not report a Pi npm dependency hash\n%s\n' "$build_log" >&2
   exit 1
