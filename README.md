@@ -99,6 +99,69 @@ file paths relative. `grill-me` is shared; it uses each agent's question tool.
 `design-md-import` and `web-browser` remain Pi-only. Unrelated local/synced
 skills are preserved; colliding managed files are backed up as described above.
 
+#### GitHub issue planning: triage and to-tickets
+
+Three shared skills cover planning through implementation:
+
+| Skill | Purpose |
+| --- | --- |
+| [`triage`](config/agents/skills/triage/SKILL.md) | Capture ideas, review the backlog, refine issues, and prepare approved briefs |
+| [`to-tickets`](config/agents/skills/to-tickets/SKILL.md) | Split settled docs, conversations, or a large issue into approved vertical-slice tickets with blockers |
+| [`implement-issues`](config/agents/skills/implement-issues/SKILL.md) | Implement an eligible issue or a safe ready batch and deliver a reviewed PR |
+
+Pi uses `/skill:<name>`; Claude Code uses `/<name>`. Natural-language requests
+also work. Both planning skills require authenticated `gh`, use GitHub-only
+issue persistence, and ask for approval before publishing or changing briefs,
+labels, dependencies, or parent tracking. No upstream setup skill is required.
+If a repository lacks the necessary labels, the agent proposes minimal label
+creation for your approval instead of silently configuring the repository.
+
+**Planning commands:**
+
+| Task | Pi | Claude Code |
+| --- | --- | --- |
+| Show issues needing attention | `/skill:triage` | `/triage` |
+| Capture an idea only | `/skill:triage capture PDF export; don't refine it yet` | `/triage capture PDF export; don't refine it yet` |
+| Refine an existing issue | `/skill:triage #42` | `/triage #42` |
+| Review an unlabeled backlog | `/skill:triage review my backlog for readiness` | `/triage review my backlog for readiness` |
+| List ready work and blockers | `/skill:triage what's ready?` | `/triage what's ready?` |
+| Split a fresh app's design | `/skill:to-tickets docs/` | `/to-tickets docs/` |
+| Split a large existing issue | `/skill:to-tickets #58` | `/to-tickets #58` |
+
+**Workflow variants (skill sequence):**
+
+| Situation | Sequence and result |
+| --- | --- |
+| Fresh app designed in `docs/` | Optional `grill-me` for design gaps → `to-tickets docs/` → approve breakdown/publication → `implement-issues` |
+| Capture an idea for later | `triage capture …` → approve publication → `needs-triage`; stop here, no grilling or implementation |
+| Refine that idea later | `triage #42` → `grill-me` only if decisions remain → approve the brief → `ready-for-agent` → `implement-issues #42` |
+| Discuss a new, small feature | `grill-me` → confirm shared understanding → `triage create an issue from this discussion` → approve publication → `implement-issues #N` |
+| Discuss a larger feature | `grill-me` → `to-tickets` using the settled conversation → approve slices/dependencies/publication → `implement-issues` |
+| Clear bug report | `triage` with the report or existing issue → investigate/reproduce → approve regression criteria and brief → `implement-issues #N`; no mandatory grilling |
+| Oversized existing issue | Optional `triage #58` for unresolved scope → `to-tickets #58` → approve child tickets and parent tracking → `implement-issues`, not `implement-issues #58` |
+| Existing issues lack readiness labels | `triage review my backlog for readiness` → approve per-issue briefs/state changes → `implement-issues`; never bulk-label vague ideas ready |
+
+During refinement, `triage` reads and follows `grill-me` when needed, then returns
+to preparing the brief—you do not have to manually switch skills at every step.
+If you stop halfway, ask it to save established decisions and remaining questions
+on the issue; unfinished grilling does not earn `grilled`. If a request is too
+large, it recommends `to-tickets` rather than making an umbrella executable.
+Neither planning skill automatically starts implementation.
+
+**Labels:** `needs-triage` means evaluation is unfinished; `needs-info` means
+specific answers are awaited; `ready-for-agent` means the implementation brief
+is approved and complete. `grilled` is an optional completed-discussion marker,
+not the implementation gate. Approved doc-derived tickets and clear bugs can be
+ready without it. A ready ticket can still be blocked: `implement-issues` checks
+prerequisite completion, claims, and concurrency against current code.
+
+The approved issue body is the durable brief: current/desired behavior,
+constraints, acceptance criteria, validation, non-goals, blockers, and design
+references. Comments preserve investigation and progress, not a competing spec.
+`to-tickets` prefers complete vertical slices over database/backend/UI phases,
+links real GitHub blockers, and keeps split parents out of the execution queue
+only with your approval. It never automatically closes a parent.
+
 #### Implement GitHub issues
 
 The shared [`implement-issues`](config/agents/skills/implement-issues/SKILL.md)
@@ -142,7 +205,8 @@ holds durable design documentation. There is no local `PLANS/`, issue mirror,
 status table, or dependency on the old `/build`. Temporary worktrees and runtime
 logs are execution resources, not another backlog. The skill is adapted from
 Matt Pocock's `implement-spec` approach; his entire skill collection is not
-required. `to-tickets` and `triage` are not installed by this addition.
+required. The shared `triage` and `to-tickets` skills above prepare the backlog
+for this implementation step.
 
 Missing decisions or unsatisfied dependencies stop the affected issue rather
 than triggering guesses or scope expansion. Missing required validation or

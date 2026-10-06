@@ -9,7 +9,7 @@ compatibility: Requires git and authenticated gh. Parallel implementation requir
 
 GitHub is the only persistent ticket store. Implement already-approved work, not a new plan. Keep the parent agent in charge of selection, claims, integration, review, and publication.
 
-Read [GitHub operations](references/github.md) and [execution guidance](references/execution.md) before acting. Resolve these paths relative to this skill directory.
+Read [GitHub operations](references/github.md), [execution guidance](references/execution.md), and the shared [label policy](../triage/references/labels.md) before acting. Resolve these paths relative to this skill directory. Honor documented repository mappings consistently in readiness queries and state changes.
 
 ## Invocation
 
