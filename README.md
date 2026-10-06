@@ -99,6 +99,59 @@ file paths relative. `grill-me` is shared; it uses each agent's question tool.
 `design-md-import` and `web-browser` remain Pi-only. Unrelated local/synced
 skills are preserved; colliding managed files are backed up as described above.
 
+#### Implement GitHub issues
+
+The shared [`implement-issues`](config/agents/skills/implement-issues/SKILL.md)
+skill turns approved GitHub issues into a reviewed PR. It requires a matching
+Git checkout and an authenticated `gh` CLI. Activate it with `bro` → **Apply**,
+then `/reload` in Pi or restart Claude Code.
+
+| Task | Pi | Claude Code |
+| --- | --- | --- |
+| Select a ready batch | `/skill:implement-issues` | `/implement-issues` |
+| Implement only #42 | `/skill:implement-issues #42` | `/implement-issues #42` |
+
+Full issue URLs and `owner/repo#42` references are also accepted, provided the
+checkout matches that repository. Natural language works too: “Implement ready
+GitHub issues in parallel.”
+
+**Prepare an issue:** settle its goal, desired behavior, acceptance criteria,
+constraints, non-goals, and blockers in an approved issue brief, then apply
+`ready-for-agent`. Use `grill-me` first when decisions need discussion.
+`grilled` records completed discussion; it neither replaces readiness nor is
+required for a clearly specified bug. Idea dumps without an approved brief
+remain outside the implementation queue.
+
+**What a run does:**
+1. Read issue bodies, comments, referenced design docs, and current code.
+2. Without a target, select one safe batch of up to three open, unclaimed
+   `ready-for-agent` issues, oldest eligible first. With a target, select only
+   that issue—never automatically implement its blockers, children, or parent.
+3. Check that blockers are actually satisfied in the PR base branch and that
+   selected issues can coexist without conflicting contracts or edits.
+4. Claim the issues on GitHub, then implement with one writer per isolated
+   worktree. Run fewer workers when necessary, or execute serially when safe
+   delegation is unavailable.
+5. Integrate successful work, run behavior-focused validation, and independently
+   review the combined diff. Resolve material findings within approved scope.
+6. Push a new integration branch, open one PR for the successful batch, and post
+   validation/review evidence and the PR link on its issues.
+
+**Boundaries:** GitHub owns tickets, claims, decisions, and progress; `docs/`
+holds durable design documentation. There is no local `PLANS/`, issue mirror,
+status table, or dependency on the old `/build`. Temporary worktrees and runtime
+logs are execution resources, not another backlog. The skill is adapted from
+Matt Pocock's `implement-spec` approach; his entire skill collection is not
+required. `to-tickets` and `triage` are not installed by this addition.
+
+Missing decisions or unsatisfied dependencies stop the affected issue rather
+than triggering guesses or scope expansion. Missing required validation or
+independent review means a draft PR, not a ready-for-review success. Issues
+remain open and claimed while awaiting merge; the skill never merges PRs,
+enables auto-merge, deploys, or closes issues early. Each invocation stops after
+its selected batch rather than draining the backlog. Partial work is preserved
+with recovery pointers when delivery fails.
+
 ### Manual macOS ownership
 
 Browsers on macOS are intentionally installed and updated manually. Home Manager does not install Chrome or take ownership of browser profiles. Tailscale and Proton split DNS are external host state on every platform: install Tailscale through its signed system package repository, then enable and maintain it through the host tools. The managed `devtunnel` command defaults to the `mbp` SSH hostname and only uses ordinary SSH forwarding. The managed SSH client is the GSSAPI build, because hosts such as Ubuntu set `GSSAPIAuthentication` in `/etc/ssh/ssh_config` and a client built without that keyword warns on every connection.
