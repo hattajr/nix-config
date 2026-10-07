@@ -205,6 +205,9 @@ settings="$home_dir/.pi/agent/settings.json"
 jq -e '.lastChangelogVersion == "0.0.0"' "$settings" >/dev/null || fail 'Pi changelog marker is missing'
 [ -f "$home_dir/.pi/agent/agents/planner.md" ] || fail 'Pi agents were not deployed'
 [ -f "$home_dir/.pi/agent/extensions/plan-autoloop.ts" ] || fail 'Pi extensions were not deployed'
+[ -L "$home_dir/.pi/agent/extensions/goal.ts" ] && [ -s "$home_dir/.pi/agent/extensions/goal.ts" ] ||
+  fail 'Pi goal extension was not deployed as a managed file'
+[ ! -L "$home_dir/.pi/agent/extensions" ] || fail 'Pi extensions root is not writable'
 [ -f "$home_dir/.pi/agent/extensions/plans-at-autocomplete.ts" ] ||
   fail 'Pi PLANS autocomplete extension was not deployed'
 [ -x "$home_dir/.pi/agent/intercepted-commands/python" ] || fail 'Pi command wrappers were not deployed executable'

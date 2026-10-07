@@ -58,6 +58,28 @@ Home Manager and the Proton Pass Pi launcher do not manage this file:
 }
 ```
 
+## Long-running goals
+
+`/goal <objective>` starts an explicit, session-persisted goal. Pi automatically
+continues working across turns until the goal is complete, blocked, paused, or
+limited by usage/budget. Ordinary tasks do not automatically become goals.
+
+- `/goal` — show the current goal and usage
+- `/goal pause` / `/goal resume` — stop / restart automatic continuation
+- `/goal edit` — edit the objective interactively
+- `/goal clear` — remove the goal
+
+There is no token budget by default. To request one, ask Pi to create a
+long-running goal with an explicit token budget; the `create_goal` tool accepts
+`token_budget`. The budget is checked after a run, not enforced as a hard cap
+on an in-flight request.
+
+Home Manager installs only [`goal.ts` from mitsuhiko/agent-stuff](https://github.com/mitsuhiko/agent-stuff/blob/0865c849befd2021490679f96a8dee58c84ac857/extensions/goal.ts)
+([Apache-2.0](https://github.com/mitsuhiko/agent-stuff/blob/0865c849befd2021490679f96a8dee58c84ac857/LICENSE)),
+pinned by URL and hash in `home/modules/pi.nix`. Update both there to upgrade;
+`pi update --extensions` does not update this Nix-managed extension.
+Apply Home Manager, then run `/reload` in Pi to load it.
+
 ## Repo layout
 
 - `agent/agents/` — leaf agents (including the Gemini-powered `visual-reviewer`)

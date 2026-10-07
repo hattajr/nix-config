@@ -78,6 +78,15 @@ in
   '';
 
   home.file = piStaticHomeFiles // {
+    # Install only the reviewed goal extension, not the rest of agent-stuff.
+    # Keep its revision/hash pinned independently of the Pi executable.
+    ".pi/agent/extensions/goal.ts" = {
+      source = pkgs.fetchurl {
+        url = "https://raw.githubusercontent.com/mitsuhiko/agent-stuff/0865c849befd2021490679f96a8dee58c84ac857/extensions/goal.ts";
+        hash = "sha256-qQiyugQ1JLoQpw695x1dWN4EIvQmpZExHtWmFJO77wk=";
+      };
+      force = true;
+    };
     ".pi/README.md" = { source = ../../config/pi/README.md; force = true; };
     ".pi/.gitignore" = { source = ../../config/pi/.gitignore; force = true; };
     ".pi/.nvmrc" = { source = ../../config/pi/.nvmrc; force = true; };
