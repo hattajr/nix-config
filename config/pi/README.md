@@ -102,13 +102,13 @@ Use `/preset thinking`, `/preset medium`, or `/preset fast` to select a preset:
 | Preset | Model | Thinking level |
 | --- | --- | --- |
 | `thinking` | `openai-codex/gpt-6-astra` | high |
-| `medium` | `openai-codex/gpt-6.1-sol` | high |
-| `fast` (default) | `deepseek/deepseek-flash` | high |
+| `medium` (default) | `openai-codex/gpt-6.1-sol` | high |
+| `fast` | `deepseek/deepseek-flash` | high |
 
 `/preset` without arguments or `Ctrl+Shift+U` cycles thinking → medium → fast.
 Presets are configured in `agent/presets.json`. Home Manager derives the parent
-startup model and effort from `fast`, so DeepSeek credentials are required for
-that default (`DEEPSEEK_API_KEY`, optionally injected through Proton Pass).
+startup model and effort from `medium`, so OpenAI Codex credentials are required
+for that default (authenticate with `/login`).
 
 ### Builtin subagent presets
 
@@ -136,7 +136,7 @@ before using that role.
 Changing the parent's `/preset` does not change these role assignments. Project
 settings and explicit per-run overrides can still replace the generated defaults.
 The parent preset extension does not run inside background subagents, so it
-cannot reset their selected model to `fast`.
+cannot reset their selected model to the parent's `medium` default.
 
 ## Visual UI reviews
 

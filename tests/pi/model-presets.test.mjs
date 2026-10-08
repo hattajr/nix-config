@@ -58,12 +58,12 @@ function assertPreset(state, name) {
   assert.equal(state.status, name.toUpperCase());
 }
 
-test("parent starts on DeepSeek fast and switches/cycles shared presets", async () => {
+test("parent starts on Codex medium and switches/cycles shared presets", async () => {
   const { events, commands, shortcuts, state, ctx } = session();
   await events.get("session_start")({}, ctx);
-  assertPreset(state, "fast");
-  assert.equal(state.model.provider, "deepseek");
-  assert.equal(state.model.id, "deepseek-flash");
+  assertPreset(state, "medium");
+  assert.equal(state.model.provider, "openai-codex");
+  assert.equal(state.model.id, "gpt-6.1-sol");
   for (const name of ["medium", "thinking", "fast"]) {
     await commands.get("preset").handler(name, ctx);
     assertPreset(state, name);
@@ -106,6 +106,6 @@ test("unknown preset leaves the selected model unchanged", async () => {
   const { events, commands, state, ctx } = session();
   await events.get("session_start")({}, ctx);
   await commands.get("preset").handler("typo", ctx);
-  assertPreset(state, "fast");
+  assertPreset(state, "medium");
   assert.match(state.notifications.at(-1).message, /Unknown preset/);
 });

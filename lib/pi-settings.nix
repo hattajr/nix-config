@@ -5,7 +5,7 @@ let
   presetFor = name:
     if builtins.hasAttr name presets then presets.${name}
     else throw "Unknown Pi model preset: ${name}";
-  defaultPreset = presetFor "fast";
+  defaultPreset = presetFor "medium";
   subagents = settings.subagents or { };
   overrides = subagents.agentOverrides or { };
   resolvedOverrides = builtins.mapAttrs (agent: name:

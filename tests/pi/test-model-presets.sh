@@ -18,7 +18,7 @@ resolve() {
 }
 resolve > "$work/resolved.json"
 jq -e '
-  .defaultProvider == "deepseek" and .defaultModel == "deepseek-flash" and
+  .defaultProvider == "openai-codex" and .defaultModel == "gpt-6.1-sol" and
   .defaultThinkingLevel == "high" and
   .subagents.agentOverrides == {
     "scout": {"model":"openai-codex/gpt-6.1-sol", "thinking":"high"},
@@ -35,20 +35,35 @@ jq --slurpfile base "$work/settings.json" -e '
   del(.defaultProvider, .defaultModel, .defaultThinkingLevel, .subagents) == $base[0]
 ' "$work/resolved.json" >/dev/null
 
-# A single preset edit updates every assigned role and the parent default,
-# including effort, without changing other roles.
+# Editing fast updates its assigned roles, without changing the parent default
+# or other roles.
 jq '.fast = {provider:"test-provider", model:"replacement", thinkingLevel:"low"}' \
   "$work/presets.json" > "$work/new.json"
 mv "$work/new.json" "$work/presets.json"
 resolve > "$work/changed.json"
 jq --slurpfile old "$work/resolved.json" -e '
-  .defaultProvider == "test-provider" and .defaultModel == "replacement" and
-  .defaultThinkingLevel == "low" and
+  .defaultProvider == $old[0].defaultProvider and .defaultModel == $old[0].defaultModel and
+  .defaultThinkingLevel == $old[0].defaultThinkingLevel and
   .subagents.agentOverrides.worker == {model:"test-provider/replacement", thinking:"low"} and
   .subagents.agentOverrides.delegate == .subagents.agentOverrides.worker and
   (.subagents.agentOverrides | del(.worker, .delegate)) ==
     ($old[0].subagents.agentOverrides | del(.worker, .delegate))
 ' "$work/changed.json" >/dev/null
+
+# Editing medium updates the parent and its assigned roles, including effort,
+# without changing roles assigned to other presets.
+jq '.medium = {provider:"medium-provider", model:"medium-replacement", thinkingLevel:"low"}' \
+  "$work/presets.json" > "$work/new.json"
+mv "$work/new.json" "$work/presets.json"
+resolve > "$work/medium-changed.json"
+jq --slurpfile old "$work/changed.json" -e '
+  .defaultProvider == "medium-provider" and .defaultModel == "medium-replacement" and
+  .defaultThinkingLevel == "low" and
+  .subagents.agentOverrides.scout == {model:"medium-provider/medium-replacement", thinking:"low"} and
+  .subagents.agentOverrides.researcher == .subagents.agentOverrides.scout and
+  (.subagents.agentOverrides | del(.scout, .researcher)) ==
+    ($old[0].subagents.agentOverrides | del(.scout, .researcher))
+' "$work/medium-changed.json" >/dev/null
 
 # Role reassignment resolves the new preset rather than retaining the old model.
 jq '.worker = "thinking"' "$work/subagent-presets.json" > "$work/new.json"

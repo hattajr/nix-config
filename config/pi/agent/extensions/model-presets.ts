@@ -26,7 +26,7 @@ type Presets = Record<string, Preset>;
 
 const PRESETS_PATH = join(getAgentDir(), "presets.json");
 const PRESET_ORDER = ["thinking", "medium", "fast"];
-const DEFAULT_PRESET = "fast";
+const DEFAULT_PRESET = "medium";
 
 function loadPresets(): Presets {
   if (!existsSync(PRESETS_PATH)) return {};
