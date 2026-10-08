@@ -24,7 +24,7 @@ let
     '';
 
     npmDepsFetcherVersion = 2;
-    npmDepsHash = "sha256-NzfDTcmM9Z0O/+0EvFFHmvnIR6OVAyys84GQ+vRI58Y=";
+    npmDepsHash = "sha256-tIvqpBYkyI2I380itYiLVeNw7Jvra1W7QjjVWhwyGp8=";
     npmInstallFlags = [ "--omit=dev" ];
     npmFlags = [ "--omit=dev" ];
     dontNpmBuild = true;
