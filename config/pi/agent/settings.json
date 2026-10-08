@@ -15,7 +15,8 @@
   ],
   "packages": [
     "npm:pi-web-access",
-    "npm:@plannotator/pi-extension"
+    "npm:@plannotator/pi-extension",
+    "npm:pi-subagents"
   ],
   "telegramNotification": {
     "enabled": false
