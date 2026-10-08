@@ -145,5 +145,9 @@ in
     FZF_ALT_C_OPTS = "--walker-skip .git,node_modules,target --preview 'eza --tree --color=always {}'";
     FZF_CTRL_R_OPTS = "--bind 'ctrl-y:execute-silent(echo -n {2..} | pbcopy)+abort' --color header:italic --header 'Press CTRL-Y to copy command into clipboard'";
     FZF_CTRL_T_OPTS = "--walker-skip .git,node_modules,target --preview 'bat -n --color=always {}' --bind 'ctrl-/:change-preview-window(down|hidden|)'";
+  } // lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
+    # The empty entry preserves ncurses' defaults; also find host-installed
+    # terminal definitions such as Ghostty's outside the Nix store.
+    TERMINFO_DIRS = ":/usr/share/terminfo";
   };
 }
