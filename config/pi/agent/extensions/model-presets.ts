@@ -58,6 +58,10 @@ function matchingPreset(
 }
 
 export default function modelPresets(pi: ExtensionAPI) {
+  // Background children may discover this extension. Their launch contract
+  // already selects a model and effort; never replace it with the parent default.
+  if (process.env.PI_SUBAGENT_CHILD === "1") return;
+
   let presets: Presets = {};
   let activePreset: string | undefined;
   let selectedModel: ModelSelection | undefined;

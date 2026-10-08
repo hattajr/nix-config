@@ -10,8 +10,8 @@
     "thinkingLevel": "high"
   },
   "fast": {
-    "provider": "openai-codex",
-    "model": "gpt-6-luna",
+    "provider": "deepseek",
+    "model": "deepseek-flash",
     "thinkingLevel": "high"
   }
 }

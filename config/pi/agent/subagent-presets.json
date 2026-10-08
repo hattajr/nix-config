@@ -1,0 +1,9 @@
+{
+  "scout": "medium",
+  "researcher": "medium",
+  "oracle": "thinking",
+  "worker": "fast",
+  "reviewer": "thinking",
+  "delegate": "fast",
+  "evidence-auditor": "thinking"
+}

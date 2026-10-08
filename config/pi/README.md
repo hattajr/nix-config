@@ -103,10 +103,40 @@ Use `/preset thinking`, `/preset medium`, or `/preset fast` to select a preset:
 | --- | --- | --- |
 | `thinking` | `openai-codex/gpt-6-astra` | high |
 | `medium` | `openai-codex/gpt-6.1-sol` | high |
-| `fast` (default) | `openai-codex/gpt-6-luna` | high |
+| `fast` (default) | `deepseek/deepseek-flash` | high |
 
 `/preset` without arguments or `Ctrl+Shift+U` cycles thinking → medium → fast.
-Presets are configured in `agent/presets.json`.
+Presets are configured in `agent/presets.json`. Home Manager derives the parent
+startup model and effort from `fast`, so DeepSeek credentials are required for
+that default (`DEEPSEEK_API_KEY`, optionally injected through Proton Pass).
+
+### Builtin subagent presets
+
+`agent/subagent-presets.json` maps roles to these same presets:
+
+| Agent | Preset |
+| --- | --- |
+| `scout` | medium |
+| `researcher` | medium |
+| `oracle` | thinking |
+| `worker` | fast |
+| `reviewer` | thinking |
+| `delegate` | fast |
+| `evidence-auditor` | thinking |
+
+Home Manager resolves each assignment into native
+`subagents.agentOverrides.<name>.model` and `.thinking` settings. Builtin prompts
+are not copied or replaced. Edit `agent/presets.json` to change the model or
+thinking effort for every assigned role, or `agent/subagent-presets.json` to
+reassign a role. Apply the Nix config, then restart Pi or run `/reload`.
+`/subagents-models` shows the effective mapping. Older pi-subagents releases
+may not include `evidence-auditor`; update with `pi update npm:pi-subagents`
+before using that role.
+
+Changing the parent's `/preset` does not change these role assignments. Project
+settings and explicit per-run overrides can still replace the generated defaults.
+The parent preset extension does not run inside background subagents, so it
+cannot reset their selected model to `fast`.
 
 ## Visual UI reviews
 
@@ -140,6 +170,7 @@ If packages are missing:
 
 ```bash
 pi install npm:pi-web-access
+pi install npm:pi-subagents
 ```
 
 Pi extensions can be updated through Pi itself:

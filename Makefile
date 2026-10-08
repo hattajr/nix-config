@@ -7,6 +7,8 @@ test:
 	@./tests/pi/test-patch-pi-package.sh
 	@./tests/pi/test-update-pi.sh
 	@./tests/pi/test-update-pins.sh
+	@./tests/pi/test-model-presets.sh
+	@"$${NODE:-node}" --experimental-strip-types --test tests/pi/model-presets.test.mjs
 	@./tests/skills/test-skills.sh
 	@./tests/bro/test-bro.sh
 	@./tests/proton-pass/test-pi-wrapper.sh

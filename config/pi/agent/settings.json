@@ -1,7 +1,6 @@
 {
   "lastChangelogVersion": "0.84.4",
   "theme": "modern-dark",
-  "defaultThinkingLevel": "medium",
   "enabledModels": [
     "deepseek/deepseek-flash",
     "deepseek/deepseek-v4-pro",
@@ -20,7 +19,5 @@
   ],
   "telegramNotification": {
     "enabled": false
-  },
-  "defaultProvider": "openai-codex",
-  "defaultModel": "gpt-6-luna"
+  }
 }

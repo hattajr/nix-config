@@ -42,6 +42,12 @@ let
   };
 
   piSettings = ../../config/pi/agent/settings.json;
+  piResolvedSettings = pkgs.writeText "pi-settings.json" (builtins.toJSON
+    (import ../../lib/pi-settings.nix {
+      settings = builtins.fromJSON (builtins.readFile piSettings);
+      presets = builtins.fromJSON (builtins.readFile ../../config/pi/agent/presets.json);
+      agentPresets = builtins.fromJSON (builtins.readFile ../../config/pi/agent/subagent-presets.json);
+    }));
   piStaticRoot = ../../config/pi/agent;
   # Never link an entire Pi directory: Pi keeps sessions, OAuth, npm state, and
   # locally installed extensions below the same writable parents. Each static
@@ -72,7 +78,7 @@ in
       last_changelog_version="$(${pkgs.jq}/bin/jq -r '.lastChangelogVersion // "0.0.0"' "$settings" 2>/dev/null || printf '%s' '0.0.0')"
     fi
     ${pkgs.jq}/bin/jq --arg version "$last_changelog_version" \
-      '.lastChangelogVersion = $version' "${piSettings}" > "$temporary"
+      '.lastChangelogVersion = $version' "${piResolvedSettings}" > "$temporary"
     chmod 0644 "$temporary"
     mv -f "$temporary" "$settings"
   '';
