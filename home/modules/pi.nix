@@ -6,11 +6,11 @@ let
   # rest of the Nix channel.
   piPackage = pkgs.buildNpmPackage {
     pname = "pi-coding-agent";
-    version = "1.0.2";
+    version = "1.1.0";
 
     src = pkgs.fetchurl {
-      url = "https://registry.npmjs.org/@earendil-works/pi-coding-agent/-/pi-coding-agent-1.0.2.tgz";
-      hash = "sha256-7aWueHU0O9kC/+VXGPtlskBtewOr7MXLidjkuwnO7aI=";
+      url = "https://registry.npmjs.org/@earendil-works/pi-coding-agent/-/pi-coding-agent-1.1.0.tgz";
+      hash = "sha256-Cc2KCkPbsdgaZzRrCUALQ5znHYGMq6TpY+qViEahrtQ=";
     };
 
     # scripts/update-pi persists a lockfile when upstream ships none and repairs
@@ -24,7 +24,7 @@ let
     '';
 
     npmDepsFetcherVersion = 2;
-    npmDepsHash = "sha256-T2lH6G60gl6KCUNRlAXhSoJW7XqDaBEsGER9PXhfSMY=";
+    npmDepsHash = "sha256-tIvqpBYkyI2I380itYiLVeNw7Jvra1W7QjjVWhwyGp8=";
     npmInstallFlags = [ "--omit=dev" ];
     npmFlags = [ "--omit=dev" ];
     dontNpmBuild = true;
