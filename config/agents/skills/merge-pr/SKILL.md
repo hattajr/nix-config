@@ -10,7 +10,10 @@ Pi: `/skill:merge-pr [#42]`. Claude Code: `/merge-pr [#42]`. PR URLs work too.
 With a target, process only that PR; otherwise paginate open PRs and handle at
 most three oldest eligible PRs, prerequisites first. Invocation authorizes gated
 merges and verified cleanup, not protection bypass, deployment, or scope expansion.
-Honor stricter instructions. Never start newly unblocked implementation.
+Repository instructions may tighten or explicitly loosen the review and
+validation gates below (e.g. a toy repo that merges once tests pass, without
+independent review); they never authorize bypassing GitHub protections or
+required checks. Never start newly unblocked implementation.
 
 ## 1. Inspect
 
@@ -27,7 +30,21 @@ Check correctness, regressions, acceptance coverage, tests, and merge risks.
 Require independent review of the current head/base; reuse trustworthy evidence
 when available, otherwise obtain fresh-context review or report the gap and stop.
 Validate the merge result against the current base in an isolated external
-worktree using repository checks; CI alone is not acceptance evidence.
+worktree using repository checks; green checks are never acceptance evidence on
+their own. A required status check on the base branch that no workflow or app
+produces (e.g. `ci/local`) is a local signoff: post its result on the reviewed
+head after validation, naming the validated base (and the failing step on failure):
+
+```sh
+gh api "repos/$repo/rules/branches/$base_branch"  # find required status contexts
+gh api "repos/$repo/statuses/$reviewed_sha" -f context="$context" \
+  -f state=success -f description="passed vs $base_branch ${base_sha:0:7}"
+```
+
+Never use GitHub's paid CI services: do not trigger, re-run, or wait on GitHub
+Actions runs (`gh workflow run`, `gh run rerun`) for validation, and do not add or
+enable workflow files or Actions runners. Validation always runs locally. A PR that
+adds or changes `.github/workflows/` is a finding to route, not a merge.
 
 Fix material in-scope findings/mechanical conflicts on authorized branches only;
 read the testing/commit skills, commit scoped fixes, and revalidate/re-review.
@@ -46,7 +63,9 @@ silently `ready-for-agent`. Report unapproved follow-ups as drafts.
 Immediately re-check head/base SHAs, reviews/threads, prerequisites, and draft/check
 states. Require passed validation, no material unresolved findings or outstanding
 change requests, and all required checks/approvals. Drift requires revalidation
-and affected review. Never dismiss reviews, resolve others' threads, or bypass gates.
+and affected review, plus a fresh signoff where one is required; after each merge
+the base moves, so later PRs revalidate against it. Never dismiss reviews,
+resolve others' threads, or bypass gates.
 Follow repository policy; default to squash when allowed:
 
 ```sh
