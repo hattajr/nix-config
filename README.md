@@ -101,13 +101,14 @@ skills are preserved; colliding managed files are backed up as described above.
 
 #### GitHub issue planning: triage and to-tickets
 
-Three shared skills cover planning through implementation:
+Four shared skills cover planning through merge:
 
 | Skill | Purpose |
 | --- | --- |
 | [`triage`](config/agents/skills/triage/SKILL.md) | Capture ideas, review the backlog, refine issues, and prepare approved briefs |
 | [`to-tickets`](config/agents/skills/to-tickets/SKILL.md) | Split settled docs, conversations, or a large issue into approved vertical-slice tickets with blockers |
-| [`implement-issues`](config/agents/skills/implement-issues/SKILL.md) | Implement an eligible issue or a safe ready batch and deliver a reviewed PR |
+| [`implement-issues`](config/agents/skills/implement-issues/SKILL.md) | Implement an eligible issue or safe ready batch, then hand off to merge-pr |
+| [`merge-pr`](config/agents/skills/merge-pr/SKILL.md) | Review PRs, route follow-ups, merge safe changes, and clean up |
 
 Pi uses `/skill:<name>`; Claude Code uses `/<name>`. Natural-language requests
 also work. Both planning skills require authenticated `gh`, use GitHub-only
@@ -165,7 +166,8 @@ only with your approval. It never automatically closes a parent.
 #### Implement GitHub issues
 
 The shared [`implement-issues`](config/agents/skills/implement-issues/SKILL.md)
-skill turns approved GitHub issues into a reviewed PR. It requires a matching
+skill turns approved GitHub issues into a reviewed PR, then calls `merge-pr`
+for gated merge and cleanup. It requires a matching
 Git checkout and an authenticated `gh` CLI. Activate it with `bro` → **Apply**,
 then `/reload` in Pi or restart Claude Code.
 
@@ -173,6 +175,8 @@ then `/reload` in Pi or restart Claude Code.
 | --- | --- | --- |
 | Select a ready batch | `/skill:implement-issues` | `/implement-issues` |
 | Implement only #42 | `/skill:implement-issues #42` | `/implement-issues #42` |
+| Review/merge open PRs (up to three) | `/skill:merge-pr` | `/merge-pr` |
+| Review/merge only PR #42 | `/skill:merge-pr #42` | `/merge-pr #42` |
 
 Full issue URLs and `owner/repo#42` references are also accepted, provided the
 checkout matches that repository. Natural language works too: “Implement ready
@@ -199,6 +203,8 @@ remain outside the implementation queue.
    review the combined diff. Resolve material findings within approved scope.
 6. Push a new integration branch, open one PR for the successful batch, and post
    validation/review evidence and the PR link on its issues.
+7. For a ready PR, call `merge-pr` with that exact PR and evidence; review comments,
+   route separate follow-ups, merge when gates pass, and verify issue/resource cleanup.
 
 **Boundaries:** GitHub owns tickets, claims, decisions, and progress; `docs/`
 holds durable design documentation. There is no local `PLANS/`, issue mirror,
@@ -211,10 +217,14 @@ for this implementation step.
 Missing decisions or unsatisfied dependencies stop the affected issue rather
 than triggering guesses or scope expansion. Missing required validation or
 independent review means a draft PR, not a ready-for-review success. Issues
-remain open and claimed while awaiting merge; the skill never merges PRs,
-enables auto-merge, deploys, or closes issues early. Each invocation stops after
-its selected batch rather than draining the backlog. Partial work is preserved
-with recovery pointers when delivery fails.
+remain open and claimed until merge is verified. `merge-pr` requires current
+validation/review evidence and repository-required checks/approvals; it never
+bypasses protections or deploys. New follow-up issues require approval of their
+title/body; existing issues receive links without scope changes. Dirty or uncertain
+worktrees/branches are preserved. A request to stop at PR publication overrides
+the automatic handoff. Each invocation stops after its selected batch rather
+than draining the backlog. Partial work is preserved with recovery pointers
+when delivery or merge fails.
 
 ### Manual macOS ownership
 

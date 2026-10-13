@@ -1,6 +1,6 @@
 ---
 name: implement-issues
-description: "Implement approved GitHub issues and deliver a reviewed PR. With no target, select a safe batch of up to three open ready-for-agent issues; with #42, implement only that issue. Use when asked to implement ready issues or run issue implementation in parallel."
+description: "Implement approved GitHub issues, then review and merge via merge-pr. With no target, select a safe batch of up to three open ready-for-agent issues; with #42, implement only that issue. Use when asked to implement ready issues or run issue implementation in parallel."
 license: MIT
 compatibility: Requires git and authenticated gh. Parallel implementation requires isolated worktrees and an available agent delegation tool; otherwise execute serially.
 ---
@@ -21,9 +21,9 @@ Read [GitHub operations](references/github.md), [execution guidance](references/
 
 Pi command: `/skill:implement-issues [#42]`. Claude Code command: `/implement-issues [#42]`. Natural-language requests matching this skill are also supported.
 
-An explicit target does not authorize implementing its blockers, children, parent, or neighboring issues. If it is an umbrella, report its children and ask for a separate implementation request. Do not create tickets as part of this skill.
+An explicit target does not authorize implementing its blockers, children, parent, or neighboring issues. If it is an umbrella, report its children and ask for a separate implementation request. Do not create tickets during implementation; `merge-pr` may propose separate follow-ups for explicit publication approval.
 
-Invoking implementation authorizes in-scope edits, scoped commits, GitHub claim/progress updates, pushing a new implementation branch, and opening a PR. It does not authorize merging the PR, closing issues early, force-pushing, deploying, changing repository settings, or expanding product scope. Honor stricter project/user instructions; ask if they prohibit a required operation.
+Invoking implementation authorizes in-scope edits, scoped commits, GitHub claim/progress updates, pushing a new implementation branch, opening a PR, and handing that exact PR to `merge-pr` for gated merge and cleanup. It does not authorize closing issues early, force-pushing, deploying, changing repository settings, or expanding product scope. Honor stricter project/user instructions, including requests to stop at PR publication.
 
 ## Persistence and authority
 
@@ -89,7 +89,7 @@ Run a fresh-context, no-edit review against the exact base-to-integration diff. 
 
 The parent consolidates findings, sends accepted fixes to one writer, then re-runs validation and focused review. Default to at most three review rounds. If material findings or required validation remain unresolved, stop claiming success and use a draft PR with the gaps clearly stated, or preserve the branch if publication is not possible. Do not chase optional polish beyond issue scope.
 
-## 6. Publish and stop
+## 6. Publish and hand off to merge-pr
 
 Before publication, re-read the successful issues for revoked approval, competing claims, changed briefs, or new blockers. Distinguish this run's own readiness-to-in-progress transition from an external state change. Check for base-branch drift. If the base changed, integrate it, revalidate, and re-review affected behavior; never claim a stale validation result covers the new diff.
 
@@ -97,13 +97,16 @@ Push only the new integration branch without force. Open one PR for the successf
 - behavior summary and links to included issues;
 - one `Closes #N` reference per fully implemented issue only;
 - acceptance-criterion evidence, validation commands/results, and review outcome;
-- migrations/compatibility risks and explicit residual limitations.
+- migrations/compatibility risks and explicit residual limitations;
+- run-owned branch/worktree recovery pointers for verified cleanup.
 
 A PR is ready for human review only when required validation passed and independent review has no material unresolved findings. Otherwise mark it draft and explain why. If no lane succeeded, do not open an empty PR.
 
-Post the PR link and evidence on each included issue. Keep issues open and claimed while their PR awaits review/merge; use an existing review-state label if the repository defines one, otherwise retain `in-progress` or the assignment/claim. Never relabel PR-pending work as `ready-for-agent`. Do not merge, enable auto-merge, or close issues yourself. GitHub can close them when the approved PR merges.
+Post the PR link and evidence on each included issue. Keep issues open and claimed while their PR awaits review/merge; use an existing review-state label if the repository defines one, otherwise retain `in-progress` or the assignment/claim. Never relabel PR-pending work as `ready-for-agent` or close issues before verified completion.
 
-This invocation ends after this bounded batch. Do not drain the whole backlog, start newly unblocked work before merge, or create a recurring job.
+For a ready PR, read and follow [merge-pr](../merge-pr/SKILL.md) with this exact PR URL, reviewed head/base, validation/review evidence, issue links, and run-owned cleanup pointers. Do not discover or merge unrelated PRs in this handoff. If the skill is unavailable, the PR is draft, or any merge gate blocks, preserve the PR/claims and report **awaiting merge** with the reason. Do not bypass gates or enable auto-merge as a substitute.
+
+This invocation ends after this bounded batch's merge attempt and cleanup. Do not drain the whole backlog, start newly unblocked work, or create a recurring job.
 
 ## Blockers, recovery, and cleanup
 

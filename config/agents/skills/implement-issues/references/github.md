@@ -75,7 +75,7 @@ Owner: @<authenticated user>
 Issue: <full issue URL and title>
 Base: <branch and commit>
 Scope: <approved behavior>
-Delivery: reviewed PR; no merge or early issue closure.
+Delivery: reviewed PR, then gated merge/cleanup via merge-pr; no early issue closure.
 ```
 
 GitHub label/assignment edits are not compare-and-swap locks. Re-reading detects many conflicts but cannot guarantee exclusive ownership across simultaneous sessions; stop on evidence of another owner/run. Retain run markers in later comments so cancellation and recovery can distinguish your work.
@@ -103,7 +103,7 @@ gh pr create --repo "$repo" --base "$base" --head "$branch" \
 
 Add `--draft` if required checks, independent review, or material fixes remain incomplete. Do not duplicate a PR when creation may have succeeded but its response was lost. Do not turn an existing unrelated PR into this batch's PR.
 
-Include `Closes #N` only for fully implemented included issues, using full cross-repository references when necessary. For a non-default target base, explain that automatic issue closure may wait until the changes reach GitHub's default branch; do not manually close issues to compensate.
+Include `Closes #N` only for fully implemented included issues, using full cross-repository references when necessary. For a non-default target base, explain that automatic issue closure may wait until the changes reach GitHub's default branch. Hand completion-base verification to `merge-pr`; do not close issues just to compensate for missing automatic closure.
 
 Post delivery evidence on each included issue:
 
@@ -118,4 +118,4 @@ Independent review: <outcome and resolved findings>
 Remaining risks: <limitations or None>
 ```
 
-An opened PR, a worker commit, or a passing check does not authorize merge, release, or issue closure. Leave failed/excluded issues out of closing references and record their own outcomes separately.
+An opened PR, a worker commit, or a passing check does not satisfy merge gates or establish issue completion. The parent follows `merge-pr` for the exact published ready PR; leave failed/excluded issues out of closing references and record their own outcomes separately.
