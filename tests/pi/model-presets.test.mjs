@@ -69,7 +69,11 @@ test("parent starts on Codex medium and switches/cycles shared presets", async (
     assertPreset(state, name);
   }
   await commands.get("preset").handler("", ctx);
+  assertPreset(state, "medium");
+  await shortcuts.get("ctrl+shift+u").handler(ctx);
   assertPreset(state, "thinking");
+  await shortcuts.get("ctrl+shift+u").handler(ctx);
+  assertPreset(state, "fast");
   await shortcuts.get("ctrl+shift+u").handler(ctx);
   assertPreset(state, "medium");
 });

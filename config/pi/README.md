@@ -105,7 +105,7 @@ Use `/preset thinking`, `/preset medium`, or `/preset fast` to select a preset:
 | `medium` (default) | `openai-codex/gpt-6.1-sol` | high |
 | `fast` | `deepseek/deepseek-flash` | high |
 
-`/preset` without arguments or `Ctrl+Shift+U` cycles thinking → medium → fast.
+`/preset` without arguments or `Ctrl+Shift+U` cycles medium → thinking → fast.
 Presets are configured in `agent/presets.json`. Home Manager derives the parent
 startup model and effort from `medium`, so OpenAI Codex credentials are required
 for that default (authenticate with `/login`).
