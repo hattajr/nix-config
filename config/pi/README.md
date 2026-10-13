@@ -120,9 +120,9 @@ for that default (authenticate with `/login`).
 | `researcher` | medium |
 | `oracle` | thinking |
 | `worker` | fast |
-| `reviewer` | thinking |
+| `reviewer` | medium |
 | `delegate` | fast |
-| `evidence-auditor` | thinking |
+| `evidence-auditor` | medium |
 
 Home Manager resolves each assignment into native
 `subagents.agentOverrides.<name>.model` and `.thinking` settings. Builtin prompts

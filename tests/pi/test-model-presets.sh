@@ -25,9 +25,9 @@ jq -e '
     "researcher": {"model":"openai-codex/gpt-6.1-sol", "thinking":"high"},
     "oracle": {"model":"openai-codex/gpt-6-astra", "thinking":"high"},
     "worker": {"model":"deepseek/deepseek-flash", "thinking":"high"},
-    "reviewer": {"model":"openai-codex/gpt-6-astra", "thinking":"high"},
+    "reviewer": {"model":"openai-codex/gpt-6.1-sol", "thinking":"high"},
     "delegate": {"model":"deepseek/deepseek-flash", "thinking":"high"},
-    "evidence-auditor": {"model":"openai-codex/gpt-6-astra", "thinking":"high"}
+    "evidence-auditor": {"model":"openai-codex/gpt-6.1-sol", "thinking":"high"}
   }
 ' "$work/resolved.json" >/dev/null
 # The base settings (package declarations, theme, model scope, etc.) survive.
@@ -61,8 +61,10 @@ jq --slurpfile old "$work/changed.json" -e '
   .defaultThinkingLevel == "low" and
   .subagents.agentOverrides.scout == {model:"medium-provider/medium-replacement", thinking:"low"} and
   .subagents.agentOverrides.researcher == .subagents.agentOverrides.scout and
-  (.subagents.agentOverrides | del(.scout, .researcher)) ==
-    ($old[0].subagents.agentOverrides | del(.scout, .researcher))
+  .subagents.agentOverrides.reviewer == .subagents.agentOverrides.scout and
+  .subagents.agentOverrides["evidence-auditor"] == .subagents.agentOverrides.scout and
+  (.subagents.agentOverrides | del(.scout, .researcher, .reviewer, .["evidence-auditor"])) ==
+    ($old[0].subagents.agentOverrides | del(.scout, .researcher, .reviewer, .["evidence-auditor"]))
 ' "$work/medium-changed.json" >/dev/null
 
 # Role reassignment resolves the new preset rather than retaining the old model.

@@ -3,7 +3,7 @@
   "researcher": "medium",
   "oracle": "thinking",
   "worker": "fast",
-  "reviewer": "thinking",
+  "reviewer": "medium",
   "delegate": "fast",
-  "evidence-auditor": "thinking"
+  "evidence-auditor": "medium"
 }
