@@ -12,6 +12,8 @@
         HostName = "latte";
         User = "hattajr";
         Port = 22;
+        # Ubuntu 20.04 lacks Ghostty's terminfo entry.
+        SetEnv.TERM = "xterm-256color";
       };
 
       legion = {
