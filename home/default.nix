@@ -3,6 +3,7 @@
 {
   imports = [
     ./modules/agent-skills.nix
+    ./modules/claude.nix
     ./modules/core-files.nix
     ./modules/git.nix
     ./modules/nvim.nix
