@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Compact one-line status: prompt | model | ctx used/total (pct) | cost | 5h limit
+# Compact one-line status: prompt | model | ctx used/total (pct) | cost | 5h limit | weekly limit
 input=$(cat)
 
 model=$(echo "$input" | jq -r '.model.display_name // "?"')
@@ -12,6 +12,7 @@ size=$(echo "$input" | jq -r '.context_window.context_window_size // empty')
 pct=$(echo "$input" | jq -r '.context_window.used_percentage // empty')
 cost=$(echo "$input" | jq -r '.cost.total_cost_usd // empty')
 five=$(echo "$input" | jq -r '.rate_limits.five_hour.used_percentage // empty')
+week=$(echo "$input" | jq -r '.rate_limits.seven_day.used_percentage // empty')
 
 # Render token counts as 12.3k / 1.0M
 fmt() {
@@ -49,5 +50,6 @@ fi
 
 [ -n "$cost" ] && out="$out | $(printf '$%.2f' "$cost")"
 [ -n "$five" ] && out="$out | $(printf '5h: %.0f%%' "$five")"
+[ -n "$week" ] && out="$out | $(printf '7d: %.0f%%' "$week")"
 
 printf '%s' "$out"
