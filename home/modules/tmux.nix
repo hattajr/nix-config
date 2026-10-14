@@ -75,7 +75,7 @@ in
       unbind -T copy-mode-vi Enter
       bind-key -T copy-mode-vi Enter send-keys -X copy-selection-and-cancel
       # Stay in copy mode after a mouse selection so the scroll position is kept.
-      bind-key -T copy-mode-vi MouseDragEnd1Pane send-keys -X copy-selection-no-clear
+      bind-key -T copy-mode-vi MouseDragEnd1Pane send-keys -X copy-selection
 
       # Vim-like pane resizing and selection.
       bind -r K resize-pane -U
