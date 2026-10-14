@@ -2,6 +2,7 @@
 
 {
   imports = [
+    ./modules/agent-instructions.nix
     ./modules/agent-skills.nix
     ./modules/claude.nix
     ./modules/core-files.nix

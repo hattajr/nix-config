@@ -75,6 +75,12 @@ symlinks are simply refreshed. The legacy `~/.gitconfig` is quarantined there
 after `~/.config/git/config` is linked. Runtime state and secrets outside the
 managed paths remain writable.
 
+### Agent rules
+
+`config/agents/AGENTS.md` holds the global coding rules for both agents. Home
+Manager links it to `~/.pi/agent/AGENTS.md` and `~/.claude/CLAUDE.md`, so edit
+it here and Apply; both targets are read-only store links.
+
 ### Agent skills
 
 | Source directory | Receives the skills |

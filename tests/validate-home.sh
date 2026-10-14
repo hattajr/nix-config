@@ -91,6 +91,7 @@ mkdir -p "$home_dir/.claude/skills/uv/SKILL.md" "$home_dir/.claude/skills/synced
 printf legacy-skill >"$home_dir/.claude/skills/uv/SKILL.md/keep.txt"
 printf preserve-synced >"$home_dir/.claude/skills/synced/keep.txt"
 printf preserve-local-skill >"$home_dir/.claude/skills/local-only/SKILL.md"
+printf legacy-claude-rules >"$home_dir/.claude/CLAUDE.md"
 
 set +e
 "$activation_package/activate" >/tmp/home-collision.log 2>&1
@@ -123,6 +124,8 @@ grep -Fx legacy-git "$backup_root/.gitconfig" >/dev/null ||
   fail 'legacy Git config was not quarantined'
 grep -Fx legacy-skill "$backup_root/.claude/skills/uv/SKILL.md/keep.txt" >/dev/null ||
   fail 'directory-shaped Claude skill leaf was not quarantined'
+grep -Fx legacy-claude-rules "$backup_root/.claude/CLAUDE.md" >/dev/null ||
+  fail 'legacy Claude global rules were not quarantined'
 grep -Fx preserve-nvim "$XDG_CONFIG_HOME/nvim/local/keep.txt" >/dev/null ||
   fail 'unmanaged Neovim file was not preserved'
 jq -e '.oauth == "preserve"' "$home_dir/.pi/agent/auth.json" >/dev/null ||
@@ -171,6 +174,10 @@ grep -Fx preserve-local-skill "$home_dir/.claude/skills/local-only/SKILL.md" >/d
   fail 'activation removed unmanaged Claude skills'
 [ ! -L "$home_dir/.claude/skills" ] || fail 'Claude skills root is not writable'
 [ ! -L "$home_dir/.pi/agent/skills" ] || fail 'Pi skills root is not writable'
+for rules in "$home_dir/.pi/agent/AGENTS.md" "$home_dir/.claude/CLAUDE.md"; do
+  [ -L "$rules" ] || fail "shared agent rules were not linked: $rules"
+  cmp "$source_root/config/agents/AGENTS.md" "$rules" || fail "shared agent rules differ: $rules"
+done
 
 profile_bin="$home_dir/.nix-profile/bin"
 [ -d "$profile_bin" ] || fail 'Home Manager profile bin directory was not created'
