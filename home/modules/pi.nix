@@ -107,6 +107,5 @@ in
       force = true;
     };
     ".pi/.claude/settings.local.json" = { source = ../../config/pi/.claude/settings.local.json; force = true; };
-    ".claude/settings.local.json" = { source = ../../config/claude/settings.local.json; force = true; };
   };
 }

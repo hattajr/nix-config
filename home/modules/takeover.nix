@@ -47,7 +47,6 @@ let
     ".pi/.nvmrc"
     ".pi/README.md"
     ".claude/CLAUDE.md"
-    ".claude/settings.local.json"
     ".claude/statusline-command.sh"
     ".config/proton-pass/README.md"
     ".config/proton-pass/pi.env.example"
