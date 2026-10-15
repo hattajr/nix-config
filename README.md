@@ -7,7 +7,7 @@ Personal Home Manager configuration for macOS (Apple Silicon) and Linux (x86-64,
 - Shell and terminal: zsh, tmux, Neovim, Git, SSH, fzf, atuin
 - Development: Node.js, Bun, Deno, Python, uv, Go, Rust, Cargo, GCC, Make
 - CLI tools: gh, ripgrep, fd, bat, btop, lazygit, lazydocker, rclone, Wrangler, Cloudflared
-- Apps: Pi, Claude Code, Lumen, Proton Pass CLI; Linux also gets Chromium and Google Chrome
+- Apps: Pi, Claude Code, Lumen, Proton Pass CLI, playwright-cli; Linux also gets Chromium and Google Chrome
 
 ## Install
 
@@ -52,17 +52,21 @@ intentional version-change workflow: it syncs first, asks what may change, shows
 an old-to-new summary, then asks before applying, committing, and pushing. Other
 machines receive the result with `Sync`.
 
-`Update` offers Nixpkgs, Pi, Pi extensions, or everything. Nixpkgs and Pi are
-pins in tracked files, so they go through that review-and-commit flow. Pi
-extensions are the npm packages listed in `config/pi/agent/settings.json`, which
-Pi installs into its own writable state; choosing them runs `pi update
---extensions` on this machine only and changes nothing in the repository, so
-each machine updates them itself.
+`Update` offers Nixpkgs, Pi, Pi extensions, playwright-cli, or everything.
+Nixpkgs, Pi, and playwright-cli are pins in tracked files, so they go through
+that review-and-commit flow. Pi extensions are the npm packages listed in
+`config/pi/agent/settings.json`, which Pi installs into its own writable
+state; choosing them runs `pi update --extensions` on this machine only and
+changes nothing in the repository, so each machine updates them itself.
 
 Pi updates also persist `home/modules/pi-package-lock.json`. If the npm tarball
 ships no lockfile, the updater uses npm to resolve runtime dependencies with
 install scripts disabled. This lockfile is reviewed, committed, or discarded
 alongside the Pi version and Nix dependency hash.
+
+playwright-cli updates work the same way with
+`home/modules/playwright-cli-package-lock.json`. Its agent skill ships inside
+the npm package, so updating the CLI also updates the skill both agents read.
 
 ### How ownership works
 
@@ -88,6 +92,7 @@ it here and Apply; both targets are read-only store links.
 | `config/agents/skills/` | Pi and Claude Code |
 | `config/pi/agent/skills/` | Pi only |
 | `config/claude/skills/` (create as needed) | Claude Code only |
+| `@playwright/cli` npm package (`home/modules/playwright-cli.nix`) | Pi and Claude Code: the upstream `playwright-cli` skill, versioned with the CLI |
 
 **Create or share a skill:**
 1. Ask Pi or Claude to create `config/agents/skills/<name>/SKILL.md` in this
@@ -102,7 +107,7 @@ checkout and Apply again—links are store-backed, not live checkout links.
 
 Shared instructions must work in both agents; keep names unique and supporting
 file paths relative. `grill-me` is shared; it uses each agent's question tool.
-`design-md-import` and `web-browser` remain Pi-only. Unrelated local/synced
+`design-md-import` remains Pi-only. Unrelated local/synced
 skills are preserved; colliding managed files are backed up as described above.
 
 #### GitHub issue planning: triage and to-tickets

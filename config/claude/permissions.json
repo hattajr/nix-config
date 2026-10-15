@@ -2,6 +2,7 @@
   "allow": [
     "Bash(git remote *)",
     "Bash(gh issue *)",
-    "Bash(gh pr merge *)"
+    "Bash(gh pr merge *)",
+    "Bash(playwright-cli *)"
   ]
 }

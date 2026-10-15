@@ -67,14 +67,37 @@ sync() {
   fi
 }
 
+# Every tracked file a pin update may rewrite. Pi's lockfile may not exist yet
+# when the first update generates it.
+readonly PIN_FILES=(
+  flake.lock
+  home/modules/pi.nix
+  home/modules/pi-package-lock.json
+  home/modules/playwright-cli.nix
+  home/modules/playwright-cli-package-lock.json
+)
+
+is_tracked() {
+  run_git -C "$1" ls-files --error-unmatch "$2" >/dev/null 2>&1
+}
+
+pinned_version() {
+  sed -n 's/^[[:space:]]*version = "\([^"]*\)";.*/\1/p' | head -n 1
+}
+
+print_module_update() {
+  local repo=$1 module=$2 label=$3
+  run_git -C "$repo" diff --quiet -- "$module" && return 0
+  printf '  %-10s%s -> %s\n' "$label:" \
+    "$(run_git -C "$repo" show "HEAD:$module" | pinned_version)" \
+    "$(pinned_version <"$repo/$module")"
+}
+
 print_update_summary() {
-  local repo=$1 old_pi new_pi old_nixpkgs new_nixpkgs
+  local repo=$1 old_nixpkgs new_nixpkgs
   printf '\nProposed version updates:\n'
-  if ! run_git -C "$repo" diff --quiet -- home/modules/pi.nix; then
-    old_pi=$(run_git -C "$repo" show HEAD:home/modules/pi.nix | sed -n 's/^[[:space:]]*version = "\([^"]*\)";.*/\1/p' | head -n 1)
-    new_pi=$(sed -n 's/^[[:space:]]*version = "\([^"]*\)";.*/\1/p' "$repo/home/modules/pi.nix" | head -n 1)
-    printf '  Pi:       %s -> %s\n' "$old_pi" "$new_pi"
-  fi
+  print_module_update "$repo" home/modules/pi.nix Pi
+  print_module_update "$repo" home/modules/playwright-cli.nix Playwright
   if ! run_git -C "$repo" diff --quiet -- flake.lock; then
     old_nixpkgs=$(run_git -C "$repo" show HEAD:flake.lock | jq -r '.nodes.nixpkgs.locked.rev // "unknown"')
     new_nixpkgs=$(jq -r '.nodes.nixpkgs.locked.rev // "unknown"' "$repo/flake.lock")
@@ -99,7 +122,7 @@ update_pi_extensions() {
 # extensions are runtime state, so they are updated separately and afterwards,
 # against whichever Pi this machine ends up running.
 update_pins() {
-  local repo=$1 target=$2 update_nixpkgs=$3 update_pi=$4
+  local repo=$1 target=$2 update_nixpkgs=$3 update_pi=$4 update_playwright=${5:-no} file
 
   if [ "$update_nixpkgs" = yes ]; then
     log 'updating the nixpkgs pin'
@@ -115,6 +138,13 @@ update_pins() {
       return 1
     }
   fi
+  if [ "$update_playwright" = yes ]; then
+    log 'updating the playwright-cli pin'
+    "$repo/scripts/update-playwright-cli" "$repo" || {
+      warn 'playwright-cli pin update failed'
+      return 1
+    }
+  fi
 
   if run_git -C "$repo" diff --quiet; then
     log 'all selected pins are already current'
@@ -126,20 +156,21 @@ update_pins() {
   if confirm 'Show the complete generated diff?' no; then
     run_git -C "$repo" diff
     # A newly generated lockfile is not tracked until the user approves commit.
-    if [ -f "$repo/home/modules/pi-package-lock.json" ] && \
-      ! run_git -C "$repo" ls-files --error-unmatch home/modules/pi-package-lock.json >/dev/null 2>&1; then
-      run_git -C "$repo" diff --no-index -- /dev/null "$repo/home/modules/pi-package-lock.json" || {
-        [ "$?" -eq 1 ] || fail 'could not show the generated Pi lockfile diff'
+    for file in "${PIN_FILES[@]}"; do
+      [ -f "$repo/$file" ] && ! is_tracked "$repo" "$file" || continue
+      run_git -C "$repo" diff --no-index -- /dev/null "$repo/$file" || {
+        [ "$?" -eq 1 ] || fail "could not show the generated $file diff"
       }
-    fi
+    done
   fi
   if ! confirm 'Apply these changes on this machine?' no; then
-    run_git -C "$repo" restore --source=HEAD -- flake.lock home/modules/pi.nix
-    if run_git -C "$repo" ls-files --error-unmatch home/modules/pi-package-lock.json >/dev/null 2>&1; then
-      run_git -C "$repo" restore --source=HEAD -- home/modules/pi-package-lock.json
-    else
-      rm -f "$repo/home/modules/pi-package-lock.json"
-    fi
+    for file in "${PIN_FILES[@]}"; do
+      if is_tracked "$repo" "$file"; then
+        run_git -C "$repo" restore --source=HEAD -- "$file"
+      else
+        rm -f "$repo/$file"
+      fi
+    done
     log 'update discarded'
     return 0
   fi
@@ -149,10 +180,9 @@ update_pins() {
     log 'changes applied locally but left uncommitted'
     return 0
   fi
-  run_git -C "$repo" add flake.lock home/modules/pi.nix
-  if [ -f "$repo/home/modules/pi-package-lock.json" ]; then
-    run_git -C "$repo" add home/modules/pi-package-lock.json
-  fi
+  for file in "${PIN_FILES[@]}"; do
+    [ ! -f "$repo/$file" ] || run_git -C "$repo" add "$file"
+  done
   run_git -C "$repo" commit -m 'Update managed package pins'
   if confirm 'Push the commit so other machines can sync it?' no; then
     run_git -C "$repo" push
@@ -160,7 +190,7 @@ update_pins() {
 }
 
 update() {
-  local repo=$1 target=$2 update_nixpkgs=no update_pi=no update_extensions=no
+  local repo=$1 target=$2 update_nixpkgs=no update_pi=no update_extensions=no update_playwright=no
   require_clean_tree "$repo" Update || return 1
 
   # Start from the shared configuration before calculating new upstream pins.
@@ -171,19 +201,21 @@ update() {
     $'Pi\tthe custom Nix package' \
     $'Extensions\tPi\'s own npm packages, not a repository pin' \
     $'Pi + ext\tthe Pi package, then its extensions' \
-    $'Everything\tNixpkgs, Pi, and Pi extensions' \
+    $'Playwright\tthe playwright-cli package and its agent skill' \
+    $'Everything\tNixpkgs, Pi, Pi extensions, and playwright-cli' \
     $'Cancel\tleave every version as it is' || return 0
   case "$CHOICE_INDEX" in
     1) update_nixpkgs=yes ;;
     2) update_pi=yes ;;
     3) update_extensions=yes ;;
     4) update_pi=yes; update_extensions=yes ;;
-    5) update_nixpkgs=yes; update_pi=yes; update_extensions=yes ;;
-    6) log 'update cancelled'; return 0 ;;
+    5) update_playwright=yes ;;
+    6) update_nixpkgs=yes; update_pi=yes; update_extensions=yes; update_playwright=yes ;;
+    7) log 'update cancelled'; return 0 ;;
   esac
 
-  if [ "$update_nixpkgs" = yes ] || [ "$update_pi" = yes ]; then
-    update_pins "$repo" "$target" "$update_nixpkgs" "$update_pi" || return 1
+  if [ "$update_nixpkgs" = yes ] || [ "$update_pi" = yes ] || [ "$update_playwright" = yes ]; then
+    update_pins "$repo" "$target" "$update_nixpkgs" "$update_pi" "$update_playwright" || return 1
   fi
   if [ "$update_extensions" = yes ]; then
     update_pi_extensions

@@ -272,6 +272,21 @@ grep -Fq 'pi update --extensions (skip=1)' "$log" || {
 ! grep -Fq 'nix flake update' "$log" || {
   echo 'bro test: Pi + ext also moved the nixpkgs pin' >&2; exit 1; }
 
+# Playwright moves only the playwright-cli pin: no Pi, extension, or nixpkgs work.
+command cat >"$checkout/scripts/update-playwright-cli" <<'EOF'
+#!/bin/sh
+printf 'update-playwright-cli %s\n' "$*" >>"$MOCK_LOG"
+EOF
+chmod +x "$checkout/scripts/update-playwright-cli"
+: >"$log"
+run_menu "$extensions_home" '3\n5\n7\n' env MOCK_GIT_MODE=sync MOCK_GIT_AHEAD=0 >/dev/null
+grep -Fq "update-playwright-cli $checkout" "$log" || {
+  echo 'bro test: Playwright did not update the playwright-cli pin' >&2; exit 1; }
+! grep -Eq '^(update-pi|pi update) ' "$log" || {
+  echo 'bro test: Playwright also updated Pi' >&2; exit 1; }
+! grep -Fq 'nix flake update' "$log" || {
+  echo 'bro test: Playwright also moved the nixpkgs pin' >&2; exit 1; }
+
 # A failed pin update is reported as a failure, never as already current, and
 # stops before extensions update against a Pi that did not move.
 : >"$log"
@@ -290,4 +305,4 @@ output=$(run_menu "$extensions_home" '3\n3\n7\n' env MOCK_GIT_MODE=sync MOCK_GIT
 grep -Fq 'Pi is not installed for this account yet' <<<"$output" || {
   echo 'bro test: a missing Pi did not explain the extension update failure' >&2; exit 1; }
 
-echo 'bro test: PASSED (menu-only entry, apply identity, DNS retry, sync push boundary, accounts wrapper, Pi extensions, Pi + ext)'
+echo 'bro test: PASSED (menu-only entry, apply identity, DNS retry, sync push boundary, accounts wrapper, Pi extensions, Pi + ext, Playwright)'

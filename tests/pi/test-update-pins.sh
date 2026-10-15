@@ -57,4 +57,30 @@ SH
     fi
   done
 done
-printf 'Pi pin workflow tests: PASSED (commit/discard new and tracked lockfiles)\n'
+# playwright-cli pins are tracked files; discard restores and commit records both.
+for decision in discard commit; do
+  checkout="$work/playwright-$decision"
+  mkdir -p "$checkout/home/modules" "$checkout/scripts"
+  git -C "$checkout" init -q
+  git -C "$checkout" config user.name 'Updater Test'
+  git -C "$checkout" config user.email 'updater@example.invalid'
+  printf 'original module\n' >"$checkout/home/modules/playwright-cli.nix"
+  printf 'original lock\n' >"$checkout/home/modules/playwright-cli-package-lock.json"
+  printf '{}\n' >"$checkout/flake.lock"
+  cat >"$checkout/scripts/update-playwright-cli" <<'SH'
+#!/bin/sh
+printf 'updated module\n' >"$1/home/modules/playwright-cli.nix"
+printf 'updated lock\n' >"$1/home/modules/playwright-cli-package-lock.json"
+SH
+  chmod +x "$checkout/scripts/update-playwright-cli"
+  git -C "$checkout" add .
+  git -C "$checkout" commit -qm 'Initial fixture'
+
+  update_pins "$checkout" x86_64-linux no no yes >"$work/output"
+  test -z "$(git -C "$checkout" status --porcelain)"
+  expected=original
+  [ "$decision" != commit ] || expected=updated
+  test "$(git -C "$checkout" show HEAD:home/modules/playwright-cli.nix)" = "$expected module"
+  test "$(git -C "$checkout" show HEAD:home/modules/playwright-cli-package-lock.json)" = "$expected lock"
+done
+printf 'Pi pin workflow tests: PASSED (commit/discard new and tracked lockfiles, playwright-cli pins)\n'

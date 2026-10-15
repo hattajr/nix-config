@@ -10,6 +10,7 @@
     ./modules/nvim.nix
     ./modules/packages.nix
     ./modules/pi.nix
+    ./modules/playwright-cli.nix
     ./modules/proton-pass.nix
     ./modules/shadowed-binaries.nix
     ./modules/shell.nix

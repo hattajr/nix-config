@@ -1,0 +1,127 @@
+#!/usr/bin/env bash
+# Update playwright-cli's custom Nix package pin from the npm registry.
+set -euo pipefail
+
+repo=${1:?usage: update-playwright-cli <nix-config-repository>}
+repo=$(CDPATH='' cd -- "$repo" && pwd)
+module="$repo/home/modules/playwright-cli.nix"
+module_lock="$repo/home/modules/playwright-cli-package-lock.json"
+for command in curl jq nix nix-store npm sed tar; do
+  command -v "$command" >/dev/null 2>&1 || {
+    printf 'bro: ERROR: playwright-cli update requires %s\n' "$command" >&2
+    exit 1
+  }
+done
+
+metadata=$(curl --fail --silent --show-error 'https://registry.npmjs.org/@playwright%2Fcli/latest')
+version=$(jq -er '.version' <<<"$metadata")
+tarball=$(jq -er '.dist.tarball' <<<"$metadata")
+current_version=$(sed -n 's/^[[:space:]]*version = "\([^"]*\)";.*/\1/p' "$module" | head -n 1)
+[ -n "$current_version" ] || {
+  printf 'bro: ERROR: could not find the playwright-cli version in %s\n' "$module" >&2
+  exit 1
+}
+
+if [ "$version" = "$current_version" ]; then
+  printf 'bro: playwright-cli is already pinned to %s\n' "$version"
+  exit 0
+fi
+
+work=$(mktemp -d "${TMPDIR:-/tmp}/bro-update-playwright-cli.XXXXXX")
+cp "$module" "$work/module.original"
+cp "$module_lock" "$work/lock.original"
+restore_pin=no
+cleanup() {
+  status=$?
+  # A half-written pin evaluates but builds the wrong closure, so an aborted
+  # update must leave the module and its lockfile exactly as they were found.
+  if [ "$restore_pin" = yes ] && [ "$status" -ne 0 ]; then
+    cp "$work/module.original" "$module"
+    cp "$work/lock.original" "$module_lock"
+    printf 'bro: restored %s after a failed playwright-cli update\n' "$module" >&2
+  fi
+  rm -rf "$work"
+}
+trap cleanup EXIT
+
+curl --fail --silent --show-error --location "$tarball" --output "$work/cli.tgz"
+tar -xzf "$work/cli.tgz" -C "$work"
+lockfile="$work/package/package-lock.json"
+if [ ! -f "$lockfile" ]; then
+  printf 'bro: playwright-cli %s has no published lockfile; resolving runtime dependencies\n' "$version"
+  (cd "$work/package" && npm install --package-lock-only --lockfile-version=3 \
+    --ignore-scripts --omit=dev --no-audit --no-fund --registry=https://registry.npmjs.org)
+fi
+jq -er '.packages | type == "object"' "$lockfile" >/dev/null
+
+src_hash=$(nix store prefetch-file --json "$tarball" | jq -er '.hash')
+
+write_module() {
+  sed -i \
+    -e "s|^\([[:space:]]*version = \"\)[^\"]*\(\";\)|\1$version\2|" \
+    -e "s|^\([[:space:]]*hash = \"\)sha256-[^\"]*\(\";\)|\1$src_hash\2|" \
+    -e "s|^\([[:space:]]*npmDepsHash = \"\)[^\"]*\(\";\)|\1$1\2|" \
+    "$module"
+  grep -Fq "version = \"$version\";" "$module" &&
+    grep -Fq "hash = \"$src_hash\";" "$module" &&
+    grep -Fq "npmDepsHash = \"$1\";" "$module" || {
+    printf 'bro: ERROR: could not rewrite every pinned field in %s\n' "$module" >&2
+    exit 1
+  }
+}
+
+# Evaluate the real home configuration so the hash is computed by the same
+# nixpkgs and fetcher that activation uses.
+npm_deps_derivation() {
+  local system activation
+  system=$(nix eval --raw --impure --expr 'builtins.currentSystem') || return
+  activation=$(nix eval --raw --impure --expr "
+    let
+      source = builtins.path {
+        path = \"$repo\";
+        name = \"nix-config-source\";
+        filter = path: type: builtins.baseNameOf path != \".git\";
+      };
+      flake = builtins.getFlake
+        (builtins.unsafeDiscardStringContext \"path:\${source}\");
+    in
+    (flake.lib.mkHome {
+      system = \"$system\";
+      username = \"validate\";
+      homeDirectory = \"/home/validate\";
+    }).activationPackage.drvPath") || return
+  nix-store --query --requisites "$activation" \
+    | grep -E -- '-playwright-cli-.*-npm-deps\.drv$' \
+    | head -1
+}
+
+# npmDepsHash depends on the fetcher's cache layout, not just the lockfile, so
+# pin a placeholder and let Nix report the hash its own build produced.
+restore_pin=yes
+cp "$lockfile" "$module_lock"
+write_module 'sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA='
+deps_derivation=$(npm_deps_derivation)
+[ -n "$deps_derivation" ] || {
+  printf 'bro: ERROR: could not locate the playwright-cli npm dependency derivation\n' >&2
+  exit 1
+}
+if build_log=$(nix build --no-link "$deps_derivation^out" 2>&1); then
+  printf 'bro: ERROR: playwright-cli dependencies built with the placeholder hash\n' >&2
+  exit 1
+fi
+npm_deps_hash=$(grep -oE 'got:[[:space:]]+sha256-[A-Za-z0-9+/=]+' <<<"$build_log" \
+  | head -1 | grep -oE 'sha256-[A-Za-z0-9+/=]+' || true)
+[ -n "$npm_deps_hash" ] || {
+  printf 'bro: ERROR: Nix did not report a playwright-cli dependency hash\n%s\n' "$build_log" >&2
+  exit 1
+}
+
+write_module "$npm_deps_hash"
+deps_derivation=$(npm_deps_derivation)
+nix build --no-link "$deps_derivation^out" >/dev/null || {
+  printf 'bro: ERROR: playwright-cli dependencies still do not match the recorded hash\n' >&2
+  exit 1
+}
+restore_pin=no
+
+printf 'bro: updated playwright-cli pin from %s to %s\n' "$current_version" "$version"
