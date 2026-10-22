@@ -24,6 +24,8 @@ run_git() {
 
 # Transient DNS failures are common on laptops resuming from sleep, so a
 # resolution error is retried while any other failure is reported immediately.
+# Errors and progress reach the terminal as Nix prints them, so a long build
+# shows what it is doing, and are kept to look for a resolution error.
 run_nix_with_dns_retry() {
   local attempt=1 max_attempts=5 delay=1 status
   local stdout_file stderr_file
@@ -36,17 +38,16 @@ run_nix_with_dns_retry() {
   while true; do
     : >"$stdout_file"
     : >"$stderr_file"
-    if "$@" >"$stdout_file" 2>"$stderr_file"; then
-      cat "$stderr_file" >&2
+    # bro runs with pipefail, so the pipeline fails when Nix does.
+    if "$@" 2>&1 >"$stdout_file" | tee "$stderr_file" >&2; then
       cat "$stdout_file"
       rm -f "$stdout_file" "$stderr_file"
       return 0
     else
-      # The failing command's status is only readable inside this branch: an if
-      # whose condition fails and which has no else clause evaluates to 0.
-      status=$?
+      # Nix's status is only readable inside this branch: an if whose
+      # condition fails and which has no else clause evaluates to 0.
+      status=${PIPESTATUS[0]}
     fi
-    cat "$stderr_file" >&2
     [ ! -s "$stdout_file" ] || cat "$stdout_file" >&2
 
     if ! grep -Eiq \
