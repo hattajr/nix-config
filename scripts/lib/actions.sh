@@ -356,6 +356,25 @@ health_plain_prefix() {
 }
 
 readonly HEALTH_AREAS=(core accounts path jobs)
+readonly HEALTH_STATE_FILE="${XDG_STATE_HOME:-$HOME/.local/state}/bro/health"
+
+# The latest run, for the menu to show later: a "checked<TAB>epoch seconds"
+# line, then one result per line in check order. Saving is best effort, so a
+# state directory that cannot be written only warns and never fails Health.
+save_health_results() {
+  local checked_at=$1 state_dir tmp
+  state_dir=$(dirname "$HEALTH_STATE_FILE")
+  if mkdir -p "$state_dir" && chmod 700 "$state_dir" \
+    && tmp=$(mktemp "$state_dir/.health.XXXXXX"); then
+    if { printf 'checked\t%s\n' "$checked_at"
+      printf '%s\n' "${HEALTH_RESULTS[@]+"${HEALTH_RESULTS[@]}"}"; } >"$tmp" \
+      && mv -f "$tmp" "$HEALTH_STATE_FILE"; then
+      return 0
+    fi
+    rm -f "$tmp"
+  fi
+  warn "could not save the Health results to $HEALTH_STATE_FILE"
+}
 
 health_area_heading() {
   case "$1" in
@@ -419,7 +438,8 @@ health() {
   local repo=$1 target=$2
   local locale_output startup_file tmux_socket expr checked
   HEALTH_RESULTS=()
-  checked=$(date '+%H:%M')
+  # One clock reading for both the saved time and the time on screen.
+  checked=$(date '+%s %H:%M')
 
   command -v nix >/dev/null 2>&1 || health_result fail core 'Nix is unavailable'
   if run_nix_with_dns_retry nix flake metadata "path:$repo" >/dev/null; then
@@ -495,6 +515,7 @@ health() {
     *-linux) board_sync_health ;;
   esac
 
-  ! styled_prompts || health_screen "$checked"
+  ! styled_prompts || health_screen "${checked#* }"
+  save_health_results "${checked%% *}"
   health_passed
 }

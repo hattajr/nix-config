@@ -755,6 +755,7 @@ health_screen() {
 # fixable problem at its menu item, and wraps a long message to fit 60 columns.
 # The step still fails on the core and accounts failures and still offers the
 # review of the shadowed binaries.
+health_started=$(date +%s)
 output=$(run_styled "$health_home" $'pick Health\nno\nesc' \
   env PATH="$health_bin:$gumbin:$mockbin:$PATH" "${health_env[@]}" 2>&1)
 expected=$(printf '%s\n' \
@@ -790,6 +791,33 @@ grep -Fq 'returning to the menu' <<<"$output" || {
 grep -Fq '[Review the shadowed binaries now?]' "$gum_log" || {
   echo 'bro test: styled Health did not offer the shadowed binaries review' >&2; exit 1; }
 
+# Asserts FILE holds a "checked<TAB>epoch" line for a run started no earlier
+# than STARTED, then exactly the given results in check order.
+expect_saved_health() {
+  local file=$1 started=$2 checked && shift 2
+  [ -r "$file" ] || { echo "bro test: Health did not save its results to $file" >&2; exit 1; }
+  checked=$(head -n 1 "$file")
+  case "$checked" in
+    checked$'\t'[0-9]*) ;;
+    *) echo "bro test: the saved Health results do not start with the run time: $checked" >&2; exit 1 ;;
+  esac
+  checked=${checked#checked$'\t'}
+  [ "$checked" -ge "$started" ] && [ "$checked" -le "$(date +%s)" ] || {
+    echo "bro test: the saved Health run time $checked is not this run's" >&2; exit 1; }
+  [ "$(tail -n +2 "$file")" = "$(printf '%s\n' "$@")" ] || {
+    echo "bro test: the saved Health results are not this run's: $(cat "$file")" >&2; exit 1; }
+}
+
+expect_saved_health "$health_home/.local/state/bro/health" "$health_started" \
+  $'ok\tcore\tcheckout metadata' \
+  $'ok\tcore\tx86_64-linux flake output' \
+  $'warn\tcore\tLC_ALL is set; managed shells inherit the OS locale' \
+  $'ok\tcore\tmanaged zsh startup' \
+  $'fail\tcore\tmanaged tmux or configuration is unavailable' \
+  $'fail\taccounts\tconfigured account setup has errors; choose Accounts from the menu' \
+  $'warn\tpath\tunmanaged binaries shadow the Nix profile; choose Clean up from the menu' \
+  $'warn\tjobs\tboard sync failed at Thu 2026-10-22 09:00:04 KST (exit-code); see journalctl --user -u gh-board-sync'
+
 # A passing account without account setup yet: the optional result is only
 # dimmed, nothing fails, and an area without results is left out.
 quiet_home="$work/quiet-home"
@@ -817,5 +845,51 @@ grep -Fq $'\e[2m·\e[22m account setup is not installed yet' <<<"$output" || {
   echo 'bro test: the optional Accounts result was not dimmed' >&2; exit 1; }
 ! grep -Fq 'returning to the menu' <<<"$output" || {
   echo 'bro test: a passing styled Health failed the step' >&2; exit 1; }
+
+# Health the way bootstrap calls it, outside the menu and without a terminal,
+# with the state directory given.
+run_health_directly() {
+  local target_home=$1 state_home=$2
+  env HOME="$target_home" XDG_STATE_HOME="$state_home" USER=apply-user \
+    PATH="$health_bin:$mockbin:$PATH" LC_ALL=C NIX_CONFIG_TEST_NO_TTY=1 bash -c '
+      set -euo pipefail
+      . "$1/scripts/lib/core.sh"
+      . "$1/scripts/lib/nix.sh"
+      . "$1/scripts/lib/actions.sh"
+      resolve_identity
+      health "$2" x86_64-linux
+    ' _ "$repo_root" "$checkout" </dev/null 2>&1
+}
+
+# The results go where XDG_STATE_HOME says, as every other bro state file does.
+health_started=$(date +%s)
+status=0
+run_health_directly "$health_home" "$work/health-state" >/dev/null || status=$?
+[ "$status" = 1 ] || { echo "bro test: Health with a core failure exited $status" >&2; exit 1; }
+expect_saved_health "$work/health-state/bro/health" "$health_started" \
+  $'ok\tcore\tcheckout metadata' \
+  $'ok\tcore\tx86_64-linux flake output' \
+  $'warn\tcore\tLC_ALL is set; managed shells inherit the OS locale' \
+  $'ok\tcore\tmanaged zsh startup' \
+  $'fail\tcore\tmanaged tmux or configuration is unavailable' \
+  $'fail\taccounts\tconfigured account setup has errors; choose Accounts from the menu' \
+  $'warn\tpath\tunmanaged binaries shadow the Nix profile; choose Clean up from the menu'
+
+# A state directory that cannot be created only warns: every result is still
+# reported, and Health exits as it would have, failing or passing.
+: >"$work/state-is-a-file"
+saved_output=$(run_health_directly "$health_home" "$work/health-state" || true)
+status=0
+output=$(run_health_directly "$health_home" "$work/state-is-a-file") || status=$?
+[ "$status" = 1 ] || { echo "bro test: an unwritable state directory changed a failing Health to $status" >&2; exit 1; }
+grep -Fq "nix-config: could not save the Health results to $work/state-is-a-file/bro/health" <<<"$output" || {
+  echo "bro test: an unwritable state directory did not warn: $output" >&2; exit 1; }
+[ "$(grep '^nix-config: ' <<<"$output" | grep -Fv 'could not save')" = "$(grep '^nix-config: ' <<<"$saved_output")" ] || {
+  echo "bro test: an unwritable state directory changed the Health results: $output" >&2; exit 1; }
+status=0
+output=$(run_health_directly "$quiet_home" "$work/state-is-a-file") || status=$?
+[ "$status" = 0 ] || { echo "bro test: an unwritable state directory failed a passing Health: $output" >&2; exit 1; }
+grep -Fq 'could not save the Health results' <<<"$output" || {
+  echo "bro test: an unwritable state directory did not warn on a passing Health: $output" >&2; exit 1; }
 
 echo 'bro test: PASSED (menu-only entry, apply identity, DNS retry, sync push boundary, accounts wrapper, Pi extensions, Pi + ext, Playwright, Jobs, styled prompts)'

@@ -103,8 +103,10 @@ chmod +x "$mockbin/nix"
 git init -q "$health_repo"
 git -C "$health_repo" remote add origin https://github.com/hattajr/nix-config.git
 
+# Health saves its results under the state directory, so an inherited
+# XDG_STATE_HOME would write them into the developer's real state.
 run_health() {
-  env HOME="$health_home" \
+  env -u XDG_STATE_HOME HOME="$health_home" \
     USER=health-user \
     PATH="$mockbin:$PATH" \
     SHADOW_STUB_LOG="$workdir/stub.log" \
