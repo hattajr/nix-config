@@ -66,7 +66,7 @@ Explain the currently unblocked frontier and potential concurrency, including mi
 
 Show a numbered breakdown with each ticket's title, delivered behavior, category, acceptance criteria, scope boundaries, and blocking edges. Present full proposed briefs when needed to approve implementation contracts—not merely appealing titles.
 
-Use structured questions (`ask_user_question` in Pi, `AskUserQuestion` in Claude Code), respecting the per-call limit, to ask whether granularity and dependencies are right and whether slices need merging/splitting. Iterate without reopening already-settled choices. Obtain explicit approval to publish the latest concrete titles/bodies, relationships, and labels.
+Use structured questions (`ask_user_question` in Pi, `AskUserQuestion` in Claude Code), respecting the per-call limit, to ask whether granularity and dependencies are right and whether slices need merging/splitting. Iterate without reopening already-settled choices. Obtain explicit approval to publish the latest concrete titles/bodies, relationships, labels, and the target board or not-on-allowlist note.
 
 Default fully specified approved tickets to `ready-for-agent`, including those waiting on explicit blockers. Do not add `grilled` just because a breakdown or design doc was approved. Apply it only for scopes actually covered by a completed user-confirmed grilling discussion and only when the user approves that marker.
 
@@ -89,7 +89,7 @@ No parent is automatically closed, no issue is marked complete, and no implement
 
 ## Final response
 
-List each persisted issue title/link, category/state, blockers, and any parent changes. Identify which issues are specified but blocked versus eligible to start, plus concurrency cautions and publication failures. Suggest `implement-issues` as a separate user-triggered next step once the relevant frontier is eligible.
+List each persisted issue title/link, category/state, blockers, and any parent changes. Identify which issues are specified but blocked versus eligible to start, plus concurrency cautions, publication failures, and `gh-board` warnings. Suggest `implement-issues` as a separate user-triggered next step once the relevant frontier is eligible.
 
 ## Credits
 
