@@ -47,7 +47,8 @@
 
         # No committed configuration enables a background job, so this is the
         # only output that builds the Board sync units. Building the activation
-        # alone would accept a misspelt unit key, which systemd merely ignores.
+        # alone would accept a misspelt unit key, which systemd merely logs and
+        # ignores, so the check fails on those log lines too.
         x86_64-linux.board-sync =
           let
             home = mkHome {
@@ -69,7 +70,11 @@
               export HOME=$PWD XDG_RUNTIME_DIR=$PWD/runtime
               export SYSTEMD_UNIT_PATH=$PWD/units:${home.pkgs.systemd}/example/systemd/user
               mkdir -m 700 runtime
-              systemd-analyze verify --user --man=no units/gh-board-sync.service units/gh-board-sync.timer
+              systemd-analyze verify --user --man=no units/gh-board-sync.service units/gh-board-sync.timer 2>&1 | tee verify.log
+              if grep -E 'gh-board-sync\.(service|timer):[0-9]+: ' verify.log; then
+                echo 'board-sync check: unit has unknown or ignored settings' >&2
+                exit 1
+              fi
               ln -s ${home.activationPackage} $out
             '';
 

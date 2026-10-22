@@ -64,7 +64,8 @@ changes nothing in the repository, so each machine updates them itself.
 
 `Jobs` chooses which background jobs this machine runs. Today the only one is
 Board sync, an hourly systemd user timer that runs `gh-board sync` and catches
-up at the next boot after a run missed while the machine was off. Picking a job
+up on a run missed while no session was running when the user manager next
+starts: at login, or at boot with lingering enabled. Picking a job
 toggles it; `Done` saves the choice to `~/.local/state/bro/background-jobs`
 and applies, which starts or removes the timer. The choice is machine state,
 never committed: Apply and Sync pass it to `lib.mkHome`, a missing file means
@@ -102,7 +103,7 @@ it here and Apply; both targets are read-only store links.
 | --- | --- |
 | `config/agents/skills/` | Pi and Claude Code |
 | `config/pi/agent/skills/` | Pi only |
-| `config/claude/skills/` (create as needed) | Claude Code only |
+| `config/claude/skills/` | Claude Code only |
 | `@playwright/cli` npm package (`home/modules/playwright-cli.nix`) | Pi and Claude Code: the upstream `playwright-cli` skill, versioned with the CLI |
 
 **Create or share a skill:**
