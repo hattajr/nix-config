@@ -6,6 +6,7 @@
     ./modules/agent-skills.nix
     ./modules/claude.nix
     ./modules/core-files.nix
+    ./modules/gh-board.nix
     ./modules/git.nix
     ./modules/nvim.nix
     ./modules/packages.nix
