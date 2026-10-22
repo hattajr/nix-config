@@ -407,8 +407,9 @@ output=$(run_menu "$jobs_home" '1\n7\n8\n' "${linux[@]}" 2>&1)
 # confirm default), yes and no answer a confirm, and "pick A|B" chooses the
 # rows whose text starts with A and B. It answers like real gum: a row is split
 # into shown text and answered value only when --label-delimiter names the
-# separator, and the answer goes to stdout. Running out of answers is an Esc,
-# so a miscounted script ends the menu instead of hanging the suite.
+# separator, the answer goes to stdout, and --selected is split on commas that
+# are not escaped as "\,". Running out of answers is an Esc, so a miscounted
+# script ends the menu instead of hanging the suite.
 gumbin="$work/gum-bin"
 gum_log="$work/gum-log"
 gum_state="$work/gum-state"
@@ -424,10 +425,32 @@ answer=$(sed -n "${call}p" <<<"$MOCK_GUM_ANSWERS")
 command=$1 && shift
 rows=() ticked=() default=true many=no delimiter=''
 
+# Splits a flag value on commas the way gum's flag parser does: "\," is a
+# literal comma, and any other backslash stays as it is.
+add_ticked() {
+  local value=$1 token='' char escaped=no i
+  for ((i = 0; i < ${#value}; i++)); do
+    char=${value:i:1}
+    if [ "$escaped" = yes ]; then
+      [ "$char" = , ] || token+='\'
+      token+=$char
+      escaped=no
+    elif [ "$char" = '\' ] && [ "$i" -lt $((${#value} - 1)) ]; then
+      escaped=yes
+    elif [ "$char" = , ]; then
+      ticked+=("$token")
+      token=''
+    else
+      token+=$char
+    fi
+  done
+  ticked+=("$token")
+}
+
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --) shift; rows=("$@"); break ;;
-    --selected=*) ticked+=("${1#--selected=}") ;;
+    --selected=*) add_ticked "${1#--selected=}" ;;
     --default=*) default=${1#--default=} ;;
     --label-delimiter=*) delimiter=${1#--label-delimiter=} ;;
     --no-limit) many=yes ;;
@@ -629,6 +652,24 @@ output=$(run_styled "$jobs_home" $'pick Jobs\nesc' "${linux[@]}" 2>&1)
 grep -Fq "unknown background job \"weekly-backup\" in $jobs_file" <<<"$output" \
   && [ "$(gum_calls)" = 2 ] && [ "$(cat "$jobs_file")" = weekly-backup ] || {
   echo 'bro test: styled Jobs did not refuse an unknown job before asking' >&2; exit 1; }
+
+# A pre-ticked label with a comma still starts ticked: gum splits --selected on
+# commas, so the comma has to reach it escaped. No job label has one yet, so
+# the prompt is driven directly.
+: >"$gum_log"
+rm -f "$gum_state"
+output=$(printf '\004' | "$pty_run" env -u NIX_CONFIG_TEST_PLAIN PATH="$gumbin:$PATH" \
+  MOCK_GUM_LOG="$gum_log" MOCK_GUM_STATE="$gum_state" MOCK_GUM_ANSWERS=enter \
+  bash -c '
+    set -euo pipefail
+    . "$1/scripts/lib/core.sh"
+    shift
+    CHOSEN_INDEXES=(2)
+    choose_many Title "apply and return" "$@"
+    printf "chosen=%s\n" "${CHOSEN_INDEXES[*]:-none}"
+  ' _ "$repo_root" $'Plain\tone job' $'Comma\tthis, that, and c:\\path' 2>&1)
+grep -Fq 'chosen=2' <<<"$output" || {
+  echo "bro test: a pre-ticked label with a comma did not start ticked: $output" >&2; exit 1; }
 
 # The switch and a missing gum both keep the plain numbered prompts, which
 # then work as usual.

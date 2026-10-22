@@ -251,19 +251,21 @@ choose_many_plain() {
   set_chosen_indexes "$count" "${ticked[@]+"${ticked[@]}"}"
 }
 
-# gum ticks rows by their text and splits --selected on commas, so a ticked row
-# with a comma would quietly start unticked; refuse it instead.
+# gum ticks rows by their text and splits --selected on commas unless one is
+# escaped as "\,". Its parser has no escape for a backslash, so a row holding
+# a literal backslash-comma cannot be ticked, and is refused rather than shown
+# unticked.
 choose_many_styled() {
   local title=$1 done=$2 && shift 2
-  local count=$# rows=() selected=() answers=() row index answer status=0
+  local count=$# rows=() selected=() answers=() row index answer status=0 escaped_comma='\,'
   while IFS= read -r row; do
     rows+=("$row")
   done < <(styled_rows 4 "$@")
   for index in "${CHOSEN_INDEXES[@]+"${CHOSEN_INDEXES[@]}"}"; do
     is_option_index "$index" "$count" || continue
     row=${rows[index - 1]%$'\t'*}
-    case "$row" in *,*) fail "cannot pre-tick an option containing a comma: ${row%%"$STYLE_DIM"*}" ;; esac
-    selected+=("--selected=$row")
+    case "$row" in *'\,'*) fail "cannot pre-tick an option containing a backslash-comma: ${row%%"$STYLE_DIM"*}" ;; esac
+    selected+=("--selected=${row//,/"$escaped_comma"}")
   done
   answer=$(gum choose --no-limit --label-delimiter=$'\t' --no-show-help \
     --header="$title"$'\n'"${STYLE_DIM}x toggles, enter to $done, esc to cancel$STYLE_UNDIM" \
