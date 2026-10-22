@@ -102,11 +102,12 @@ chmod +x "$apply_home/.nix-profile/bin/tmux"
 # An inherited XDG_STATE_HOME would point bro at the developer's real state.
 # Trailing end-of-file marks end every prompt, nested ones included, still
 # waiting after the last answer, so a misnumbered answer fails an assertion
-# instead of hanging the suite.
+# instead of hanging the suite. These answers are typed at the plain prompts,
+# so the switch keeps them plain on a host that has gum installed.
 run_menu() {
   local target_home=$1 answers=$2 && shift 2
   printf '%b\004\004\004' "$answers" | "$pty_run" env -u XDG_STATE_HOME \
-    HOME="$target_home" USER=apply-user PATH="$mockbin:$PATH" "$@" "$bro"
+    HOME="$target_home" USER=apply-user PATH="$mockbin:$PATH" NIX_CONFIG_TEST_PLAIN=1 "$@" "$bro"
 }
 
 # Jobs appears only on Linux, just before Quit, so Quit moves with the host.
@@ -398,4 +399,161 @@ output=$(run_menu "$jobs_home" '1\n7\n8\n' "${linux[@]}" 2>&1)
 [ "$(cat "$jobs_file")" = "$(printf '%s\n' board-sync weekly-backup)" ] || {
   echo 'bro test: rejecting an unknown job rewrote the file' >&2; exit 1; }
 
-echo 'bro test: PASSED (menu-only entry, apply identity, DNS retry, sync push boundary, accounts wrapper, Pi extensions, Pi + ext, Playwright, Jobs)'
+# --- styled prompts -----------------------------------------------------------
+
+# The mock gum records every call and replays the next scripted answer, one per
+# line of MOCK_GUM_ANSWERS: esc and ctrl-c leave the prompt with gum's own exit
+# status, enter takes the default (the first row, the pre-ticked rows, or the
+# confirm default), yes and no answer a confirm, and "pick A|B" chooses the
+# rows whose text starts with A and B. It answers like real gum: with the value
+# after each row's tab, on stdout. Running out of answers is an Esc, so a
+# miscounted script ends the menu instead of hanging the suite.
+gumbin="$work/gum-bin"
+gum_log="$work/gum-log"
+gum_state="$work/gum-state"
+mkdir -p "$gumbin"
+command cat >"$gumbin/gum" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+{ printf 'gum'; printf ' [%s]' "$@"; printf '\n'; } >>"$MOCK_GUM_LOG"
+[ -t 0 ] && [ -t 2 ] || { printf 'gum was not given the terminal\n' >>"$MOCK_GUM_LOG"; exit 2; }
+call=$(( $(cat "$MOCK_GUM_STATE" 2>/dev/null || printf 0) + 1 ))
+printf '%s\n' "$call" >"$MOCK_GUM_STATE"
+answer=$(sed -n "${call}p" <<<"$MOCK_GUM_ANSWERS")
+command=$1 && shift
+rows=() ticked=() default=true many=no
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --) shift; rows=("$@"); break ;;
+    --selected=*) ticked+=("${1#--selected=}") ;;
+    --default=*) default=${1#--default=} ;;
+    --no-limit) many=yes ;;
+  esac
+  shift
+done
+
+print_rows_starting() {
+  local wanted row
+  for wanted in "$@"; do
+    for row in "${rows[@]}"; do
+      case "${row%$'\t'*}" in "$wanted"*) printf '%s\n' "${row##*$'\t'}" ;; esac
+    done
+  done
+}
+
+case "$command:${answer:-esc}" in
+  *:ctrl-c) exit 130 ;;
+  choose:esc) printf 'nothing selected\n' >&2; exit 1 ;;
+  confirm:esc | confirm:no) exit 1 ;;
+  confirm:yes) exit 0 ;;
+  confirm:enter) [ "$default" = true ] ;;
+  choose:enter)
+    if [ "$many" = yes ]; then
+      for row in "${rows[@]}"; do
+        for wanted in "${ticked[@]+"${ticked[@]}"}"; do
+          [ "${row%$'\t'*}" != "$wanted" ] || printf '%s\n' "${row##*$'\t'}"
+        done
+      done
+    else
+      printf '%s\n' "${rows[0]##*$'\t'}"
+    fi
+    ;;
+  'choose:pick') ;;
+  choose:pick\ *) IFS='|' read -r -a picks <<<"${answer#pick }"; print_rows_starting "${picks[@]}" ;;
+  *) printf 'mock gum: no answer "%s" for %s\n' "$answer" "$command" >&2; exit 3 ;;
+esac
+EOF
+chmod +x "$gumbin/gum"
+
+# Styled mode needs no test switch, a terminal, and gum on PATH. Esc after the
+# scripted answers ends the menu, and plain-prompt end-of-file marks stop a
+# wrong fallback to the numbered menu from hanging the suite.
+run_styled() {
+  local target_home=$1 answers=$2 && shift 2
+  : >"$gum_log"
+  rm -f "$gum_state"
+  printf '\004\004\004' | "$pty_run" env -u XDG_STATE_HOME -u NIX_CONFIG_TEST_PLAIN \
+    HOME="$target_home" USER=apply-user PATH="$gumbin:$mockbin:$PATH" \
+    MOCK_GUM_LOG="$gum_log" MOCK_GUM_STATE="$gum_state" MOCK_GUM_ANSWERS="$answers" \
+    "$@" "$bro"
+}
+
+gum_calls() {
+  grep -c '^gum ' "$gum_log" || true
+}
+
+# The main menu goes through gum, keeps each description beside its label, and
+# the chosen item runs; Esc then quits with success.
+: >"$log"
+status=0
+output=$(run_styled "$apply_home" $'pick Apply\nesc' 2>&1) || status=$?
+[ "$status" = 0 ] || { echo "bro test: Esc at the styled main menu exited $status" >&2; exit 1; }
+grep -q '^activation$' "$log" || { echo 'bro test: Apply chosen through gum did not activate' >&2; exit 1; }
+! grep -Fq 'not given the terminal' "$gum_log" || {
+  echo 'bro test: gum did not read and draw on the terminal' >&2; exit 1; }
+grep -Fq '[choose]' "$gum_log" && grep -Fq '[--header=nix-config  (' "$gum_log" || {
+  echo 'bro test: the main menu did not go through gum choose' >&2; exit 1; }
+grep -Eq '\[Apply +.*activate this checkout' "$gum_log" || {
+  echo 'bro test: the styled main menu lost its descriptions' >&2; exit 1; }
+! grep -Fq 'choose [1-' <<<"$output" || { echo 'bro test: styled mode also drew the plain menu' >&2; exit 1; }
+[ "$(gum_calls)" = 2 ] || { echo 'bro test: the styled menu did not return after Apply' >&2; exit 1; }
+
+# Esc straight away runs nothing and still exits 0, as end-of-input does.
+: >"$log"
+status=0
+run_styled "$apply_home" esc >/dev/null 2>&1 || status=$?
+[ "$status" = 0 ] || { echo "bro test: Esc at the first styled menu exited $status" >&2; exit 1; }
+! grep -Eq '^nix |^activation$' "$log" || { echo 'bro test: Esc at the styled menu ran a step' >&2; exit 1; }
+
+# A submenu goes through gum and its answer runs; Esc there cancels back to the
+# main menu, which is asked again.
+mkdir -p "$extensions_home/.local/bin"
+command cat >"$extensions_home/.local/bin/pi" <<'EOF'
+#!/bin/sh
+printf 'pi %s (skip=%s)\n' "$*" "${PI_SKIP_PROTON_PASS:-}" >>"$MOCK_LOG"
+EOF
+chmod +x "$extensions_home/.local/bin/pi"
+: >"$log"
+run_styled "$extensions_home" $'pick Update\npick Extensions\nesc' env MOCK_GIT_MODE=sync MOCK_GIT_AHEAD=0 >/dev/null 2>&1
+grep -Fq '[--header=What should be updated?]' "$gum_log" || {
+  echo 'bro test: the Update submenu did not go through gum' >&2; exit 1; }
+grep -Fq 'pi update --extensions (skip=1)' "$log" || {
+  echo 'bro test: the Update choice made through gum did not run' >&2; exit 1; }
+: >"$log"
+run_styled "$extensions_home" $'pick Update\nesc\nesc' env MOCK_GIT_MODE=sync MOCK_GIT_AHEAD=0 >/dev/null 2>&1
+! grep -Eq '^(pi update|update-pi|update-playwright-cli) ' "$log" && ! grep -Fq 'nix flake update' "$log" || {
+  echo 'bro test: Esc in the Update submenu still updated something' >&2; exit 1; }
+[ "$(gum_calls)" = 3 ] || { echo 'bro test: Esc in a submenu did not return to the main menu' >&2; exit 1; }
+
+# confirm goes through gum with today's default, and Esc there is a cancel.
+: >"$log"
+run_styled "$apply_home" $'pick Sync\nyes\nesc' env MOCK_GIT_MODE=sync >/dev/null 2>&1
+grep -Fq '[confirm]' "$gum_log" && grep -Fq '[--default=false]' "$gum_log" || {
+  echo 'bro test: the push question did not go through gum confirm defaulting to No' >&2; exit 1; }
+grep -Eq '^git .* push($| )' "$log" || { echo 'bro test: Yes in gum confirm did not push' >&2; exit 1; }
+for answer in enter esc no; do
+  : >"$log"
+  run_styled "$apply_home" "pick Sync"$'\n'"$answer"$'\nesc' env MOCK_GIT_MODE=sync >/dev/null 2>&1
+  ! grep -Eq '^git .* push($| )' "$log" || { echo "bro test: $answer in gum confirm pushed" >&2; exit 1; }
+  [ "$(gum_calls)" = 3 ] || { echo "bro test: $answer in gum confirm did not return to the menu" >&2; exit 1; }
+done
+
+# The switch and a missing gum both keep the plain numbered prompts, which
+# then work as usual.
+: >"$log"
+output=$(run_styled "$apply_home" '' NIX_CONFIG_TEST_PLAIN=1 2>&1)
+[ ! -s "$gum_log" ] && grep -Fq 'choose [1-' <<<"$output" || {
+  echo 'bro test: the plain switch did not keep the plain prompts' >&2; exit 1; }
+path_without_gum=''
+IFS=: read -r -a path_entries <<<"$PATH"
+for entry in "${path_entries[@]}"; do
+  [ -x "$entry/gum" ] || path_without_gum="${path_without_gum:+$path_without_gum:}$entry"
+done
+: >"$log"
+status=0
+output=$(printf '1\n%s\n' "$quit" | "$pty_run" env -u XDG_STATE_HOME -u NIX_CONFIG_TEST_PLAIN \
+  HOME="$apply_home" USER=apply-user PATH="$mockbin:$path_without_gum" "$bro" 2>&1) || status=$?
+[ "$status" = 0 ] && grep -Fq 'choose [1-' <<<"$output" && grep -q '^activation$' "$log" || {
+  echo 'bro test: without gum, bro did not fall back to working plain prompts' >&2; exit 1; }
+
+echo 'bro test: PASSED (menu-only entry, apply identity, DNS retry, sync push boundary, accounts wrapper, Pi extensions, Pi + ext, Playwright, Jobs, styled prompts)'

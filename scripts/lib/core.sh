@@ -22,10 +22,53 @@ require_tty() {
   has_tty || fail "$1 needs a terminal; run it from an interactive shell"
 }
 
+# Styled prompts need a terminal and gum; without either, the plain prompts
+# below keep working. NIX_CONFIG_TEST_PLAIN pins the plain prompts so the suite
+# can assert their exact text on a host that has gum; it is a harness seam and
+# never part of the user surface.
+styled_prompts() {
+  [ -z "${NIX_CONFIG_TEST_PLAIN:-}" ] && has_tty && command -v gum >/dev/null 2>&1
+}
+
+# Only the terminal's own 16 colours, so styled prompts follow its theme.
+readonly STYLE_ACCENT=6
+readonly STYLE_DIM=$'\e[2m' STYLE_UNDIM=$'\e[22m'
+
+# Styled rows fit in 60 columns, or in the terminal when it is narrower. A
+# terminal that reports no size gets the full 60.
+styled_width() {
+  local size columns
+  size=$(stty size </dev/tty 2>/dev/null) || size=''
+  columns=${size#* }
+  case "$columns" in '' | 0 | *[!0-9]*) columns=60 ;; esac
+  [ "$columns" -le 60 ] || columns=60
+  printf '%s\n' "$columns"
+}
+
+# gum leaves a prompt with 1 on Esc (or No) and 130 on ctrl-c; either way the
+# user left it, as end-of-input does at a plain prompt. Anything else is gum
+# itself failing, which must not pass for an answer.
+gum_answered() {
+  case "$1" in
+    0) return 0 ;;
+    1 | 130) return 1 ;;
+    *) fail "gum $2 failed with exit status $1" ;;
+  esac
+}
+
 # Answer defaults to the capitalised letter so a bare Return is always safe.
 confirm() {
-  local question=$1 default=${2:-no} answer
+  local question=$1 default=${2:-no}
   require_tty 'this step'
+  if styled_prompts; then
+    confirm_styled "$question" "$default"
+  else
+    confirm_plain "$question" "$default"
+  fi
+}
+
+confirm_plain() {
+  local question=$1 default=$2 answer
   while true; do
     case "$default" in
       yes) printf '%s [Y/n] ' "$question" >/dev/tty ;;
@@ -41,18 +84,46 @@ confirm() {
   done
 }
 
-# Prints the 1-based index of the chosen label. Callers pass labels as
+# gum draws on stderr, so both it and its keys go to the terminal; callers may
+# be capturing stdout.
+confirm_styled() {
+  local question=$1 default=false status=0
+  [ "$2" != yes ] || default=true
+  gum confirm --default="$default" --no-show-help \
+    --prompt.foreground="$STYLE_ACCENT" \
+    --selected.foreground=0 --selected.background="$STYLE_ACCENT" \
+    --unselected.foreground=7 --unselected.background=8 \
+    -- "$question" </dev/tty >/dev/tty 2>/dev/tty || status=$?
+  gum_answered "$status" confirm
+}
+
+# A label longer than the usual column widens it so descriptions stay aligned.
+label_column_width() {
+  local option label width=12
+  for option in "$@"; do
+    label=${option%%$'\t'*}
+    [ "${#label}" -le "$width" ] || width=${#label}
+  done
+  printf '%s\n' "$width"
+}
+
+# Sets CHOICE_INDEX to the 1-based index of the chosen label, or returns 1 when
+# the prompt is left without a choice. Callers pass labels as
 # "key<TAB>description" so the menu can align its own columns.
 CHOICE_INDEX=0
 choose() {
-  local title=$1 && shift
-  local options=("$@") count=${#options[@]} index answer label description width=12
   require_tty 'the menu'
-  # A label longer than the usual column widens it so descriptions stay aligned.
-  for index in "${!options[@]}"; do
-    label=${options[index]%%$'\t'*}
-    [ "${#label}" -le "$width" ] || width=${#label}
-  done
+  if styled_prompts; then
+    choose_styled "$@"
+  else
+    choose_plain "$@"
+  fi
+}
+
+choose_plain() {
+  local title=$1 && shift
+  local options=("$@") count=$# index answer label description width
+  width=$(label_column_width "$@")
   while true; do
     printf '\n%s\n\n' "$title" >/dev/tty
     for index in "${!options[@]}"; do
@@ -75,4 +146,43 @@ choose() {
     fi
     warn "Enter a number from 1 to $count."
   done
+}
+
+# Prints one gum row per option: the aligned label and dimmed description, a
+# tab, then the option's index. gum shows the text and answers with the index,
+# so the answer never depends on what a label says. Descriptions are cut to fit
+# the width, leaving room for gum's cursor and tick marks.
+styled_rows() {
+  local options=("$@") index label description width room
+  width=$(label_column_width "$@")
+  room=$(($(styled_width) - 4 - width - 1))
+  for index in "${!options[@]}"; do
+    label=${options[index]%%$'\t'*}
+    description=${options[index]#*$'\t'}
+    if [ "$label" = "$description" ] || [ "$room" -le 0 ]; then
+      printf '%s\t%d\n' "$label" "$((index + 1))"
+    else
+      printf '%-*s %s%s%s\t%d\n' "$width" "$label" \
+        "$STYLE_DIM" "${description:0:room}" "$STYLE_UNDIM" "$((index + 1))"
+    fi
+  done
+}
+
+is_option_index() {
+  case "$1" in '' | *[!0-9]*) return 1 ;; esac
+  [ "$1" -ge 1 ] && [ "$1" -le "$2" ]
+}
+
+choose_styled() {
+  local title=$1 && shift
+  local count=$# rows=() row answer status=0
+  while IFS= read -r row; do
+    rows+=("$row")
+  done < <(styled_rows "$@")
+  answer=$(gum choose --header="$title" --label-delimiter=$'\t' --no-show-help \
+    --header.foreground="$STYLE_ACCENT" --cursor.foreground="$STYLE_ACCENT" \
+    -- "${rows[@]}" </dev/tty 2>/dev/tty) || status=$?
+  gum_answered "$status" choose || return 1
+  is_option_index "$answer" "$count" || fail "gum choose answered with an unknown option: $answer"
+  CHOICE_INDEX=$answer
 }
