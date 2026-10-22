@@ -696,4 +696,52 @@ output=$(printf '1\n%s\n' "$quit" | "$pty_run" env -u XDG_STATE_HOME -u NIX_CONF
 [ "$status" = 0 ] && grep -Fq 'choose [1-' <<<"$output" && grep -q '^activation$' "$log" || {
   echo 'bro test: without gum, bro did not fall back to working plain prompts' >&2; exit 1; }
 
+# --- Health -------------------------------------------------------------------
+
+# One home where every area has something to say: LC_ALL=C is a valid locale
+# that still warns, tmux is missing, the account check fails, a binary shadows
+# the profile, and the last Board sync failed. systemctl is a stub, so the suite
+# never asks the developer's own user manager.
+health_home="$work/health-home"
+health_bin="$work/health-bin"
+mkdir -p "$health_home/.nix-profile/bin" "$health_home/.local/bin" \
+  "$health_home/.local/share/nix-config" "$health_bin"
+record_checkout "$health_home"
+printf '%s\n' board-sync >"$health_home/.local/state/bro/background-jobs"
+printf '#!/bin/sh\nexit 0\n' >"$health_home/.nix-profile/bin/zsh"
+printf '#!/bin/sh\nexit 1\n' >"$health_home/.local/bin/nix-config-setup"
+printf '#!/bin/sh\nexit 1\n' >"$health_home/.local/share/nix-config/shadow-scan"
+command cat >"$health_bin/systemctl" <<'EOF'
+#!/bin/sh
+printf '%s\n' Result=exit-code 'ExecMainExitTimestamp=Thu 2026-10-22 09:00:04 KST' \
+  LoadState=loaded ActiveState=failed 'StateChangeTimestamp=Thu 2026-10-22 09:00:04 KST'
+EOF
+chmod +x "$health_home/.nix-profile/bin/zsh" "$health_home/.local/bin/nix-config-setup" \
+  "$health_home/.local/share/nix-config/shadow-scan" "$health_bin/systemctl"
+health_env=(env LC_ALL=C MOCK_UNAME_S=Linux MOCK_UNAME_M=x86_64)
+
+# Plain Health is the compatibility contract: today's lines, in today's order,
+# and nothing else from bro, followed by the review offer and the failed step.
+expect_plain_health() {
+  local output=$1 expected
+  expected=$(printf '%s\n' \
+    'nix-config: OK: checkout metadata' \
+    'nix-config: OK: x86_64-linux flake output' \
+    'nix-config: CORE WARN: LC_ALL is set; managed shells inherit the OS locale' \
+    'nix-config: OK: managed zsh startup' \
+    'nix-config: CORE FAIL: managed tmux or configuration is unavailable' \
+    'nix-config: AUTH FAIL: configured account setup has errors; choose Accounts from the menu' \
+    'nix-config: PATH WARN: unmanaged binaries shadow the Nix profile; choose Clean up from the menu' \
+    'nix-config: BOARD WARN: board sync failed at Thu 2026-10-22 09:00:04 KST (exit-code); see journalctl --user -u gh-board-sync' \
+    'nix-config: returning to the menu')
+  # The first line follows the menu prompt, which the terminal leaves open.
+  [ "$(tr -d '\r' <<<"$output" | grep -o 'nix-config: .*')" = "$expected" ] || {
+    echo "bro test: plain Health output changed: $output" >&2; exit 1; }
+  grep -Fq 'Review the shadowed binaries now? [y/N]' <<<"$output" || {
+    echo 'bro test: plain Health did not offer the shadowed binaries review' >&2; exit 1; }
+}
+
+output=$(run_menu "$health_home" '5\nn\n8\n' env PATH="$health_bin:$mockbin:$PATH" "${health_env[@]}" 2>&1)
+expect_plain_health "$output"
+
 echo 'bro test: PASSED (menu-only entry, apply identity, DNS retry, sync push boundary, accounts wrapper, Pi extensions, Pi + ext, Playwright, Jobs, styled prompts)'
