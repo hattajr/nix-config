@@ -23,6 +23,11 @@ for collection in agents/skills/new-shared pi/agent/skills/new-pi claude/skills/
     >"$fixture/config/$collection/SKILL.md"
 done
 printf 'reference content\n' >"$fixture/config/agents/skills/new-shared/references/guide.md"
+# Running a skill's own tests leaves untracked caches that Apply would otherwise link.
+junk="$fixture/config/claude/skills/new-claude"
+mkdir -p "$junk/__pycache__" "$junk/.pytest_cache" "$junk/.venv/bin"
+touch "$junk/__pycache__/collect.cpython-312.pyc" "$junk/.pytest_cache/README.md" \
+  "$junk/.venv/bin/python" "$junk/stray.pyc"
 
 case "$(uname -s):$(uname -m)" in
 Darwin:arm64 | Darwin:aarch64) native=aarch64-darwin ;;
@@ -59,8 +64,19 @@ jq -e '
   has(".claude/skills/playwright-cli") and has(".pi/agent/skills/playwright-cli") and
   (has(".claude/skills") | not) and (has(".pi/agent/skills") | not)
 ' "$work/files.json" >/dev/null || fail 'skill isolation or leaf-only ownership failed'
+jq -e '
+  [".claude/skills/get-standup/SKILL.md", ".claude/skills/get-standup/collect.py",
+   ".claude/skills/get-standup/test_collect.py"] as $standup
+  | . as $files | all($standup[]; $files[.].force == true) and (has(".pi/agent/skills/get-standup/SKILL.md") | not)
+' "$work/files.json" >/dev/null || fail 'get-standup is not a managed Claude-only skill'
+jq -e '[keys[] | select(test("/(__pycache__|\\.pytest_cache|\\.venv)/|\\.pyc$"))] == []' \
+  "$work/files.json" >/dev/null || fail 'Python caches or virtualenvs are linked'
 
 nix eval --raw "$configuration.home.activation.overwriteManagedLeaves.data" >"$work/takeover.sh"
+grep -Fq '.claude/skills/get-standup/collect.py' "$work/takeover.sh" ||
+  fail 'takeover does not cover get-standup'
+! grep -Eq '__pycache__|\.pytest_cache|\.venv/|\.pyc' "$work/takeover.sh" ||
+  fail 'takeover would quarantine Python caches or virtualenvs'
 home="$work/home"
 mkdir -p "$home/.claude/skills/new-shared/SKILL.md" \
   "$home/.claude/skills/synced" "$home/.claude/skills/local-only" \
