@@ -39,4 +39,13 @@ nix build --impure --no-link --expr \
       homeDirectory = \"/home/validate\";
     }).activationPackage"
 
-printf 'flake validation: PASSED (all outputs evaluated; %s activation built)\n' "$native"
+# No committed configuration enables a background job, so the Board sync units
+# are only built, and verified with systemd-analyze, by this check. It can only
+# build on the platform it targets; elsewhere it must still evaluate.
+if [ "$native" = x86_64-linux ]; then
+  nix build --no-link "$flake_source#checks.x86_64-linux.board-sync"
+else
+  nix eval --raw "$flake_source#checks.x86_64-linux.board-sync.drvPath" >/dev/null
+fi
+
+printf 'flake validation: PASSED (all outputs evaluated; %s activation built; Board sync check validated)\n' "$native"

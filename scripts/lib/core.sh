@@ -46,8 +46,13 @@ confirm() {
 CHOICE_INDEX=0
 choose() {
   local title=$1 && shift
-  local options=("$@") count=${#options[@]} index answer label description
+  local options=("$@") count=${#options[@]} index answer label description width=12
   require_tty 'the menu'
+  # A label longer than the usual column widens it so descriptions stay aligned.
+  for index in "${!options[@]}"; do
+    label=${options[index]%%$'\t'*}
+    [ "${#label}" -le "$width" ] || width=${#label}
+  done
   while true; do
     printf '\n%s\n\n' "$title" >/dev/tty
     for index in "${!options[@]}"; do
@@ -56,7 +61,7 @@ choose() {
       if [ "$label" = "$description" ]; then
         printf '  %d) %s\n' "$((index + 1))" "$label" >/dev/tty
       else
-        printf '  %d) %-12s %s\n' "$((index + 1))" "$label" "$description" >/dev/tty
+        printf '  %d) %-*s %s\n' "$((index + 1))" "$width" "$label" "$description" >/dev/tty
       fi
     done
     printf '\n  choose [1-%d]: ' "$count" >/dev/tty

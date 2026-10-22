@@ -31,29 +31,38 @@ main() {
   repo=$(resolve_checkout)
   target=$(detect_platform)
 
+  local items=(
+    $'Apply\tactivate this checkout'
+    $'Sync\tfast-forward from upstream, then apply'
+    $'Update\tchange pinned versions or update Pi extensions'
+    $'Accounts\tconfigure logins and API keys'
+    $'Health\tcheck shell, accounts, and PATH'
+    $'Clean up\tquarantine binaries shadowing Nix'
+  )
+  # Background jobs are systemd user timers, which only Linux has.
+  case "$target" in
+    *-linux) items+=($'Jobs\tchoose background jobs for this machine') ;;
+  esac
+  items+=($'Quit\tleave the menu')
+
   while true; do
-    choose "nix-config  ($target)" \
-      $'Apply\tactivate this checkout' \
-      $'Sync\tfast-forward from upstream, then apply' \
-      $'Update\tchange pinned versions or update Pi extensions' \
-      $'Accounts\tconfigure logins and API keys' \
-      $'Health\tcheck shell, accounts, and PATH' \
-      $'Clean up\tquarantine binaries shadowing Nix' \
-      $'Quit\tleave the menu' || return 0
-    case "$CHOICE_INDEX" in
-      1) run_step apply "$repo" "$target" ;;
-      2) run_step sync "$repo" "$target" ;;
-      3) run_step update "$repo" "$target" ;;
-      4) run_step auth ;;
-      5)
+    choose "nix-config  ($target)" "${items[@]}" || return 0
+    # Dispatch on the label, because which items appear depends on the platform.
+    case "${items[CHOICE_INDEX - 1]%%$'\t'*}" in
+      Apply) run_step apply "$repo" "$target" ;;
+      Sync) run_step sync "$repo" "$target" ;;
+      Update) run_step update "$repo" "$target" ;;
+      Accounts) run_step auth ;;
+      Health)
         run_step health "$repo" "$target"
         if shadowed_binaries_present \
           && confirm 'Review the shadowed binaries now?' no; then
           run_step shadow_review
         fi
         ;;
-      6) run_step shadow_review ;;
-      7) return 0 ;;
+      'Clean up') run_step shadow_review ;;
+      Jobs) run_step background_jobs "$repo" "$target" ;;
+      Quit) return 0 ;;
     esac
   done
 }
