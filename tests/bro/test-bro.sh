@@ -63,13 +63,18 @@ command cat >"$mockbin/sleep" <<'EOF'
 #!/bin/sh
 printf 'sleep %s\n' "$*" >>"$MOCK_LOG"
 EOF
-# Platform-specific paths are asserted on every host, so the kernel name can be
-# overridden; everything else, including the architecture, stays real.
+# Platform-specific paths are asserted on every host, so the kernel name and
+# architecture can be overridden together; macOS is only supported on arm64, so
+# faking Darwin alone on an x86_64 host is an unsupported platform.
 real_uname=$(command -v uname)
 command cat >"$mockbin/uname" <<EOF
 #!/bin/sh
 if [ "\$*" = -s ] && [ -n "\${MOCK_UNAME_S:-}" ]; then
   printf '%s\\n' "\$MOCK_UNAME_S"
+  exit 0
+fi
+if [ "\$*" = -m ] && [ -n "\${MOCK_UNAME_M:-}" ]; then
+  printf '%s\\n' "\$MOCK_UNAME_M"
   exit 0
 fi
 exec "$real_uname" "\$@"
@@ -223,7 +228,7 @@ run_menu "$auth_home" '4\n7\n' env MOCK_UNAME_S=Linux >/dev/null
 grep -Fq "proton $auth_home/.local/bin/nix-config-setup" "$log" || {
   echo 'bro test: Linux Accounts did not use the Proton Pass session' >&2; exit 1; }
 : >"$log"
-run_menu "$auth_home" '4\n7\n' env MOCK_UNAME_S=Darwin >/dev/null
+run_menu "$auth_home" '4\n7\n' env MOCK_UNAME_S=Darwin MOCK_UNAME_M=arm64 >/dev/null
 grep -q '^setup ' "$log" && ! grep -q '^proton ' "$log" || {
   echo 'bro test: macOS Accounts did not run setup directly' >&2; exit 1; }
 rm "$auth_home/.local/bin/proton-pass-session"
