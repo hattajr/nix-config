@@ -80,8 +80,8 @@ printf 'PI_ENV_PRESERVE=yes\n' >"$HOME/.config/proton-pass/pi.env"
 # shellcheck disable=SC1091
 . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
 
-# bro is menu-only: Apply, then Quit.
-printf '1\n7\n' | "$source_root/tests/lib/pty-run" "$HOME/.local/bin/bro"
+# bro is menu-only: Apply, then Quit (8 on Linux, where Jobs precedes it).
+printf '1\n8\n' | "$source_root/tests/lib/pty-run" "$HOME/.local/bin/bro"
 assert_takeover
 jq -e '.oauth == "preserve"' "$HOME/.pi/agent/auth.json" >/dev/null
 grep -Fx PI_ENV_PRESERVE=yes "$HOME/.config/proton-pass/pi.env"

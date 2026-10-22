@@ -39,8 +39,11 @@ bro
   4) Accounts     configure logins and API keys
   5) Health       check shell, accounts, and PATH
   6) Clean up     quarantine binaries shadowing Nix
-  7) Quit         leave the menu
+  7) Jobs         choose background jobs for this machine
+  8) Quit         leave the menu
 ```
+
+`Jobs` appears on Linux only; on macOS `Quit` is 7.
 
 `bro` takes no arguments and no flags. Choices that used to be flags, such as
 pushing after a sync or showing a generated diff, are prompts inside the step
@@ -58,6 +61,14 @@ that review-and-commit flow. Pi extensions are the npm packages listed in
 `config/pi/agent/settings.json`, which Pi installs into its own writable
 state; choosing them runs `pi update --extensions` on this machine only and
 changes nothing in the repository, so each machine updates them itself.
+
+`Jobs` chooses which background jobs this machine runs. Today the only one is
+Board sync, an hourly systemd user timer that runs `gh-board sync` and catches
+up at the next boot after a run missed while the machine was off. Picking a job
+toggles it; `Done` saves the choice to `~/.local/state/bro/background-jobs`
+and applies, which starts or removes the timer. The choice is machine state,
+never committed: Apply and Sync pass it to `lib.mkHome`, a missing file means
+no jobs, and an unknown name in the file is refused rather than ignored.
 
 Pi updates also persist `home/modules/pi-package-lock.json`. If the npm tarball
 ships no lockfile, the updater uses npm to resolve runtime dependencies with
@@ -245,7 +256,7 @@ Browsers on macOS are intentionally installed and updated manually. Home Manager
 
 Home Manager uses the active user's `$USER` and `$HOME`, so it works for arbitrary local account names. Identity is read from the account itself and cannot be set by hand.
 
-The flake itself stays pure: it never reads the environment during evaluation. The menu and the installer resolve the identity in the shell and pass it to the `lib.mkHome` builder as an explicit argument, so any account can be activated without committing it. The owner's own configurations are also committed, keyed by system (`x86_64-linux`, `aarch64-linux`, `aarch64-darwin`) rather than by `user@host`, which keeps `nix flake check` and evaluation caching working and survives a host being renamed or replaced.
+The flake itself stays pure: it never reads the environment during evaluation. The menu and the installer resolve the identity in the shell and pass it to the `lib.mkHome` builder as an explicit argument, so any account can be activated without committing it. The machine's background jobs reach `lib.mkHome` the same way, as its `jobs` argument, so no committed output enables one; a direct `home-manager switch` of a committed output therefore runs without them. The owner's own configurations are also committed, keyed by system (`x86_64-linux`, `aarch64-linux`, `aarch64-darwin`) rather than by `user@host`, which keeps `nix flake check` and evaluation caching working and survives a host being renamed or replaced.
 
 For direct Nix use outside the menu, the attribute is a system rather than `$USER@$(hostname)`, so it must be named explicitly:
 

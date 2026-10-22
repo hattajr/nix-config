@@ -4,6 +4,7 @@
   imports = [
     ./modules/agent-instructions.nix
     ./modules/agent-skills.nix
+    ./modules/background-jobs.nix
     ./modules/claude.nix
     ./modules/core-files.nix
     ./modules/gh-board.nix
