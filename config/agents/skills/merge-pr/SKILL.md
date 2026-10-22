@@ -67,12 +67,13 @@ and affected review, plus a fresh signoff where one is required; after each merg
 the base moves, so later PRs revalidate against it. Never dismiss reviews,
 resolve others' threads, or bypass gates.
 Follow repository policy; default to squash when allowed. Run the merge as its own
-shell call with the PR number, repository, and reviewed head SHA written out
+shell call with the PR number, repository, and full reviewed head SHA written out
 literally: no variables or command substitution, nothing chained before or after
-it (`;`, `&&`, `||`), no pipe, no `2>&1`. Claude Code checks allow rules per
-subcommand, so a chained or variable-built merge misses the `gh pr merge` rule and
-auto mode blocks it. Run the re-checks above and the verification below as
-separate calls.
+it (`;`, `&&`, `||` or a newline), no pipe, no `2>&1`. Claude Code checks allow
+rules per subcommand and a variable stops a rule from matching, so a chained or
+variable-built merge falls outside the `gh pr merge` allow rule and auto mode's
+classifier blocks it. Run the re-checks above and the verification below as
+calls separate from the merge.
 
 ```sh
 gh pr merge 42 --repo owner/repo --squash --match-head-commit 0123abc...
