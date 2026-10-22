@@ -136,14 +136,6 @@ resolve_checkout() {
   printf '%s\n' "$candidate"
 }
 
-list_contains() {
-  local wanted=$1 item && shift
-  for item in "$@"; do
-    [ "$item" != "$wanted" ] || return 0
-  done
-  return 1
-}
-
 is_background_job() {
   list_contains "$1" "${BACKGROUND_JOBS[@]}"
 }

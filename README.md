@@ -45,6 +45,12 @@ bro
 
 `Jobs` appears on Linux only; on macOS `Quit` is 7.
 
+Home Manager installs [gum](https://github.com/charmbracelet/gum), and once it
+is on `PATH` the menu and every prompt in it use gum: the arrow keys or `j`/`k`
+move, Enter picks, questions are Yes/No buttons, and Esc leaves the menu or
+cancels the current prompt. Without gum, as on a first install before the
+first apply, the same menu and prompts are the numbered ones shown above.
+
 `bro` takes no arguments and no flags. Choices that used to be flags, such as
 pushing after a sync or showing a generated diff, are prompts inside the step
 that needs them. A step that fails returns to the menu rather than ending the
@@ -65,9 +71,11 @@ changes nothing in the repository, so each machine updates them itself.
 `Jobs` chooses which background jobs this machine runs. Today the only one is
 Board sync, an hourly systemd user timer that runs `gh-board sync` and catches
 up on a run missed while no session was running when the user manager next
-starts: at login, or at boot with lingering enabled. Picking a job
-toggles it; `Done` saves the choice to `~/.local/state/bro/background-jobs`
-and applies, which starts or removes the timer. The choice is machine state,
+starts: at login, or at boot with lingering enabled. The jobs this machine
+runs are already ticked; `x` toggles one and Enter saves the choice to
+`~/.local/state/bro/background-jobs` and applies, which starts or removes the
+timer, while Esc changes nothing. In the numbered prompts, picking a job
+toggles it and `Done` saves and applies. The choice is machine state,
 never committed: Apply and Sync pass it to `lib.mkHome`, a missing file means
 no jobs, and an unknown name in the file is refused rather than ignored.
 

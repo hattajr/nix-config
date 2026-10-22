@@ -538,6 +538,54 @@ for answer in enter esc no; do
   [ "$(gum_calls)" = 3 ] || { echo "bro test: $answer in gum confirm did not return to the menu" >&2; exit 1; }
 done
 
+# Styled Jobs is one multi-select with the saved jobs already ticked. Enter
+# saves exactly what is ticked and applies it; Esc saves and applies nothing.
+rm -f "$jobs_file"
+: >"$log"
+run_styled "$jobs_home" $'pick Jobs\nesc' "${linux[@]}" >/dev/null 2>&1
+grep -Fq '[--no-limit]' "$gum_log" && grep -Fq "[--header=Background jobs on $host" "$gum_log" || {
+  echo 'bro test: styled Jobs was not a gum multi-select naming this machine' >&2; exit 1; }
+grep -Eq '\[Board sync +.*hourly: add your open GitHub issues' "$gum_log" || {
+  echo 'bro test: styled Jobs did not list Board sync with its description' >&2; exit 1; }
+! grep -Fq -e '[--selected=' -e '[x]' -e '[ ]' -e '[Done' "$gum_log" || {
+  echo 'bro test: styled Jobs ticked a job no file asked for, or kept the plain toggle rows' >&2; exit 1; }
+[ ! -e "$jobs_file" ] && ! grep -Eq '^nix |^activation$' "$log" || {
+  echo 'bro test: Esc in styled Jobs saved or applied' >&2; exit 1; }
+[ "$(gum_calls)" = 3 ] || { echo 'bro test: Esc in styled Jobs did not return to the menu' >&2; exit 1; }
+
+: >"$log"
+run_styled "$jobs_home" $'pick Jobs\npick Board sync' "${linux[@]}" >/dev/null 2>&1
+[ "$(cat "$jobs_file")" = board-sync ] || { echo 'bro test: ticking Board sync did not save it' >&2; exit 1; }
+grep -Fq 'jobs = [ "board-sync" ]; })' "$log" && grep -q '^activation$' "$log" || {
+  echo 'bro test: ticking Board sync did not apply it' >&2; exit 1; }
+
+: >"$log"
+run_styled "$jobs_home" $'pick Jobs\nesc' "${linux[@]}" >/dev/null 2>&1
+grep -Eq '\[--selected=Board sync +.*hourly' "$gum_log" || {
+  echo 'bro test: styled Jobs did not show the saved job ticked' >&2; exit 1; }
+[ "$(cat "$jobs_file")" = board-sync ] && ! grep -Eq '^nix |^activation$' "$log" || {
+  echo 'bro test: Esc in styled Jobs changed the saved jobs' >&2; exit 1; }
+
+: >"$log"
+run_styled "$jobs_home" $'pick Jobs\nenter' "${linux[@]}" >/dev/null 2>&1
+[ "$(cat "$jobs_file")" = board-sync ] && grep -Fq 'jobs = [ "board-sync" ]; })' "$log" \
+  && grep -q '^activation$' "$log" || {
+  echo 'bro test: Enter on the ticked jobs did not keep and apply them' >&2; exit 1; }
+
+: >"$log"
+run_styled "$jobs_home" $'pick Jobs\npick' "${linux[@]}" >/dev/null 2>&1
+[ -e "$jobs_file" ] && [ ! -s "$jobs_file" ] && grep -Fq 'jobs = [ ]; })' "$log" \
+  && grep -q '^activation$' "$log" || {
+  echo 'bro test: unticking every job did not save and apply an empty list' >&2; exit 1; }
+
+# An unknown name is refused before the multi-select opens.
+printf '%s\n' weekly-backup >"$jobs_file"
+: >"$log"
+output=$(run_styled "$jobs_home" $'pick Jobs\nesc' "${linux[@]}" 2>&1)
+grep -Fq "unknown background job \"weekly-backup\" in $jobs_file" <<<"$output" \
+  && [ "$(gum_calls)" = 2 ] && [ "$(cat "$jobs_file")" = weekly-backup ] || {
+  echo 'bro test: styled Jobs did not refuse an unknown job before asking' >&2; exit 1; }
+
 # The switch and a missing gum both keep the plain numbered prompts, which
 # then work as usual.
 : >"$log"

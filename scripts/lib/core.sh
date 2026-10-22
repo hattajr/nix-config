@@ -186,3 +186,90 @@ choose_styled() {
   is_option_index "$answer" "$count" || fail "gum choose answered with an unknown option: $answer"
   CHOICE_INDEX=$answer
 }
+
+list_contains() {
+  local wanted=$1 item && shift
+  for item in "$@"; do
+    [ "$item" != "$wanted" ] || return 0
+  done
+  return 1
+}
+
+# Ticks the options whose 1-based indexes CHOSEN_INDEXES holds. Done leaves the
+# ticked indexes there in option order; leaving the prompt any other way returns
+# 1 with CHOSEN_INDEXES as it was. Plain prompts end the list with a Done row,
+# which the caller describes because Done is what commits the choice.
+CHOSEN_INDEXES=()
+choose_many() {
+  require_tty 'the menu'
+  if styled_prompts; then
+    choose_many_styled "$@"
+  else
+    choose_many_plain "$@"
+  fi
+}
+
+# The ticked set is kept in option order whatever order gum or the toggles
+# produced it in.
+set_chosen_indexes() {
+  local count=$1 index chosen=() && shift
+  for ((index = 1; index <= count; index++)); do
+    ! list_contains "$index" "$@" || chosen+=("$index")
+  done
+  CHOSEN_INDEXES=("${chosen[@]+"${chosen[@]}"}")
+}
+
+choose_many_plain() {
+  local title=$1 done=$2 && shift 2
+  local options=("$@") count=$# rows=() ticked=() remaining=() index mark kept
+  ticked=("${CHOSEN_INDEXES[@]+"${CHOSEN_INDEXES[@]}"}")
+  while true; do
+    rows=()
+    for index in "${!options[@]}"; do
+      if list_contains "$((index + 1))" "${ticked[@]+"${ticked[@]}"}"; then mark='[x]'; else mark='[ ]'; fi
+      rows+=("$mark ${options[index]}")
+    done
+    rows+=("Done"$'\t'"$done")
+    choose_plain "$title" "${rows[@]}" || return 1
+    [ "$CHOICE_INDEX" -le "$count" ] || break
+
+    if list_contains "$CHOICE_INDEX" "${ticked[@]+"${ticked[@]}"}"; then
+      remaining=()
+      for kept in "${ticked[@]}"; do
+        [ "$kept" = "$CHOICE_INDEX" ] || remaining+=("$kept")
+      done
+      ticked=("${remaining[@]+"${remaining[@]}"}")
+    else
+      ticked+=("$CHOICE_INDEX")
+    fi
+  done
+  set_chosen_indexes "$count" "${ticked[@]+"${ticked[@]}"}"
+}
+
+# gum ticks rows by their text and splits --selected on commas, so a ticked row
+# with a comma would quietly start unticked; refuse it instead.
+choose_many_styled() {
+  local title=$1 done=$2 && shift 2
+  local count=$# rows=() selected=() answers=() row index answer status=0
+  while IFS= read -r row; do
+    rows+=("$row")
+  done < <(styled_rows "$@")
+  for index in "${CHOSEN_INDEXES[@]+"${CHOSEN_INDEXES[@]}"}"; do
+    is_option_index "$index" "$count" || continue
+    row=${rows[index - 1]%$'\t'*}
+    case "$row" in *,*) fail "cannot pre-tick an option containing a comma: ${row%%"$STYLE_DIM"*}" ;; esac
+    selected+=("--selected=$row")
+  done
+  answer=$(gum choose --no-limit --label-delimiter=$'\t' --no-show-help \
+    --header="$title"$'\n'"${STYLE_DIM}x toggles, enter to $done, esc to cancel$STYLE_UNDIM" \
+    --header.foreground="$STYLE_ACCENT" --cursor.foreground="$STYLE_ACCENT" \
+    --selected.foreground="$STYLE_ACCENT" \
+    "${selected[@]+"${selected[@]}"}" -- "${rows[@]}" </dev/tty 2>/dev/tty) || status=$?
+  gum_answered "$status" choose || return 1
+  while IFS= read -r index; do
+    [ -n "$index" ] || continue
+    is_option_index "$index" "$count" || fail "gum choose answered with an unknown option: $index"
+    answers+=("$index")
+  done <<<"$answer"
+  set_chosen_indexes "$count" "${answers[@]+"${answers[@]}"}"
+}
