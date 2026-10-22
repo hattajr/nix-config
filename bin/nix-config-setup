@@ -44,13 +44,14 @@ section() {
 
 usage() {
   cat <<'EOF'
-Usage: nix-config-setup [--check]
+Usage: nix-config-setup [--check | --status]
 
 Without options, opens an editor-free setup wizard for optional Proton Pass
 API keys, Pi and Claude Code account login, Tailscale, Git identity, GitHub CLI,
 Cloudflare Tunnel, and Wrangler. It is safe to rerun: ready accounts and references are preserved.
 
---check  report current setup status without prompting or changing files
+--check   report current setup status without prompting or changing files
+--status  the same status as tab-separated level, item and detail rows
 EOF
 }
 
@@ -643,87 +644,118 @@ print_summary() {
   printf '\n  Run bro and choose Accounts whenever you want to finish a skipped item.\n'
 }
 
+# --check prints a table for people; --status prints the same rows for other
+# programs as "level<TAB>label<TAB>detail", where level is ok, optional or
+# fail. Each row is printed as soon as it is known, so --check's output reads
+# exactly as it always has, and only a failing row fails the check.
+STATUS_FORMAT=table
+STATUS_FAILED=0
+status_row() {
+  local level=$1 label=$2 detail=$3
+  [ "$level" != fail ] || STATUS_FAILED=1
+  if [ "$STATUS_FORMAT" = rows ]; then
+    printf '%s\t%s\t%s\n' "$level" "$label" "${detail//[$'\t\n']/ }"
+  else
+    printf '  %-22s %s\n' "$label" "$detail"
+  fi
+}
+
 check_status() {
-  local failed=0 index name value
-  section 'Current setup status'
+  local index name value
+  STATUS_FORMAT=$1
+  [ "$STATUS_FORMAT" = rows ] || section 'Current setup status'
   if pass_logged_in; then
     STATUS_PROTON=ready
+    status_row ok 'Proton Pass' "$STATUS_PROTON"
   else
     STATUS_PROTON='not logged in'
+    status_row optional 'Proton Pass' "$STATUS_PROTON"
   fi
-  printf '  %-22s %s\n' 'Proton Pass' "$STATUS_PROTON"
 
   if [ -e "$pass_env" ] && ! validate_reference_file "$pass_env"; then
-    printf '  %-22s %s\n' 'Pi API references' 'invalid'
-    failed=1
+    status_row fail 'Pi API references' 'invalid'
   else
     for index in 0 1 2; do
       name=${PROVIDER_ENV_NAMES[$index]}
       value=$(reference_value_from_file "$pass_env" "$name" || true)
       if [ -z "$value" ]; then
-        PROVIDER_STATUS[index]='not configured (optional)'
+        status_row optional "${PROVIDER_LABELS[$index]} API key" 'not configured (optional)'
       elif pass_logged_in && ! command -v node >/dev/null 2>&1; then
-        PROVIDER_STATUS[index]='not checked; Node.js is unavailable'
-        failed=1
+        status_row fail "${PROVIDER_LABELS[$index]} API key" 'not checked; Node.js is unavailable'
       elif pass_logged_in && reference_resolves "$name" "$value"; then
-        PROVIDER_STATUS[index]=ready
+        status_row ok "${PROVIDER_LABELS[$index]} API key" ready
       elif pass_logged_in; then
-        PROVIDER_STATUS[index]='does not resolve'
-        failed=1
+        status_row fail "${PROVIDER_LABELS[$index]} API key" 'does not resolve'
       else
-        PROVIDER_STATUS[index]='configured; Proton Pass unavailable'
-        failed=1
+        status_row fail "${PROVIDER_LABELS[$index]} API key" 'configured; Proton Pass unavailable'
       fi
-      printf '  %-22s %s\n' "${PROVIDER_LABELS[$index]} API key" "${PROVIDER_STATUS[index]}"
     done
   fi
 
   if conflicts=$(pi_api_key_conflicts); then
-    printf '  %-22s %s\n' 'Pi API shadowing' "$conflicts"
-    failed=1
+    status_row fail 'Pi API shadowing' "$conflicts"
   fi
   if ! command -v node >/dev/null 2>&1; then
-    printf '  %-22s %s\n' 'Pi account login' 'not checked; Node.js is unavailable'
+    status_row optional 'Pi account login' 'not checked; Node.js is unavailable'
   elif pi_has_account_login; then
-    printf '  %-22s %s\n' 'Pi account login' ready
+    status_row ok 'Pi account login' ready
   else
-    printf '  %-22s %s\n' 'Pi account login' 'not configured (optional)'
+    status_row optional 'Pi account login' 'not configured (optional)'
   fi
   if ! command -v claude >/dev/null 2>&1; then
-    printf '  %-22s %s\n' 'Claude Code' 'unavailable; Claude Code is not installed'
+    status_row optional 'Claude Code' 'unavailable; Claude Code is not installed'
   elif claude auth status >/dev/null 2>&1; then
-    printf '  %-22s %s\n' 'Claude Code' ready
+    status_row ok 'Claude Code' ready
   else
-    printf '  %-22s %s\n' 'Claude Code' 'not authenticated (optional)'
+    status_row optional 'Claude Code' 'not authenticated (optional)'
   fi
   if [ "$(uname -s)" != Linux ]; then
-    printf '  %-22s %s\n' 'Tailscale' 'not managed (Linux only)'
+    status_row optional 'Tailscale' 'not managed (Linux only)'
   elif ! command -v tailscale >/dev/null 2>&1; then
-    printf '  %-22s %s\n' 'Tailscale' 'not installed'
+    status_row optional 'Tailscale' 'not installed'
   elif tailscale_running; then
-    printf '  %-22s %s\n' 'Tailscale' ready
+    status_row ok 'Tailscale' ready
   elif tailscale status --json >/dev/null 2>&1; then
-    printf '  %-22s %s\n' 'Tailscale' 'not authenticated (optional)'
+    status_row optional 'Tailscale' 'not authenticated (optional)'
   else
-    printf '  %-22s %s\n' 'Tailscale' 'daemon is not running'
+    status_row optional 'Tailscale' 'daemon is not running'
   fi
   if command -v git >/dev/null 2>&1; then
     name=$(git config --global --includes --get user.name 2>/dev/null || true)
     value=$(git config --global --includes --get user.email 2>/dev/null || true)
-    if [ -n "$name" ] && [ -n "$value" ]; then printf '  %-22s %s\n' 'Git identity' "$name <$value>"; else printf '  %-22s %s\n' 'Git identity' incomplete; fi
+    if [ -n "$name" ] && [ -n "$value" ]; then
+      status_row ok 'Git identity' "$name <$value>"
+    else
+      status_row optional 'Git identity' incomplete
+    fi
   else
-    printf '  %-22s %s\n' 'Git identity' 'unavailable; Git is not installed'
+    status_row optional 'Git identity' 'unavailable; Git is not installed'
   fi
-  if ! command -v gh >/dev/null 2>&1; then printf '  %-22s %s\n' 'GitHub CLI' 'unavailable; GitHub CLI is not installed'; elif gh auth status >/dev/null 2>&1; then printf '  %-22s %s\n' 'GitHub CLI' ready; else printf '  %-22s %s\n' 'GitHub CLI' 'not authenticated (optional)'; fi
-  if [ -f "$HOME/.cloudflared/cert.pem" ]; then printf '  %-22s %s\n' 'Cloudflare Tunnel' ready; else printf '  %-22s %s\n' 'Cloudflare Tunnel' 'not authenticated (optional)'; fi
-  if wrangler_logged_in; then printf '  %-22s %s\n' 'Wrangler' ready; else printf '  %-22s %s\n' 'Wrangler' 'not authenticated (optional)'; fi
-  return "$failed"
+  if ! command -v gh >/dev/null 2>&1; then
+    status_row optional 'GitHub CLI' 'unavailable; GitHub CLI is not installed'
+  elif gh auth status >/dev/null 2>&1; then
+    status_row ok 'GitHub CLI' ready
+  else
+    status_row optional 'GitHub CLI' 'not authenticated (optional)'
+  fi
+  if [ -f "$HOME/.cloudflared/cert.pem" ]; then
+    status_row ok 'Cloudflare Tunnel' ready
+  else
+    status_row optional 'Cloudflare Tunnel' 'not authenticated (optional)'
+  fi
+  if wrangler_logged_in; then
+    status_row ok 'Wrangler' ready
+  else
+    status_row optional 'Wrangler' 'not authenticated (optional)'
+  fi
+  return "$STATUS_FAILED"
 }
 
 main() {
   case "${1:-}" in
     -h|--help) usage; return 0 ;;
-    --check) check_status; return ;;
+    --check) check_status table; return ;;
+    --status) check_status rows; return ;;
     '') ;;
     *) usage >&2; return 2 ;;
   esac
