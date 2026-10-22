@@ -405,9 +405,10 @@ output=$(run_menu "$jobs_home" '1\n7\n8\n' "${linux[@]}" 2>&1)
 # line of MOCK_GUM_ANSWERS: esc and ctrl-c leave the prompt with gum's own exit
 # status, enter takes the default (the first row, the pre-ticked rows, or the
 # confirm default), yes and no answer a confirm, and "pick A|B" chooses the
-# rows whose text starts with A and B. It answers like real gum: with the value
-# after each row's tab, on stdout. Running out of answers is an Esc, so a
-# miscounted script ends the menu instead of hanging the suite.
+# rows whose text starts with A and B. It answers like real gum: a row is split
+# into shown text and answered value only when --label-delimiter names the
+# separator, and the answer goes to stdout. Running out of answers is an Esc,
+# so a miscounted script ends the menu instead of hanging the suite.
 gumbin="$work/gum-bin"
 gum_log="$work/gum-log"
 gum_state="$work/gum-state"
@@ -421,22 +422,27 @@ call=$(( $(cat "$MOCK_GUM_STATE" 2>/dev/null || printf 0) + 1 ))
 printf '%s\n' "$call" >"$MOCK_GUM_STATE"
 answer=$(sed -n "${call}p" <<<"$MOCK_GUM_ANSWERS")
 command=$1 && shift
-rows=() ticked=() default=true many=no
+rows=() ticked=() default=true many=no delimiter=''
+
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --) shift; rows=("$@"); break ;;
     --selected=*) ticked+=("${1#--selected=}") ;;
     --default=*) default=${1#--default=} ;;
+    --label-delimiter=*) delimiter=${1#--label-delimiter=} ;;
     --no-limit) many=yes ;;
   esac
   shift
 done
 
+shown() { if [ -n "$delimiter" ]; then printf '%s' "${1%"$delimiter"*}"; else printf '%s' "$1"; fi; }
+value() { if [ -n "$delimiter" ]; then printf '%s\n' "${1##*"$delimiter"}"; else printf '%s\n' "$1"; fi; }
+
 print_rows_starting() {
   local wanted row
   for wanted in "$@"; do
     for row in "${rows[@]}"; do
-      case "${row%$'\t'*}" in "$wanted"*) printf '%s\n' "${row##*$'\t'}" ;; esac
+      case "$(shown "$row")" in "$wanted"*) value "$row" ;; esac
     done
   done
 }
@@ -451,11 +457,11 @@ case "$command:${answer:-esc}" in
     if [ "$many" = yes ]; then
       for row in "${rows[@]}"; do
         for wanted in "${ticked[@]+"${ticked[@]}"}"; do
-          [ "${row%$'\t'*}" != "$wanted" ] || printf '%s\n' "${row##*$'\t'}"
+          [ "$(shown "$row")" != "$wanted" ] || value "$row"
         done
       done
     else
-      printf '%s\n' "${rows[0]##*$'\t'}"
+      value "${rows[0]}"
     fi
     ;;
   'choose:pick') ;;
