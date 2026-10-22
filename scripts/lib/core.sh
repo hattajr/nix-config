@@ -439,8 +439,12 @@ step_events() (
 # control characters are dropped. Sets PLAIN_TEXT, as this runs for each line
 # shown.
 PLAIN_TEXT=''
+# An escape sequence's parameter, intermediate and final bytes are listed one
+# by one: what a range such as @-~ matches follows the locale's collation, and
+# under some UTF-8 locales it leaves out the letters, m included.
+readonly ESCAPE_SEQUENCE=$'\e\\[[[:digit:];:<=>?]*[] !"#$%&\'()*+,./-]*[]@[:alpha:][\\^_`{|}~]'
 plain_text() {
-  local text=${1%$'\r'} escape=$'\e\\[[0-9;?]*[ -/]*[@-~]'
+  local text=${1%$'\r'} escape=$ESCAPE_SEQUENCE
   text=${text##*$'\r'}
   text=${text//$'\t'/ }
   while [[ $text =~ $escape ]]; do

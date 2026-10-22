@@ -898,8 +898,9 @@ grep -Fq 'could not save the Health results' <<<"$output" || {
 
 # --- log box ------------------------------------------------------------------
 
-# This nix prints MOCK_BOX_LINES numbered progress lines on stderr, then is
-# silent for MOCK_BOX_SILENCE seconds, then fails when MOCK_BOX_FAIL is set. The activation it builds
+# This nix prints MOCK_BOX_LINES numbered progress lines on stderr, and three
+# red ones when MOCK_BOX_COLOUR is set, then is silent for MOCK_BOX_SILENCE
+# seconds, then fails when MOCK_BOX_FAIL is set. The activation it builds
 # prints MOCK_BOX_ACTIVATE_LINES numbered lines, then fails when
 # MOCK_BOX_ACTIVATE_FAIL is set.
 boxbin="$work/box-bin"
@@ -911,6 +912,9 @@ printf 'nix %s\\n' "\$*" >>"\$MOCK_LOG"
 for ((line = 1; line <= \${MOCK_BOX_LINES:-0}; line++)); do
   printf "copying path '/nix/store/box-%d' from 'https://cache.nixos.org'...\\n" "\$line" >&2
 done
+if [ -n "\${MOCK_BOX_COLOUR:-}" ]; then
+  for line in 1 2 3; do printf '\\033[1;31mwarning:\\033[0m coloured line %d\\n' "\$line" >&2; done
+fi
 "$real_sleep" "\${MOCK_BOX_SILENCE:-0}"
 [ -z "\${MOCK_BOX_FAIL:-}" ] || { printf 'error: builder for box failed\\n' >&2; exit 1; }
 mkdir -p "\$MOCK_ACTIVATION"
@@ -1103,5 +1107,16 @@ expected_output=$(printf 'nix-config: %s %s\n' building "$platform_name" activat
 [ "$(plain_apply_output "$output")" = "$expected_output" ] || {
   printf 'bro test: a failed plain activation did not fail Apply:\n%s\n' "$(plain_apply_output "$output")" >&2; exit 1; }
 ! grep -q '^tmux ' "$log" || { echo 'bro test: plain Apply reloaded tmux after a failed activation' >&2; exit 1; }
+
+# Coloured output reaches the box as plain text whatever the locale's
+# collation, which decides what a range such as [@-~] matches.
+utf8_locale=$(locale -a 2>/dev/null | grep -Eix 'en_US\.utf-?8|C\.utf-?8' | sort -r | head -n 1 || true)
+new_box_home
+raw=$(run_box_apply "$box_home" MOCK_BOX_COLOUR=1 MOCK_BOX_SILENCE=1 ${utf8_locale:+LC_ALL="$utf8_locale"} 2>&1)
+screen=$(plain_screen <<<"$raw")
+grep -Eq '^│ warning: coloured line 3 +│$' <<<"$screen" || {
+  echo "bro test: a coloured line did not reach the box as plain text under ${utf8_locale:-the default locale}" >&2; exit 1; }
+! grep -E '^│' <<<"$screen" | grep -Eq '\[[0-9;]*m' || {
+  echo "bro test: colour codes were left in the box under ${utf8_locale:-the default locale}" >&2; exit 1; }
 
 echo 'bro test: PASSED (menu-only entry, apply identity, DNS retry, sync push boundary, accounts wrapper, Pi extensions, Pi + ext, Playwright, Jobs, styled prompts, Health, log box)'
