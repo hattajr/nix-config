@@ -42,8 +42,10 @@ apply() {
     || fail "Home Manager activation package build failed for $target"
   [ -x "$package/activate" ] || fail 'built activation package has no executable activate script'
 
+  # A failed activation leaves the configuration half applied, so Apply fails
+  # here and does not reload tmux into it.
   step_boxes || log "activating $target"
-  run_logged activate "$package/activate"
+  run_logged activate "$package/activate" || fail "Home Manager activation failed for $target"
 
   # Home Manager updates the configuration link, but an already-running tmux
   # server keeps its previous state until reloaded. Do not start a server

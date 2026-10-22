@@ -899,8 +899,9 @@ grep -Fq 'could not save the Health results' <<<"$output" || {
 # --- log box ------------------------------------------------------------------
 
 # This nix prints MOCK_BOX_LINES numbered progress lines on stderr, then is
-# silent for MOCK_BOX_SILENCE seconds, then fails when MOCK_BOX_FAIL is set.
-# The activation it builds prints MOCK_BOX_ACTIVATE_LINES numbered lines.
+# silent for MOCK_BOX_SILENCE seconds, then fails when MOCK_BOX_FAIL is set. The activation it builds
+# prints MOCK_BOX_ACTIVATE_LINES numbered lines, then fails when
+# MOCK_BOX_ACTIVATE_FAIL is set.
 boxbin="$work/box-bin"
 mkdir -p "$boxbin"
 command cat >"$boxbin/nix" <<EOF
@@ -917,6 +918,7 @@ mkdir -p "\$MOCK_ACTIVATION"
   printf '#!/bin/sh\\n'
   printf 'printf "activation\\\\n" >>"\$MOCK_LOG"\\n'
   printf 'for line in \$(seq 1 %d); do printf "activation step %%s\\\\n" "\$line"; done\\n' "\${MOCK_BOX_ACTIVATE_LINES:-0}"
+  [ -z "\${MOCK_BOX_ACTIVATE_FAIL:-}" ] || printf 'echo "activation broke" >&2; exit 4\\n'
 } >"\$MOCK_ACTIVATION/activate"
 chmod +x "\$MOCK_ACTIVATION/activate"
 printf '%s\\n' "\$MOCK_ACTIVATION"
@@ -1041,10 +1043,13 @@ grep -Fxq 'error: builder for box failed' "$(box_log_file)" || {
 # Plain Apply prints exactly what it always has, and still writes the log. The
 # answers were typed ahead and echoed then, so the first line of Apply's output
 # follows the menu prompt, and the menu's blank line ends it.
+plain_apply_output() {
+  printf '%s\n' "${1//$'\r'/}" | sed -n '/^  choose \[1-[0-9]*\]: ./,/^$/p' \
+    | sed -e '1s/^  choose \[1-[0-9]*\]: //'
+}
 new_box_home
 output=$(run_menu "$box_home" "1\n${quit}\n" env PATH="$boxbin:$mockbin:$PATH" MOCK_BOX_LINES=3 MOCK_BOX_ACTIVATE_LINES=2 2>&1)
-apply_output=$(printf '%s\n' "${output//$'\r'/}" | sed -n '/^  choose \[1-[0-9]*\]: ./,/^$/p' \
-  | sed -e '1s/^  choose \[1-[0-9]*\]: //')
+apply_output=$(plain_apply_output "$output")
 platform_name=$(sed -n 's/^nix-config  (\([^)]*\)).*/\1/p' <<<"$output" | head -n 1)
 expected_output=$(printf 'nix-config: building %s\n' "$platform_name"
   for line in 1 2 3; do printf "copying path '/nix/store/box-%d' from 'https://cache.nixos.org'...\n" "$line"; done
@@ -1069,5 +1074,34 @@ run_menu "$box_home" "1\n${quit}\n" >/dev/null
   echo 'bro test: a 21st log did not leave exactly 20' >&2; exit 1; }
 [ ! -e "$box_logs/apply-old-01.log" ] && [ -e "$box_logs/apply-old-02.log" ] || {
   echo 'bro test: a 21st log did not delete exactly the oldest' >&2; exit 1; }
+
+# A failed activation fails Apply and skips the tmux reload. Styled, the step
+# shows what it printed and fails, then Apply fails with its log.
+new_box_home
+: >"$log"
+raw=$(run_box_apply "$box_home" MOCK_BOX_ACTIVATE_LINES=2 MOCK_BOX_ACTIVATE_FAIL=1 2>&1)
+screen=$(plain_screen <<<"$raw")
+summary=$(grep -E '^ (✓|✗) |^   log: |^nix-config: ' <<<"$screen" | sed -E 's/ [0-9]+s$/ Ns/')
+expected_summary=$(printf '%s\n' ' ✓ build  Ns' ' ✗ activate failed' \
+  "nix-config: ERROR: Home Manager activation failed for $platform_name" ' ✗ Apply failed' \
+  "   log: ~/.local/state/bro/logs/$(basename "$(box_log_file)")" 'nix-config: returning to the menu')
+[ "$summary" = "$expected_summary" ] || {
+  printf 'bro test: a failed styled activation did not fail Apply:\n%s\n' "$summary" >&2; exit 1; }
+grep -Fxq 'activation broke' <<<"${screen##*╯}" || {
+  echo 'bro test: a failed styled activation did not show its last lines' >&2; exit 1; }
+! grep -q '^tmux ' "$log" || { echo 'bro test: Apply reloaded tmux after a failed activation' >&2; exit 1; }
+[ "$(gum_calls)" = 2 ] || { echo 'bro test: the menu did not return after a failed activation' >&2; exit 1; }
+
+# Plain, the activation's own output is followed by the new error.
+new_box_home
+: >"$log"
+output=$(run_menu "$box_home" "1\n${quit}\n" env PATH="$boxbin:$mockbin:$PATH" MOCK_BOX_ACTIVATE_LINES=2 MOCK_BOX_ACTIVATE_FAIL=1 2>&1)
+expected_output=$(printf 'nix-config: %s %s\n' building "$platform_name" activating "$platform_name"
+  printf 'activation step %d\n' 1 2
+  printf '%s\n' 'activation broke' "nix-config: ERROR: Home Manager activation failed for $platform_name" \
+    'nix-config: returning to the menu')
+[ "$(plain_apply_output "$output")" = "$expected_output" ] || {
+  printf 'bro test: a failed plain activation did not fail Apply:\n%s\n' "$(plain_apply_output "$output")" >&2; exit 1; }
+! grep -q '^tmux ' "$log" || { echo 'bro test: plain Apply reloaded tmux after a failed activation' >&2; exit 1; }
 
 echo 'bro test: PASSED (menu-only entry, apply identity, DNS retry, sync push boundary, accounts wrapper, Pi extensions, Pi + ext, Playwright, Jobs, styled prompts, Health, log box)'
