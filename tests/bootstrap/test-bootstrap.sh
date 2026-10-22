@@ -30,7 +30,7 @@ export MOCK_BIN="$mockbin"
 export MOCK_ACTIVATION="$activation"
 
 # Isolate PATH so missing-tool cases are real within the test.
-for command_name in bash sh env dirname mkdir cp chmod grep cat mktemp rm mv ps tty ls awk id sed python3 locale; do
+for command_name in bash sh env dirname mkdir cp chmod grep cat tee mktemp rm mv ps tty ls awk id sed python3 locale; do
   command_path=$(command -v "$command_name" 2>/dev/null || true)
   [ -z "$command_path" ] || ln -sf "$command_path" "$mockbin/$command_name"
 done

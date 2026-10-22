@@ -18,6 +18,20 @@ run_step() {
   ( "$@" ) || warn 'returning to the menu'
 }
 
+# An action is a step whose commands are logged: it gets a fresh log, and in
+# styled mode ends on a line saying how it went and where that log is.
+run_action() {
+  local name=$1 started=$SECONDS && shift
+  open_action_log "$name" || { warn 'returning to the menu'; return 0; }
+  if ( "$@" ); then
+    report_action ok "$name" "$((SECONDS - started))"
+  else
+    report_action fail "$name" "$((SECONDS - started))"
+    warn 'returning to the menu'
+  fi
+  ACTION_LOG=''
+}
+
 main() {
   [ "$#" -eq 0 ] || {
     printf 'bro takes no arguments; run bro on its own to open the menu.\n' >&2
@@ -49,7 +63,7 @@ main() {
     choose "nix-config  ($target)" "${items[@]}" || return 0
     # Dispatch on the label, because which items appear depends on the platform.
     case "${items[CHOICE_INDEX - 1]%%$'\t'*}" in
-      Apply) run_step apply "$repo" "$target" ;;
+      Apply) run_action Apply apply "$repo" "$target" ;;
       Sync) run_step sync "$repo" "$target" ;;
       Update) run_step update "$repo" "$target" ;;
       Accounts) run_step auth ;;

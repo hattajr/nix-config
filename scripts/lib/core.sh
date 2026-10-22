@@ -291,3 +291,254 @@ choose_many_styled() {
   done <<<"$answer"
   set_chosen_indexes "$count" "${answers[@]+"${answers[@]}"}"
 }
+
+# An action that runs logged steps keeps all their output in a log of its own.
+# Only the newest logs are kept, so the directory never grows without bound.
+readonly ACTION_LOG_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/bro/logs"
+readonly ACTION_LOGS_KEPT=20
+ACTION_LOG=''
+
+# Sets ACTION_LOG to a new, empty log named after the action and the time, then
+# prunes the logs past ACTION_LOGS_KEPT.
+open_action_log() {
+  local name stamp path attempt=1
+  name=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')
+  name=${name// /-}
+  stamp=$(date +%Y%m%d-%H%M%S)
+  if ! mkdir -p "$ACTION_LOG_DIR" || ! chmod 700 "$ACTION_LOG_DIR"; then
+    warn "could not create the log directory $ACTION_LOG_DIR"
+    return 1
+  fi
+  path="$ACTION_LOG_DIR/$name-$stamp.log"
+  # Two actions within a second each get a log of their own.
+  until (set -C && : >"$path") 2>/dev/null; do
+    [ "$attempt" -lt 10 ] || { warn "could not create a log in $ACTION_LOG_DIR"; return 1; }
+    attempt=$((attempt + 1))
+    path="$ACTION_LOG_DIR/$name-$stamp-$attempt.log"
+  done
+  ACTION_LOG=$path
+  prune_action_logs
+}
+
+# The newest logs are the ones written last. Every log name is bro's own and
+# holds no newline, so listing them one per line is safe.
+prune_action_logs() {
+  local name kept=0
+  # shellcheck disable=SC2012
+  ls -t "$ACTION_LOG_DIR" | while IFS= read -r name; do
+    case "$name" in *.log) ;; *) continue ;; esac
+    kept=$((kept + 1))
+    [ "$kept" -le "$ACTION_LOGS_KEPT" ] || rm -f "$ACTION_LOG_DIR/$name"
+  done
+}
+
+format_duration() {
+  if [ "$1" -lt 60 ]; then
+    printf '%ds\n' "$1"
+  else
+    printf '%dm%02ds\n' "$(($1 / 60))" "$(($1 % 60))"
+  fi
+}
+
+# Styled mode ends an action on one line saying how it went, and where its log
+# is. Plain mode prints nothing more than it always has.
+report_action() {
+  local outcome=$1 name=$2 seconds=$3 shown=$ACTION_LOG
+  styled_prompts || return 0
+  case "$shown" in "$HOME"/*) printf -v shown '%s/%s' '~' "${shown#"$HOME"/}" ;; esac
+  if [ "$outcome" = ok ]; then
+    printf '\n %s %s finished in %s\n' "$(styled_mark ok)" "$name" "$(format_duration "$seconds")"
+  else
+    printf '\n %s %s failed\n' "$(styled_mark fail)" "$name"
+  fi
+  printf '   %slog: %s%s\n' "$STYLE_DIM" "$shown" "$STYLE_UNDIM"
+}
+
+# Steps are boxed only inside an action, which owns the log, and only in
+# styled mode. Elsewhere, as in Sync until it runs steps of its own, a step
+# runs exactly as it did before steps were logged.
+step_boxes() {
+  [ -n "$ACTION_LOG" ] && styled_prompts
+}
+
+# A step too quick to box is a ✓ line where steps are boxed, and a log line
+# everywhere else.
+log_step() {
+  if step_boxes; then
+    printf ' %s %s\n' "$(styled_mark ok)" "$1"
+  else
+    log "$1"
+  fi
+}
+
+# Runs one step of an action, copying its output to the action's log. In
+# styled mode a box shows the output as it arrives; in plain mode it streams
+# as it always has. A caller capturing stdout still gets it, whole, once the
+# step ends, and the box then shows only stderr. A step never asks for input:
+# prompts come between steps, never inside a box.
+run_logged() {
+  local step=$1 result='' status=0 && shift
+  if [ -z "$ACTION_LOG" ]; then
+    "$@"
+    return
+  fi
+  if [ ! -t 1 ]; then
+    result=$(mktemp "${TMPDIR:-/tmp}/bro-step.XXXXXX") || fail 'could not create a step output file'
+  fi
+  # bro runs with pipefail, so each pipeline fails when its step does, and
+  # the step's own status is the first in it.
+  if styled_prompts; then
+    step_events "$result" "$@" | draw_step_box "$step" >/dev/tty || status=$?
+  elif [ -n "$result" ]; then
+    "$@" 2>&1 >"$result" | tee -a "$ACTION_LOG" >&2 || status=${PIPESTATUS[0]}
+  else
+    "$@" 2>&1 | tee -a "$ACTION_LOG" || status=${PIPESTATUS[0]}
+  fi
+  if [ -n "$result" ]; then
+    tee -a "$ACTION_LOG" <"$result"
+    rm -f "$result"
+  fi
+  return "$status"
+}
+
+# Output lines reach the box as they are. A line holding only one of these
+# control characters carries the clock or, followed by it, the step's status.
+# Neither is \001, which older bash versions mangle when reading.
+readonly BOX_TICK=$'\036' BOX_END=$'\037'
+readonly BOX_ROWS=6 FAILURE_ROWS=30
+BOX_SPINNER=(⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏)
+
+# Feeds draw_step_box: every output line, a tick ten times a second so the box
+# keeps moving while the step is silent, and last the step's status. tee keeps
+# the exact output for the log, and grep passes only whole lines on, so a tick
+# never lands inside a line. Like draw_step_box it runs in a subshell of its
+# own, where an exit trap also runs on ctrl-c.
+step_events() (
+  local result=$1 ticker status=0 && shift
+  while :; do
+    sleep 0.1 >/dev/null
+    printf '%s\n' "$BOX_TICK"
+  done &
+  ticker=$!
+  # The ticker would otherwise outlive an interrupted step.
+  trap 'kill "$ticker" 2>/dev/null' EXIT
+  trap 'exit 130' INT TERM HUP
+  if [ -n "$result" ]; then
+    "$@" </dev/null 2>&1 >"$result" | tee -a "$ACTION_LOG" | grep -a --line-buffered '' \
+      || status=${PIPESTATUS[0]}
+  else
+    "$@" </dev/null 2>&1 | tee -a "$ACTION_LOG" | grep -a --line-buffered '' \
+      || status=${PIPESTATUS[0]}
+  fi
+  kill "$ticker" 2>/dev/null
+  printf '%s%s\n' "$BOX_END" "$status"
+)
+
+# Box rows hold printable text only. After a carriage return a terminal shows
+# what came last, so that is what is kept; escape sequences and any other
+# control characters are dropped. Sets PLAIN_TEXT, as this runs for each line
+# shown.
+PLAIN_TEXT=''
+plain_text() {
+  local text=${1%$'\r'} escape=$'\e\\[[0-9;?]*[ -/]*[@-~]'
+  text=${text##*$'\r'}
+  text=${text//$'\t'/ }
+  while [[ $text =~ $escape ]]; do
+    text=${text/"${BASH_REMATCH[0]}"/}
+  done
+  PLAIN_TEXT=${text//[[:cntrl:]]/}
+}
+
+# Sets NEWEST_LINES to the last LIMIT of COUNT lines, as plain text, from a
+# ring of the last FAILURE_ROWS raw lines where line N is at N % FAILURE_ROWS.
+NEWEST_LINES=()
+newest_lines() {
+  local limit=$1 count=$2 index && shift 2
+  local ring=("$@")
+  NEWEST_LINES=()
+  for ((index = count > limit ? count - limit : 0; index < count; index++)); do
+    plain_text "${ring[index % FAILURE_ROWS]}"
+    NEWEST_LINES+=("$PLAIN_TEXT")
+  done
+}
+
+# Sets BOX_RULE to a horizontal border COUNT columns long.
+BOX_RULE=''
+box_rule() {
+  local count=$1
+  [ "$count" -ge 0 ] || count=0
+  printf -v BOX_RULE '%*s' "$count" ''
+  BOX_RULE=${BOX_RULE// /─}
+}
+
+# Draws a running step as a box on the terminal: a spinner, the step name, and
+# the elapsed time on top, the step's last BOX_ROWS lines cut to fit, and how
+# many lines there were at the bottom. Redrawing only on ticks keeps a burst of
+# output to ten frames a second. At the end the box gives way to one ✓ line,
+# or on failure to the last FAILURE_ROWS lines and a ✗, and the step's status
+# is returned. A line is only stored as it arrives, so a fast step is not held
+# back by the box; it is cleaned up for the terminal only if it is shown.
+draw_step_box() (
+  local step=$1 width started=$SECONDS frame=0 count=0 status=1 line
+  local recent=()
+  width=$(styled_width)
+  # Whatever ends the box, the cursor is shown again.
+  trap 'printf "\e[?25h"' EXIT
+  trap 'exit 130' INT TERM HUP
+  printf '\e[?25l'
+  draw_box_frame "$step" "$width" 0 0 0
+  while IFS= read -r line; do
+    case "$line" in
+      "$BOX_TICK")
+        frame=$((frame + 1))
+        newest_lines "$BOX_ROWS" "$count" "${recent[@]+"${recent[@]}"}"
+        printf '\r\e[%dA' "$((BOX_ROWS + 2))"
+        draw_box_frame "$step" "$width" "$frame" "$((SECONDS - started))" "$count" \
+          "${NEWEST_LINES[@]+"${NEWEST_LINES[@]}"}"
+        ;;
+      "$BOX_END"*)
+        status=${line#"$BOX_END"}
+        break
+        ;;
+      *)
+        recent[count % FAILURE_ROWS]=$line
+        count=$((count + 1))
+        ;;
+    esac
+  done
+  printf '\r\e[%dA\e[J' "$((BOX_ROWS + 2))"
+  if [ "$status" = 0 ]; then
+    printf ' %s %s  %s%s%s\n' "$(styled_mark ok)" "$step" \
+      "$STYLE_DIM" "$(format_duration "$((SECONDS - started))")" "$STYLE_UNDIM"
+    return 0
+  fi
+  newest_lines "$FAILURE_ROWS" "$count" "${recent[@]+"${recent[@]}"}"
+  [ "$count" = 0 ] || printf '%s\n' "${NEWEST_LINES[@]}"
+  printf ' %s %s failed\n' "$(styled_mark fail)" "$step"
+  return "$status"
+)
+
+# One frame of a step's box, drawn in a single write: the step, the box width,
+# the spinner frame, the seconds elapsed, the number of lines so far, and the
+# newest lines.
+draw_box_frame() {
+  local step=$1 width=$2 frame=$3 seconds=$4 count=$5 && shift 5
+  local accent=$'\e[3'"$STYLE_ACCENT"'m' unaccent=$'\e[39m' room=$((width - 4))
+  local clock label text padding row frame_text
+  printf -v clock '%d:%02d' "$((seconds / 60))" "$((seconds % 60))"
+  box_rule "$((width - 10 - ${#step} - ${#clock}))"
+  frame_text="$STYLE_DIM╭─$STYLE_UNDIM $accent${BOX_SPINNER[frame % ${#BOX_SPINNER[@]}]} $step$unaccent"
+  frame_text+=" $STYLE_DIM$BOX_RULE $clock ─╮$STYLE_UNDIM"$'\e[K\n'
+  for ((row = 1; row <= BOX_ROWS; row++)); do
+    text=''
+    [ "$row" -gt "$#" ] || text=${!row}
+    [ "${#text}" -le "$room" ] || text="${text:0:room-1}…"
+    printf -v padding '%*s' "$((room - ${#text}))" ''
+    frame_text+="$STYLE_DIM│$STYLE_UNDIM $text$padding $STYLE_DIM│$STYLE_UNDIM"$'\e[K\n'
+  done
+  label=''
+  [ "$count" = 0 ] || label=" last $# of $count "
+  box_rule "$((width - 3 - ${#label}))"
+  frame_text+="$STYLE_DIM╰$BOX_RULE$label─╯$STYLE_UNDIM"$'\e[K\n'
+  printf '%s' "$frame_text"
+}
