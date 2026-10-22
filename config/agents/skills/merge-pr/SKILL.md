@@ -66,10 +66,16 @@ change requests, and all required checks/approvals. Drift requires revalidation
 and affected review, plus a fresh signoff where one is required; after each merge
 the base moves, so later PRs revalidate against it. Never dismiss reviews,
 resolve others' threads, or bypass gates.
-Follow repository policy; default to squash when allowed:
+Follow repository policy; default to squash when allowed. Run the merge as its own
+shell call with the PR number, repository, and reviewed head SHA written out
+literally: no variables or command substitution, nothing chained before or after
+it (`;`, `&&`, `||`), no pipe, no `2>&1`. Claude Code checks allow rules per
+subcommand, so a chained or variable-built merge misses the `gh pr merge` rule and
+auto mode blocks it. Run the re-checks above and the verification below as
+separate calls.
 
 ```sh
-gh pr merge "$number" --repo "$repo" --squash --match-head-commit "$reviewed_sha"
+gh pr merge 42 --repo owner/repo --squash --match-head-commit 0123abc...
 ```
 
 Verify `MERGED`, merge commit, and target-base presence; queued/pending is not
