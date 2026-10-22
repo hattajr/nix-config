@@ -30,7 +30,7 @@ export MOCK_BIN="$mockbin"
 export MOCK_ACTIVATION="$activation"
 
 # Isolate PATH so missing-tool cases are real within the test.
-for command_name in bash sh env dirname mkdir cp chmod grep cat tee mktemp rm mv ps tty ls awk id sed python3 locale; do
+for command_name in bash sh env dirname mkdir cp chmod grep cat tee date mktemp rm mv ps tty ls awk id sed python3 locale; do
   command_path=$(command -v "$command_name" 2>/dev/null || true)
   [ -z "$command_path" ] || ln -sf "$command_path" "$mockbin/$command_name"
 done
@@ -121,9 +121,13 @@ run_install() {
   local answers=$1 script=${2:-$install_script}
   printf '%b' "$answers" | "$pty_run" env PATH="$mockbin" "$script"
 }
+# Everything bootstrap prints is also kept, so a tool missing from the isolated
+# PATH fails the suite even where the step that needed it carries on.
+bootstrap_output="$workdir/bootstrap-output"
 run_bootstrap() {
   local answers=$1
-  printf '%b' "$answers" | "$pty_run" env PATH="$mockbin" "$bootstrap" "$repo_root"
+  printf '%b' "$answers" | "$pty_run" env PATH="$mockbin" "$bootstrap" "$repo_root" \
+    | tee -a "$bootstrap_output"
 }
 reset_destination() { rm -rf "$destination"; }
 
@@ -294,6 +298,9 @@ grep -Eq '^managed-tty=/dev/.+ stdin-mode=read-write$' "$shell_log" || {
   printf '%s\n' 'bootstrap test: managed shell did not receive a read-write concrete terminal' >&2; exit 1; }
 ! grep -Eq '^managed-tty=/dev/tty ' "$shell_log" || {
   printf '%s\n' 'bootstrap test: managed shell received the /dev/tty alias' >&2; exit 1; }
+
+! grep -F 'command not found' "$bootstrap_output" >&2 || {
+  printf '%s\n' 'bootstrap test: bootstrap needed a command the isolated PATH lacks' >&2; exit 1; }
 
 # Both entry points refuse to run unattended rather than guessing an answer.
 status=0
