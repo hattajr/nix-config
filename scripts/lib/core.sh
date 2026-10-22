@@ -34,6 +34,17 @@ styled_prompts() {
 readonly STYLE_ACCENT=6
 readonly STYLE_DIM=$'\e[2m' STYLE_UNDIM=$'\e[22m'
 
+# Result markers in the terminal's own green, yellow and red; an optional
+# result is only dimmed.
+styled_mark() {
+  case "$1" in
+    ok) printf '\e[32m✓\e[39m' ;;
+    warn) printf '\e[33m!\e[39m' ;;
+    fail) printf '\e[31m✗\e[39m' ;;
+    *) printf '%s·%s' "$STYLE_DIM" "$STYLE_UNDIM" ;;
+  esac
+}
+
 # Styled rows fit in 60 columns, or in the terminal when it is narrower. A
 # terminal that reports no size gets the full 60.
 styled_width() {

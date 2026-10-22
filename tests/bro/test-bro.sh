@@ -744,4 +744,78 @@ expect_plain_health() {
 output=$(run_menu "$health_home" '5\nn\n8\n' env PATH="$health_bin:$mockbin:$PATH" "${health_env[@]}" 2>&1)
 expect_plain_health "$output"
 
+# The styled Health screen as the terminal shows it, colours and check time
+# taken out: its heading, then the area headings and indented results below it.
+health_screen() {
+  tr -d '\r' <<<"$1" | sed -e $'s/\e\\[[0-9;]*m//g' -e 's/^\(Health · checked \)[0-9][0-9]:[0-9][0-9]$/\1HH:MM/' \
+    | awk '/^Health · checked / { on = 1; print; next } on && /^(Core|Accounts|PATH|Jobs|  )/ { print; next } on { exit }'
+}
+
+# Styled Health groups each result under its area with its marker, points a
+# fixable problem at its menu item, and wraps a long message to fit 60 columns.
+# The step still fails on the core and accounts failures and still offers the
+# review of the shadowed binaries.
+output=$(run_styled "$health_home" $'pick Health\nno\nesc' \
+  env PATH="$health_bin:$gumbin:$mockbin:$PATH" "${health_env[@]}" 2>&1)
+expected=$(printf '%s\n' \
+  'Health · checked HH:MM' \
+  'Core' \
+  '  ✓ checkout metadata' \
+  '  ✓ x86_64-linux flake output' \
+  '  ! LC_ALL is set; managed shells inherit the OS locale' \
+  '  ✓ managed zsh startup' \
+  '  ✗ managed tmux or configuration is unavailable' \
+  'Accounts' \
+  '  ✗ configured account setup has errors → Accounts' \
+  'PATH' \
+  '  ! unmanaged binaries shadow the Nix profile → Clean up' \
+  'Jobs' \
+  '  ! board sync failed at Thu 2026-10-22 09:00:04 KST' \
+  '    (exit-code); see journalctl --user -u gh-board-sync')
+[ "$(health_screen "$output")" = "$expected" ] || {
+  echo "bro test: styled Health did not group its results: $output" >&2; exit 1; }
+for marked in $'\e[32m✓\e[39m checkout metadata' $'\e[33m!\e[39m LC_ALL is set' \
+  $'\e[31m✗\e[39m configured account setup' $'\e[33m!\e[39m board sync failed'; do
+  grep -Fq "$marked" <<<"$output" || {
+    echo "bro test: styled Health did not colour a marker: $(cat -v <<<"$marked")" >&2; exit 1; }
+done
+# Each marker, arrow and dot is one column; sed swaps them byte for byte in any locale.
+health_screen "$output" | sed -e 's/✓/./g' -e 's/✗/./g' -e 's/→/./g' -e 's/·/./g' \
+  | awk 'length($0) > 60 { wide = 1 } END { exit wide }' || {
+  echo "bro test: a styled Health line is wider than 60 columns: $output" >&2; exit 1; }
+! grep -Eq 'nix-config: (OK|CORE|AUTH|PATH|BOARD)' <<<"$output" || {
+  echo 'bro test: styled Health also printed the plain lines' >&2; exit 1; }
+grep -Fq 'returning to the menu' <<<"$output" || {
+  echo 'bro test: styled Health no longer failed on a core failure' >&2; exit 1; }
+grep -Fq '[Review the shadowed binaries now?]' "$gum_log" || {
+  echo 'bro test: styled Health did not offer the shadowed binaries review' >&2; exit 1; }
+
+# A passing account without account setup yet: the optional result is only
+# dimmed, nothing fails, and an area without results is left out.
+quiet_home="$work/quiet-home"
+mkdir -p "$quiet_home/.nix-profile/bin" "$quiet_home/.config/tmux"
+record_checkout "$quiet_home"
+: >"$quiet_home/.config/tmux/tmux.conf"
+for stub in zsh tmux; do
+  printf '#!/bin/sh\nexit 0\n' >"$quiet_home/.nix-profile/bin/$stub"
+  chmod +x "$quiet_home/.nix-profile/bin/$stub"
+done
+output=$(run_styled "$quiet_home" $'pick Health\nesc' env -u LC_ALL LANG=C MOCK_UNAME_S=Darwin MOCK_UNAME_M=arm64 2>&1)
+expected=$(printf '%s\n' \
+  'Health · checked HH:MM' \
+  'Core' \
+  '  ✓ checkout metadata' \
+  '  ✓ aarch64-darwin flake output' \
+  '  ✓ managed zsh startup' \
+  '  ✓ managed tmux server' \
+  'Accounts' \
+  '  · account setup is not installed yet; apply the' \
+  '    configuration first')
+[ "$(health_screen "$output")" = "$expected" ] || {
+  echo "bro test: a passing styled Health showed something else: $output" >&2; exit 1; }
+grep -Fq $'\e[2m·\e[22m account setup is not installed yet' <<<"$output" || {
+  echo 'bro test: the optional Accounts result was not dimmed' >&2; exit 1; }
+! grep -Fq 'returning to the menu' <<<"$output" || {
+  echo 'bro test: a passing styled Health failed the step' >&2; exit 1; }
+
 echo 'bro test: PASSED (menu-only entry, apply identity, DNS retry, sync push boundary, accounts wrapper, Pi extensions, Pi + ext, Playwright, Jobs, styled prompts)'

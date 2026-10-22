@@ -325,15 +325,15 @@ board_sync_health() {
 }
 
 # Each check records one result as "level<TAB>area<TAB>message": level is ok,
-# warn, fail or optional, and area is core, accounts, path or jobs. Each is
-# printed as today's line the moment it is known, so the lines and their
+# warn, fail or optional, and area is core, accounts, path or jobs. Plain mode
+# prints each as today's line the moment it is known, so the lines and their
 # order among the account check's own output stay exactly as they were. A
 # stored message is kept to one line so every result stays one record.
 HEALTH_RESULTS=()
 health_result() {
   local level=$1 area=$2 message=$3
   HEALTH_RESULTS+=("$level"$'\t'"$area"$'\t'"${message//[$'\t\n']/ }")
-  log "$(health_plain_prefix "$level" "$area")$message"
+  styled_prompts || log "$(health_plain_prefix "$level" "$area")$message"
 }
 
 # The prefixes today's plain lines start with.
@@ -355,6 +355,54 @@ health_plain_prefix() {
   esac
 }
 
+readonly HEALTH_AREAS=(core accounts path jobs)
+
+health_area_heading() {
+  case "$1" in
+    core) printf 'Core' ;;
+    accounts) printf 'Accounts' ;;
+    path) printf 'PATH' ;;
+    jobs) printf 'Jobs' ;;
+  esac
+}
+
+# A fix in plain text reads "; choose X from the menu"; a styled line points
+# at the menu item instead.
+health_styled_message() {
+  local message=$1 item
+  case "$message" in
+    *'; choose '*' from the menu')
+      item=${message##*'; choose '}
+      printf '%s → %s\n' "${message%'; choose '*}" "${item%' from the menu'}" ;;
+    *) printf '%s\n' "$message" ;;
+  esac
+}
+
+# Results are grouped by area in a fixed order, leaving out an area with none.
+# A long message wraps under its own first column.
+health_screen() {
+  local checked=$1 room area heading result level result_area message line indent
+  room=$(($(styled_width) - 4))
+  [ "$room" -gt 0 ] || room=1
+  printf '\n\e[3%sm%s\e[39m %s· checked %s%s\n' "$STYLE_ACCENT" Health "$STYLE_DIM" "$checked" "$STYLE_UNDIM"
+  for area in "${HEALTH_AREAS[@]}"; do
+    heading=$(health_area_heading "$area")
+    for result in "${HEALTH_RESULTS[@]+"${HEALTH_RESULTS[@]}"}"; do
+      IFS=$'\t' read -r level result_area message <<<"$result"
+      [ "$result_area" = "$area" ] || continue
+      if [ -n "$heading" ]; then
+        printf '\e[3%sm%s\e[39m\n' "$STYLE_ACCENT" "$heading"
+        heading=''
+      fi
+      indent="  $(styled_mark "$level") "
+      while IFS= read -r line; do
+        printf '%s%s\n' "$indent" "${line%"${line##*[! ]}"}"
+        indent='    '
+      done < <(health_styled_message "$message" | fold -s -w "$room")
+    done
+  done
+}
+
 # Only a core or accounts failure fails Health. A shadowed binary or a Board
 # sync problem is a warning, so a first install on a machine with a
 # hand-installed tool still succeeds.
@@ -369,8 +417,9 @@ health_passed() {
 
 health() {
   local repo=$1 target=$2
-  local locale_output startup_file tmux_socket expr
+  local locale_output startup_file tmux_socket expr checked
   HEALTH_RESULTS=()
+  checked=$(date '+%H:%M')
 
   command -v nix >/dev/null 2>&1 || health_result fail core 'Nix is unavailable'
   if run_nix_with_dns_retry nix flake metadata "path:$repo" >/dev/null; then
@@ -446,5 +495,6 @@ health() {
     *-linux) board_sync_health ;;
   esac
 
+  ! styled_prompts || health_screen "$checked"
   health_passed
 }
