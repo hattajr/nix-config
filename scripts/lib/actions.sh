@@ -292,6 +292,52 @@ shadow_review() {
   "$SHADOW_SCANNER"
 }
 
+readonly BOARD_SYNC_UNIT=gh-board-sync.service
+
+# systemd keeps a unit's last outcome only in memory, so "not run yet" means not
+# since the user manager started. A oneshot never stays active: success leaves
+# it inactive with Result=success and an exit time, a failure leaves it failed
+# with any other Result, and each start resets Result and clears the exit time.
+board_sync_health() {
+  local jobs state key value load='' active='' result='' exited='' changed=''
+  # An unreadable or unknown jobs file is already a CORE FAIL from the output check.
+  jobs=$(read_background_jobs 2>/dev/null) || return 0
+  grep -Fxq board-sync <<<"$jobs" || return 0
+
+  command -v systemctl >/dev/null 2>&1 || {
+    log 'BOARD WARN: board sync is enabled, but systemctl is unavailable to report its last run'
+    return 0
+  }
+  state=$(systemctl --user show "$BOARD_SYNC_UNIT" -p LoadState -p ActiveState -p Result \
+    -p ExecMainExitTimestamp -p StateChangeTimestamp 2>&1) || {
+    log "BOARD WARN: board sync is enabled, but the systemd user manager did not answer: ${state%%$'\n'*}"
+    return 0
+  }
+  while IFS='=' read -r key value; do
+    case "$key" in
+      LoadState) load=$value ;;
+      ActiveState) active=$value ;;
+      Result) result=$value ;;
+      ExecMainExitTimestamp) exited=$value ;;
+      StateChangeTimestamp) changed=$value ;;
+    esac
+  done <<<"$state"
+
+  if [ "$load" != loaded ]; then
+    log "BOARD WARN: board sync is enabled, but $BOARD_SYNC_UNIT is ${load:-unknown to systemd}; choose Apply from the menu"
+  elif [ "$result" != success ]; then
+    # Entering the failed state is the failure time even when no process ran,
+    # as with start-limit-hit, where the exit time belongs to an earlier run.
+    log "BOARD WARN: board sync failed at ${changed:-${exited:-an unknown time}} ($result); see journalctl --user -u gh-board-sync"
+  elif [ "$active" = activating ]; then
+    log 'BOARD WARN: board sync is running now, so its outcome is not known yet'
+  elif [ -z "$exited" ]; then
+    log 'BOARD WARN: board sync has not run yet since the systemd user manager started'
+  else
+    log "OK: board sync (last run finished $exited)"
+  fi
+}
+
 health() {
   local repo=$1 target=$2
   local core_failed=0 auth_failed=0 locale_output startup_file tmux_socket expr
@@ -365,6 +411,13 @@ health() {
       log 'OK: no unmanaged binaries shadow the Nix profile'
     fi
   fi
+
+  # An unattended job failing, say on an expired gh token, is worth seeing but
+  # breaks nothing here, so like a shadowed binary it never fails health.
+  # Background jobs are systemd user timers, which only Linux has.
+  case "$target" in
+    *-linux) board_sync_health ;;
+  esac
 
   [ "$core_failed" -eq 0 ] || return 1
   [ "$auth_failed" -eq 0 ] || return 1
