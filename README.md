@@ -71,6 +71,13 @@ and applies, which starts or removes the timer. The choice is machine state,
 never committed: Apply and Sync pass it to `lib.mkHome`, a missing file means
 no jobs, and an unknown name in the file is refused rather than ignored.
 
+On a machine with Board sync enabled, `Health` reports its last run from
+systemd: `OK: board sync` after a success, or a `BOARD WARN` line when it
+failed (with the failure time and `journalctl --user -u gh-board-sync` for the
+details), has not run since the user manager started, or systemd cannot be
+asked. Like a shadowed binary, a failed sync never fails `Health`. Machines
+without the job show nothing about it.
+
 Pi updates also persist `home/modules/pi-package-lock.json`. If the npm tarball
 ships no lockfile, the updater uses npm to resolve runtime dependencies with
 install scripts disabled. This lockfile is reviewed, committed, or discarded

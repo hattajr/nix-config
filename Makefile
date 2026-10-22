@@ -5,6 +5,7 @@ test:
 	@./tests/bootstrap/test-bootstrap.sh
 	@./tests/identity/test-identity.sh
 	@./tests/background-jobs/test-background-jobs.sh
+	@./tests/background-jobs/test-board-sync-health.sh
 	@./tests/pi/test-patch-pi-package.sh
 	@./tests/pi/test-update-pi.sh
 	@./tests/pi/test-update-pins.sh
