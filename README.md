@@ -62,7 +62,8 @@ are kept. With gum, each running step shows its last six lines in a box, then
 shrinks to a ✓ line; a failed step instead shows its last 30 lines. A failed
 build or activation fails Apply, which then skips the tmux reload. Apply ends
 by saying whether it finished and where its log is. The numbered prompts show
-the same output as it arrives, as before.
+the same output as it arrives, as before. A log that cannot be written is only
+a warning: Apply then runs without one, unboxed.
 
 `Sync` makes a machine match the versions committed here. `Update` is the
 intentional version-change workflow: it syncs first, asks what may change, shows

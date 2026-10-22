@@ -19,10 +19,11 @@ run_step() {
 }
 
 # An action is a step whose commands are logged: it gets a fresh log, and in
-# styled mode ends on a line saying how it went and where that log is.
+# styled mode ends on a line saying how it went and where that log is. The log
+# is best effort: without one the action still runs, unboxed as in plain mode.
 run_action() {
   local name=$1 started=$SECONDS && shift
-  open_action_log "$name" || { warn 'returning to the menu'; return 0; }
+  open_action_log "$name" || warn "$name runs without a log"
   if ( "$@" ); then
     report_action ok "$name" "$((SECONDS - started))"
   else

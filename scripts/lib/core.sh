@@ -341,7 +341,7 @@ format_duration() {
 }
 
 # Styled mode ends an action on one line saying how it went, and where its log
-# is. Plain mode prints nothing more than it always has.
+# is when it has one. Plain mode prints nothing more than it always has.
 report_action() {
   local outcome=$1 name=$2 seconds=$3 shown=$ACTION_LOG
   styled_prompts || return 0
@@ -351,7 +351,7 @@ report_action() {
   else
     printf '\n %s %s failed\n' "$(styled_mark fail)" "$name"
   fi
-  printf '   %slog: %s%s\n' "$STYLE_DIM" "$shown" "$STYLE_UNDIM"
+  [ -z "$shown" ] || printf '   %slog: %s%s\n' "$STYLE_DIM" "$shown" "$STYLE_UNDIM"
 }
 
 # Steps are boxed only inside an action, which owns the log, and only in

@@ -1119,4 +1119,22 @@ grep -Eq '^│ warning: coloured line 3 +│$' <<<"$screen" || {
 ! grep -E '^│' <<<"$screen" | grep -Eq '\[[0-9;]*m' || {
   echo "bro test: colour codes were left in the box under ${utf8_locale:-the default locale}" >&2; exit 1; }
 
+# Logging is best effort: with nowhere to write a log, Apply still runs, as it
+# would in plain mode, and its finish line names no log.
+new_box_home
+: >"$log"
+chmod 500 "$box_home/.local/state/bro"
+raw=$(run_box_apply "$box_home" 2>&1)
+chmod 700 "$box_home/.local/state/bro"
+screen=$(plain_screen <<<"$raw")
+grep -q '^activation$' "$log" || { echo 'bro test: Apply did not run without a log' >&2; exit 1; }
+for expected in "nix-config: could not create the log directory $box_logs" 'nix-config: Apply runs without a log' \
+  "nix-config: building $platform_name" ' ✓ Apply finished in '; do
+  grep -Fq -- "$expected" <<<"$screen" || {
+    echo "bro test: Apply without a log did not report: $expected" >&2; exit 1; }
+done
+! grep -q '^╭─' <<<"$screen" || { echo 'bro test: Apply without a log was boxed' >&2; exit 1; }
+! grep -q 'log:' <<<"$screen" || { echo 'bro test: Apply without a log named a log' >&2; exit 1; }
+[ ! -e "$box_logs" ] || { echo 'bro test: Apply wrote a log it reported it could not' >&2; exit 1; }
+
 echo 'bro test: PASSED (menu-only entry, apply identity, DNS retry, sync push boundary, accounts wrapper, Pi extensions, Pi + ext, Playwright, Jobs, styled prompts, Health, log box)'
