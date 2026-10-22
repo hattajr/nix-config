@@ -56,6 +56,13 @@ pushing after a sync or showing a generated diff, are prompts inside the step
 that needs them. A step that fails returns to the menu rather than ending the
 session.
 
+`Apply` runs in two steps, `build` and `activate`, and keeps everything they
+print in `~/.local/state/bro/logs/apply-<time>.log`; only the 20 newest logs
+are kept. With gum, each running step shows its last six lines in a box, then
+shrinks to a ✓ line; a failed step instead shows its last 30 lines. Apply ends
+by saying whether it finished and where its log is. The numbered prompts show
+the same output as it arrives, as before.
+
 `Sync` makes a machine match the versions committed here. `Update` is the
 intentional version-change workflow: it syncs first, asks what may change, shows
 an old-to-new summary, then asks before applying, committing, and pushing. Other

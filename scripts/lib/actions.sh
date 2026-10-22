@@ -22,7 +22,7 @@ require_clean_tree() {
 }
 
 apply() {
-  local repo=$1 target=$2 expr package
+  local repo=$1 target=$2 expr package build_logs=()
   command -v nix >/dev/null 2>&1 || fail 'Nix is required'
   # A bad background jobs file stops here, before Nix runs, rather than
   # reaching the build as an empty expression.
@@ -30,14 +30,20 @@ apply() {
 
   # One build replaces a separate metadata check and drvPath evaluation: an
   # unusable flake or platform fails here with the same diagnosis, two Nix
-  # round-trips sooner.
-  log "building $target"
-  package=$(run_nix_with_dns_retry nix build --impure --no-link --print-out-paths --expr "$expr") \
+  # round-trips sooner. In a box, a local build also shows its builder's own
+  # output, so a long one visibly works; plain output stays as it always was.
+  if step_boxes; then
+    build_logs=(--print-build-logs)
+  else
+    log "building $target"
+  fi
+  package=$(run_logged build run_nix_with_dns_retry nix build --impure --no-link --print-out-paths \
+    "${build_logs[@]+"${build_logs[@]}"}" --expr "$expr") \
     || fail "Home Manager activation package build failed for $target"
   [ -x "$package/activate" ] || fail 'built activation package has no executable activate script'
 
-  log "activating $target"
-  "$package/activate"
+  step_boxes || log "activating $target"
+  run_logged activate "$package/activate"
 
   # Home Manager updates the configuration link, but an already-running tmux
   # server keeps its previous state until reloaded. Do not start a server
@@ -46,7 +52,7 @@ apply() {
   local tmux_config="${XDG_CONFIG_HOME:-$HOME/.config}/tmux/tmux.conf"
   if [ -x "$tmux_binary" ] && [ -r "$tmux_config" ] \
     && "$tmux_binary" source-file "$tmux_config" >/dev/null 2>&1; then
-    log 'reloaded active tmux configuration'
+    log_step 'reloaded active tmux configuration'
   fi
 }
 
