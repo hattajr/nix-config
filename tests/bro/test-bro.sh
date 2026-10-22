@@ -677,15 +677,22 @@ grep -Fq 'chosen=2' <<<"$output" || {
 output=$(run_styled "$apply_home" '' NIX_CONFIG_TEST_PLAIN=1 2>&1)
 [ ! -s "$gum_log" ] && grep -Fq 'choose [1-' <<<"$output" || {
   echo 'bro test: the plain switch did not keep the plain prompts' >&2; exit 1; }
-path_without_gum=''
+# gum shares a directory with tools bro needs, such as ~/.nix-profile/bin, so
+# the host's tools are linked one by one, first on PATH winning, all but gum.
+no_gum_bin="$work/no-gum-bin"
+mkdir -p "$no_gum_bin"
 IFS=: read -r -a path_entries <<<"$PATH"
 for entry in "${path_entries[@]}"; do
-  [ -x "$entry/gum" ] || path_without_gum="${path_without_gum:+$path_without_gum:}$entry"
+  for tool in "$entry"/*; do
+    name=${tool##*/}
+    [ "$name" != gum ] && [ -x "$tool" ] && [ ! -e "$no_gum_bin/$name" ] || continue
+    ln -s "$tool" "$no_gum_bin/$name"
+  done
 done
 : >"$log"
 status=0
 output=$(printf '1\n%s\n' "$quit" | "$pty_run" env -u XDG_STATE_HOME -u NIX_CONFIG_TEST_PLAIN \
-  HOME="$apply_home" USER=apply-user PATH="$mockbin:$path_without_gum" "$bro" 2>&1) || status=$?
+  HOME="$apply_home" USER=apply-user PATH="$mockbin:$no_gum_bin" "$bro" 2>&1) || status=$?
 [ "$status" = 0 ] && grep -Fq 'choose [1-' <<<"$output" && grep -q '^activation$' "$log" || {
   echo 'bro test: without gum, bro did not fall back to working plain prompts' >&2; exit 1; }
 
