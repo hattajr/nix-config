@@ -1,0 +1,193 @@
+#!/usr/bin/env bash
+# Puts my GitHub issues on my personal project boards. It only ever adds issues:
+# Status is left to the boards' own workflows, and nothing is ever removed.
+set -euo pipefail
+
+# Both boards are projects of the personal account. The owner of an issue's
+# repository only decides which of the two it belongs on.
+board_owner=hattajr
+boards=(
+  "Wellysis 5" # backlog wellysis
+  "hattajr 4"  # backlog
+)
+
+allowed_repos=(
+  Wellysis/beatlab
+  Wellysis/cardio-db
+  Wellysis/isiji
+  Wellysis/lattestream2
+  Wellysis/cardio-rt
+  Wellysis/fastpeak
+  Wellysis/AI-dashboard
+  hattajr/muslim-app
+  hattajr/nix-config
+  hattajr/koeng-parakeet
+  hattajr/quickmart3
+)
+
+# A listing that reaches this many entries may have been cut short, and acting
+# on a partial board would misreport what is already there.
+list_limit=5000
+
+# GitHub owner and repository names are case-insensitive.
+shopt -s nocasematch
+
+usage() {
+  printf '%s\n' 'usage: gh-board add <issue-url>' '       gh-board sync [--dry-run]' >&2
+  exit 2
+}
+
+warn() {
+  printf 'gh-board: %s\n' "$*" >&2
+}
+
+board_for_owner() {
+  local entry owner board
+  for entry in "${boards[@]}"; do
+    read -r owner board <<<"$entry"
+    if [[ $owner == "$1" ]]; then
+      printf '%s\n' "$board"
+      return 0
+    fi
+  done
+  return 1
+}
+
+is_allowed() {
+  local repo
+  for repo in "${allowed_repos[@]}"; do
+    [[ $repo == "$1" ]] && return 0
+  done
+  return 1
+}
+
+contains_line() {
+  grep -Fxiq -- "$2" <<<"$1"
+}
+
+check_complete() {
+  if [ "$1" -ge "$list_limit" ]; then
+    warn "$2 returned $1 entries, the listing limit; refusing to trust a possibly partial list"
+    return 1
+  fi
+}
+
+board_urls() {
+  local json
+  json=$(gh project item-list "$1" --owner "$board_owner" --format json --limit "$list_limit") || return 1
+  check_complete "$(jq '.items | length' <<<"$json")" "project $1" || return 1
+  jq -r '.items[].content.url // empty' <<<"$json"
+}
+
+my_open_issues() {
+  local role json urls=''
+  for role in --author --assignee; do
+    json=$(gh issue list --repo "$1" --state open "$role" @me --json url --limit "$list_limit") || return 1
+    check_complete "$(jq 'length' <<<"$json")" "issues in $1" || return 1
+    urls+=$(jq -r '.[].url' <<<"$json")$'\n'
+  done
+  # Authored and assigned overlap; keep gh's order and drop anything that is not an issue.
+  awk '$0 ~ /\/issues\/[0-9]+$/ && !seen[$0]++' <<<"$urls"
+}
+
+add_item() {
+  if gh project item-add "$1" --owner "$board_owner" --url "$2" >/dev/null; then
+    printf 'added %s to project %s\n' "$2" "$1"
+  else
+    warn "failed to add $2 to project $1"
+    return 1
+  fi
+}
+
+cmd_add() {
+  [ $# = 1 ] || usage
+  local url=$1 owner repo kind number board issue canonical on_board
+  if [[ ! $url =~ ^https://github\.com/([^/]+)/([^/]+)/(issues|pull)/([0-9]+)$ ]]; then
+    warn "not a GitHub issue URL: $url"
+    return 1
+  fi
+  owner=${BASH_REMATCH[1]} repo=${BASH_REMATCH[2]} kind=${BASH_REMATCH[3]} number=${BASH_REMATCH[4]}
+  if [[ $kind == pull ]]; then
+    warn "$url is a pull request; only issues go on a board"
+    return 1
+  fi
+  if ! board=$(board_for_owner "$owner"); then
+    warn "$url: owner $owner has no board"
+    return 1
+  fi
+  if ! is_allowed "$owner/$repo"; then
+    warn "$url: $owner/$repo is not on the allowlist"
+    return 1
+  fi
+
+  # An /issues/ URL also resolves for a pull request number.
+  if ! issue=$(gh api "repos/$owner/$repo/issues/$number"); then
+    warn "could not look up $url"
+    return 1
+  fi
+  if [ "$(jq '.pull_request != null' <<<"$issue")" = true ]; then
+    warn "$url is a pull request; only issues go on a board"
+    return 1
+  fi
+  canonical=$(jq -r '.html_url' <<<"$issue")
+
+  if ! on_board=$(board_urls "$board"); then
+    warn "could not list project $board; $url was not added"
+    return 1
+  fi
+  if contains_line "$on_board" "$canonical"; then
+    printf '%s is already on project %s\n' "$canonical" "$board"
+    return 0
+  fi
+  add_item "$board" "$canonical"
+}
+
+cmd_sync() {
+  local dry_run=false
+  case "$*" in
+    '') ;;
+    --dry-run) dry_run=true ;;
+    *) usage ;;
+  esac
+
+  local failed=0 entry owner board on_board repo issues url missing
+  for entry in "${boards[@]}"; do
+    read -r owner board <<<"$entry"
+    if ! on_board=$(board_urls "$board"); then
+      warn "could not list project $board; skipped the $owner repositories"
+      failed=1
+      continue
+    fi
+
+    missing=()
+    for repo in "${allowed_repos[@]}"; do
+      [[ ${repo%%/*} == "$owner" ]] || continue
+      if ! issues=$(my_open_issues "$repo"); then
+        warn "could not list issues in $repo; skipped it"
+        failed=1
+        continue
+      fi
+      while IFS= read -r url; do
+        if [ -n "$url" ] && ! contains_line "$on_board" "$url"; then
+          missing+=("$url")
+        fi
+      done <<<"$issues"
+    done
+
+    if [ "$dry_run" = true ]; then
+      printf 'project %s (%s repositories): %s to add\n' "$board" "$owner" "${#missing[@]}"
+      [ "${#missing[@]}" = 0 ] || printf '  %s\n' "${missing[@]}"
+      continue
+    fi
+    for url in ${missing[@]+"${missing[@]}"}; do
+      add_item "$board" "$url" || failed=1
+    done
+  done
+  return "$failed"
+}
+
+case "${1:-}" in
+  add) shift && cmd_add "$@" ;;
+  sync) shift && cmd_sync "$@" ;;
+  *) usage ;;
+esac

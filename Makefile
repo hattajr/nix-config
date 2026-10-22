@@ -12,6 +12,7 @@ test:
 	@"$${NODE:-node}" --experimental-strip-types --test tests/pi/model-presets.test.mjs
 	@./tests/skills/test-skills.sh
 	@./tests/bro/test-bro.sh
+	@./tests/gh-board/test-gh-board.sh
 	@./tests/proton-pass/test-pi-wrapper.sh
 	@./tests/proton-pass/test-session-wrapper.sh
 	@./tests/proton-pass/test-setup.sh
