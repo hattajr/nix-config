@@ -42,8 +42,9 @@ sed -e "s|^REPOSITORY_URL=.*|REPOSITORY_URL='file://$source_root'|" \
   "$source_root/scripts/install.sh" >"$fixture_installer"
 chmod +x "$fixture_installer"
 
-# Continue, apply, skip the managed shell.
-printf 'y\ny\nn\n' | "$source_root/tests/lib/pty-run" "$fixture_installer"
+# Continue, apply, skip the managed shell. Applying installs gum, so the switch
+# keeps every prompt the numbered kind these typed answers are for.
+printf 'y\ny\nn\n' | "$source_root/tests/lib/pty-run" env NIX_CONFIG_TEST_PLAIN=1 "$fixture_installer"
 
 assert_takeover() {
   local managed
@@ -81,7 +82,7 @@ printf 'PI_ENV_PRESERVE=yes\n' >"$HOME/.config/proton-pass/pi.env"
 . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
 
 # bro is menu-only: Apply, then Quit (8 on Linux, where Jobs precedes it).
-printf '1\n8\n' | "$source_root/tests/lib/pty-run" "$HOME/.local/bin/bro"
+printf '1\n8\n' | "$source_root/tests/lib/pty-run" env NIX_CONFIG_TEST_PLAIN=1 "$HOME/.local/bin/bro"
 assert_takeover
 jq -e '.oauth == "preserve"' "$HOME/.pi/agent/auth.json" >/dev/null
 grep -Fx PI_ENV_PRESERVE=yes "$HOME/.config/proton-pass/pi.env"

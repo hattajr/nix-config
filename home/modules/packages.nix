@@ -20,6 +20,7 @@
     gh
     gnumake
     go
+    gum
     jq
     lazygit
     lazydocker

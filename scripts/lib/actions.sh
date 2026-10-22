@@ -241,40 +241,26 @@ background_job_label() {
 }
 
 # Which jobs run is per-machine state, so it is chosen here rather than
-# committed. Done always saves and applies, which starts or stops the timers
-# right away; leaving the prompt any other way changes nothing.
+# committed. Confirming the choice always saves and applies, which starts or
+# stops the timers right away; leaving the prompt any other way changes nothing.
 background_jobs() {
-  local repo=$1 target=$2 host saved job mark label description kept
-  local enabled=() options=() remaining=()
+  local repo=$1 target=$2 host saved index job label
+  local options=() enabled=()
   saved=$(read_background_jobs) || return 1
-  for job in $saved; do
-    enabled+=("$job")
-  done
   host=$(uname -n)
 
-  while true; do
-    options=()
-    for job in "${BACKGROUND_JOBS[@]}"; do
-      if list_contains "$job" "${enabled[@]+"${enabled[@]}"}"; then mark='[x]'; else mark='[ ]'; fi
-      IFS=$'\t' read -r label description <<<"$(background_job_label "$job")"
-      options+=("$mark $label"$'\t'"$description")
-    done
-    options+=($'Done\tapply and return')
-    choose "Background jobs on $host" "${options[@]}" || return 0
-    [ "$CHOICE_INDEX" -le "${#BACKGROUND_JOBS[@]}" ] || break
-
-    job=${BACKGROUND_JOBS[CHOICE_INDEX - 1]}
-    if list_contains "$job" "${enabled[@]+"${enabled[@]}"}"; then
-      remaining=()
-      for kept in "${enabled[@]}"; do
-        [ "$kept" = "$job" ] || remaining+=("$kept")
-      done
-      enabled=("${remaining[@]+"${remaining[@]}"}")
-    else
-      enabled+=("$job")
-    fi
+  CHOSEN_INDEXES=()
+  for index in "${!BACKGROUND_JOBS[@]}"; do
+    job=${BACKGROUND_JOBS[index]}
+    label=$(background_job_label "$job") || return 1
+    options+=("$label")
+    ! grep -Fxq "$job" <<<"$saved" || CHOSEN_INDEXES+=("$((index + 1))")
   done
+  choose_many "Background jobs on $host" 'apply and return' "${options[@]}" || return 0
 
+  for index in "${CHOSEN_INDEXES[@]+"${CHOSEN_INDEXES[@]}"}"; do
+    enabled+=("${BACKGROUND_JOBS[index - 1]}")
+  done
   write_background_jobs "${enabled[@]+"${enabled[@]}"}"
   log "saved background jobs for $host: ${enabled[*]:-none}"
   apply "$repo" "$target"
