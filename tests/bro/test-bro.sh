@@ -59,9 +59,13 @@ ACTIVATE
   *) exit 1 ;;
 esac
 EOF
-command cat >"$mockbin/sleep" <<'EOF'
+# The log box ticks with fractional sleeps, which really sleep; only the whole
+# seconds of the DNS backoff are recorded and skipped.
+real_sleep=$(command -v sleep)
+command cat >"$mockbin/sleep" <<EOF
 #!/bin/sh
-printf 'sleep %s\n' "$*" >>"$MOCK_LOG"
+case "\$1" in *.*) exec "$real_sleep" "\$@" ;; esac
+printf 'sleep %s\\n' "\$*" >>"\$MOCK_LOG"
 EOF
 # Platform-specific paths are asserted on every host, so the kernel name and
 # architecture can be overridden together; macOS is only supported on arm64, so
@@ -696,4 +700,441 @@ output=$(printf '1\n%s\n' "$quit" | "$pty_run" env -u XDG_STATE_HOME -u NIX_CONF
 [ "$status" = 0 ] && grep -Fq 'choose [1-' <<<"$output" && grep -q '^activation$' "$log" || {
   echo 'bro test: without gum, bro did not fall back to working plain prompts' >&2; exit 1; }
 
-echo 'bro test: PASSED (menu-only entry, apply identity, DNS retry, sync push boundary, accounts wrapper, Pi extensions, Pi + ext, Playwright, Jobs, styled prompts)'
+# --- Health -------------------------------------------------------------------
+
+# One home where every area has something to say: LC_ALL=C is a valid locale
+# that still warns, tmux is missing, the account check fails, a binary shadows
+# the profile, and the last Board sync failed. systemctl is a stub, so the suite
+# never asks the developer's own user manager.
+health_home="$work/health-home"
+health_bin="$work/health-bin"
+mkdir -p "$health_home/.nix-profile/bin" "$health_home/.local/bin" \
+  "$health_home/.local/share/nix-config" "$health_bin"
+record_checkout "$health_home"
+printf '%s\n' board-sync >"$health_home/.local/state/bro/background-jobs"
+printf '#!/bin/sh\nexit 0\n' >"$health_home/.nix-profile/bin/zsh"
+printf '#!/bin/sh\nexit 1\n' >"$health_home/.local/bin/nix-config-setup"
+printf '#!/bin/sh\nexit 1\n' >"$health_home/.local/share/nix-config/shadow-scan"
+command cat >"$health_bin/systemctl" <<'EOF'
+#!/bin/sh
+printf '%s\n' Result=exit-code 'ExecMainExitTimestamp=Thu 2026-10-22 09:00:04 KST' \
+  LoadState=loaded ActiveState=failed 'StateChangeTimestamp=Thu 2026-10-22 09:00:04 KST'
+EOF
+chmod +x "$health_home/.nix-profile/bin/zsh" "$health_home/.local/bin/nix-config-setup" \
+  "$health_home/.local/share/nix-config/shadow-scan" "$health_bin/systemctl"
+health_env=(env LC_ALL=C MOCK_UNAME_S=Linux MOCK_UNAME_M=x86_64)
+
+# Plain Health is the compatibility contract: today's lines, in today's order,
+# and nothing else from bro, followed by the review offer and the failed step.
+expect_plain_health() {
+  local output=$1 expected
+  expected=$(printf '%s\n' \
+    'nix-config: OK: checkout metadata' \
+    'nix-config: OK: x86_64-linux flake output' \
+    'nix-config: CORE WARN: LC_ALL is set; managed shells inherit the OS locale' \
+    'nix-config: OK: managed zsh startup' \
+    'nix-config: CORE FAIL: managed tmux or configuration is unavailable' \
+    'nix-config: AUTH FAIL: configured account setup has errors; choose Accounts from the menu' \
+    'nix-config: PATH WARN: unmanaged binaries shadow the Nix profile; choose Clean up from the menu' \
+    'nix-config: BOARD WARN: board sync failed at Thu 2026-10-22 09:00:04 KST (exit-code); see journalctl --user -u gh-board-sync' \
+    'nix-config: returning to the menu')
+  # The first line follows the menu prompt, which the terminal leaves open.
+  [ "$(tr -d '\r' <<<"$output" | grep -o 'nix-config: .*')" = "$expected" ] || {
+    echo "bro test: plain Health output changed: $output" >&2; exit 1; }
+  grep -Fq 'Review the shadowed binaries now? [y/N]' <<<"$output" || {
+    echo 'bro test: plain Health did not offer the shadowed binaries review' >&2; exit 1; }
+}
+
+output=$(run_menu "$health_home" '5\nn\n8\n' env PATH="$health_bin:$mockbin:$PATH" "${health_env[@]}" 2>&1)
+expect_plain_health "$output"
+
+# The styled Health screen as the terminal shows it, colours and check time
+# taken out: its heading, then the area headings and indented results below it.
+health_screen() {
+  tr -d '\r' <<<"$1" | sed -e $'s/\e\\[[0-9;]*m//g' -e 's/^\(Health · checked \)[0-9][0-9]:[0-9][0-9]$/\1HH:MM/' \
+    | awk '/^Health · checked / { on = 1; print; next } on && /^(Core|Accounts|PATH|Jobs|  )/ { print; next } on { exit }'
+}
+
+# Styled Health groups each result under its area with its marker, points a
+# fixable problem at its menu item, and wraps a long message to fit 60 columns.
+# The step still fails on the core and accounts failures and still offers the
+# review of the shadowed binaries.
+health_started=$(date +%s)
+output=$(run_styled "$health_home" $'pick Health\nno\nesc' \
+  env PATH="$health_bin:$gumbin:$mockbin:$PATH" "${health_env[@]}" 2>&1)
+expected=$(printf '%s\n' \
+  'Health · checked HH:MM' \
+  'Core' \
+  '  ✓ checkout metadata' \
+  '  ✓ x86_64-linux flake output' \
+  '  ! LC_ALL is set; managed shells inherit the OS locale' \
+  '  ✓ managed zsh startup' \
+  '  ✗ managed tmux or configuration is unavailable' \
+  'Accounts' \
+  '  ✗ configured account setup has errors → Accounts' \
+  'PATH' \
+  '  ! unmanaged binaries shadow the Nix profile → Clean up' \
+  'Jobs' \
+  '  ! board sync failed at Thu 2026-10-22 09:00:04 KST' \
+  '    (exit-code); see journalctl --user -u gh-board-sync')
+[ "$(health_screen "$output")" = "$expected" ] || {
+  echo "bro test: styled Health did not group its results: $output" >&2; exit 1; }
+for marked in $'\e[32m✓\e[39m checkout metadata' $'\e[33m!\e[39m LC_ALL is set' \
+  $'\e[31m✗\e[39m configured account setup' $'\e[33m!\e[39m board sync failed'; do
+  grep -Fq "$marked" <<<"$output" || {
+    echo "bro test: styled Health did not colour a marker: $(cat -v <<<"$marked")" >&2; exit 1; }
+done
+# Each marker, arrow and dot is one column; sed swaps them byte for byte in any locale.
+health_screen "$output" | sed -e 's/✓/./g' -e 's/✗/./g' -e 's/→/./g' -e 's/·/./g' \
+  | awk 'length($0) > 60 { wide = 1 } END { exit wide }' || {
+  echo "bro test: a styled Health line is wider than 60 columns: $output" >&2; exit 1; }
+! grep -Eq 'nix-config: (OK|CORE|AUTH|PATH|BOARD)' <<<"$output" || {
+  echo 'bro test: styled Health also printed the plain lines' >&2; exit 1; }
+grep -Fq 'returning to the menu' <<<"$output" || {
+  echo 'bro test: styled Health no longer failed on a core failure' >&2; exit 1; }
+grep -Fq '[Review the shadowed binaries now?]' "$gum_log" || {
+  echo 'bro test: styled Health did not offer the shadowed binaries review' >&2; exit 1; }
+
+# Asserts FILE holds a "checked<TAB>epoch" line for a run started no earlier
+# than STARTED, then exactly the given results in check order.
+expect_saved_health() {
+  local file=$1 started=$2 checked && shift 2
+  [ -r "$file" ] || { echo "bro test: Health did not save its results to $file" >&2; exit 1; }
+  checked=$(head -n 1 "$file")
+  case "$checked" in
+    checked$'\t'[0-9]*) ;;
+    *) echo "bro test: the saved Health results do not start with the run time: $checked" >&2; exit 1 ;;
+  esac
+  checked=${checked#checked$'\t'}
+  [ "$checked" -ge "$started" ] && [ "$checked" -le "$(date +%s)" ] || {
+    echo "bro test: the saved Health run time $checked is not this run's" >&2; exit 1; }
+  [ "$(tail -n +2 "$file")" = "$(printf '%s\n' "$@")" ] || {
+    echo "bro test: the saved Health results are not this run's: $(cat "$file")" >&2; exit 1; }
+}
+
+expect_saved_health "$health_home/.local/state/bro/health" "$health_started" \
+  $'ok\tcore\tcheckout metadata' \
+  $'ok\tcore\tx86_64-linux flake output' \
+  $'warn\tcore\tLC_ALL is set; managed shells inherit the OS locale' \
+  $'ok\tcore\tmanaged zsh startup' \
+  $'fail\tcore\tmanaged tmux or configuration is unavailable' \
+  $'fail\taccounts\tconfigured account setup has errors; choose Accounts from the menu' \
+  $'warn\tpath\tunmanaged binaries shadow the Nix profile; choose Clean up from the menu' \
+  $'warn\tjobs\tboard sync failed at Thu 2026-10-22 09:00:04 KST (exit-code); see journalctl --user -u gh-board-sync'
+
+# A passing account without account setup yet: the optional result is only
+# dimmed, nothing fails, and an area without results is left out.
+quiet_home="$work/quiet-home"
+mkdir -p "$quiet_home/.nix-profile/bin" "$quiet_home/.config/tmux"
+record_checkout "$quiet_home"
+: >"$quiet_home/.config/tmux/tmux.conf"
+for stub in zsh tmux; do
+  printf '#!/bin/sh\nexit 0\n' >"$quiet_home/.nix-profile/bin/$stub"
+  chmod +x "$quiet_home/.nix-profile/bin/$stub"
+done
+output=$(run_styled "$quiet_home" $'pick Health\nesc' env -u LC_ALL LANG=C MOCK_UNAME_S=Darwin MOCK_UNAME_M=arm64 2>&1)
+expected=$(printf '%s\n' \
+  'Health · checked HH:MM' \
+  'Core' \
+  '  ✓ checkout metadata' \
+  '  ✓ aarch64-darwin flake output' \
+  '  ✓ managed zsh startup' \
+  '  ✓ managed tmux server' \
+  'Accounts' \
+  '  · account setup is not installed yet; apply the' \
+  '    configuration first')
+[ "$(health_screen "$output")" = "$expected" ] || {
+  echo "bro test: a passing styled Health showed something else: $output" >&2; exit 1; }
+grep -Fq $'\e[2m·\e[22m account setup is not installed yet' <<<"$output" || {
+  echo 'bro test: the optional Accounts result was not dimmed' >&2; exit 1; }
+! grep -Fq 'returning to the menu' <<<"$output" || {
+  echo 'bro test: a passing styled Health failed the step' >&2; exit 1; }
+
+# Health the way bootstrap calls it, outside the menu and without a terminal,
+# with the state directory given.
+run_health_directly() {
+  local target_home=$1 state_home=$2
+  env HOME="$target_home" XDG_STATE_HOME="$state_home" USER=apply-user \
+    PATH="$health_bin:$mockbin:$PATH" LC_ALL=C NIX_CONFIG_TEST_NO_TTY=1 bash -c '
+      set -euo pipefail
+      . "$1/scripts/lib/core.sh"
+      . "$1/scripts/lib/nix.sh"
+      . "$1/scripts/lib/actions.sh"
+      resolve_identity
+      health "$2" x86_64-linux
+    ' _ "$repo_root" "$checkout" </dev/null 2>&1
+}
+
+# The results go where XDG_STATE_HOME says, as every other bro state file does.
+health_started=$(date +%s)
+status=0
+run_health_directly "$health_home" "$work/health-state" >/dev/null || status=$?
+[ "$status" = 1 ] || { echo "bro test: Health with a core failure exited $status" >&2; exit 1; }
+expect_saved_health "$work/health-state/bro/health" "$health_started" \
+  $'ok\tcore\tcheckout metadata' \
+  $'ok\tcore\tx86_64-linux flake output' \
+  $'warn\tcore\tLC_ALL is set; managed shells inherit the OS locale' \
+  $'ok\tcore\tmanaged zsh startup' \
+  $'fail\tcore\tmanaged tmux or configuration is unavailable' \
+  $'fail\taccounts\tconfigured account setup has errors; choose Accounts from the menu' \
+  $'warn\tpath\tunmanaged binaries shadow the Nix profile; choose Clean up from the menu'
+
+# A state directory that cannot be created only warns: every result is still
+# reported, and Health exits as it would have, failing or passing.
+: >"$work/state-is-a-file"
+saved_output=$(run_health_directly "$health_home" "$work/health-state" || true)
+status=0
+output=$(run_health_directly "$health_home" "$work/state-is-a-file") || status=$?
+[ "$status" = 1 ] || { echo "bro test: an unwritable state directory changed a failing Health to $status" >&2; exit 1; }
+grep -Fq "nix-config: could not save the Health results to $work/state-is-a-file/bro/health" <<<"$output" || {
+  echo "bro test: an unwritable state directory did not warn: $output" >&2; exit 1; }
+[ "$(grep '^nix-config: ' <<<"$output" | grep -Fv 'could not save')" = "$(grep '^nix-config: ' <<<"$saved_output")" ] || {
+  echo "bro test: an unwritable state directory changed the Health results: $output" >&2; exit 1; }
+status=0
+output=$(run_health_directly "$quiet_home" "$work/state-is-a-file") || status=$?
+[ "$status" = 0 ] || { echo "bro test: an unwritable state directory failed a passing Health: $output" >&2; exit 1; }
+grep -Fq 'could not save the Health results' <<<"$output" || {
+  echo "bro test: an unwritable state directory did not warn on a passing Health: $output" >&2; exit 1; }
+
+# --- log box ------------------------------------------------------------------
+
+# This nix prints MOCK_BOX_LINES numbered progress lines on stderr, and three
+# red ones when MOCK_BOX_COLOUR is set, then is silent for MOCK_BOX_SILENCE
+# seconds, then fails when MOCK_BOX_FAIL is set. The activation it builds
+# prints MOCK_BOX_ACTIVATE_LINES numbered lines, then fails when
+# MOCK_BOX_ACTIVATE_FAIL is set.
+boxbin="$work/box-bin"
+mkdir -p "$boxbin"
+command cat >"$boxbin/nix" <<EOF
+#!/usr/bin/env bash
+printf 'nix %s\\n' "\$*" >>"\$MOCK_LOG"
+[ "\$1" = build ] || exit 1
+for ((line = 1; line <= \${MOCK_BOX_LINES:-0}; line++)); do
+  printf "copying path '/nix/store/box-%d' from 'https://cache.nixos.org'...\\n" "\$line" >&2
+done
+if [ -n "\${MOCK_BOX_COLOUR:-}" ]; then
+  for line in 1 2 3; do printf '\\033[1;31mwarning:\\033[0m coloured line %d\\n' "\$line" >&2; done
+fi
+"$real_sleep" "\${MOCK_BOX_SILENCE:-0}"
+[ -z "\${MOCK_BOX_FAIL:-}" ] || { printf 'error: builder for box failed\\n' >&2; exit 1; }
+mkdir -p "\$MOCK_ACTIVATION"
+{
+  printf '#!/bin/sh\\n'
+  printf 'printf "activation\\\\n" >>"\$MOCK_LOG"\\n'
+  printf 'for line in \$(seq 1 %d); do printf "activation step %%s\\\\n" "\$line"; done\\n' "\${MOCK_BOX_ACTIVATE_LINES:-0}"
+  [ -z "\${MOCK_BOX_ACTIVATE_FAIL:-}" ] || printf 'echo "activation broke" >&2; exit 4\\n'
+} >"\$MOCK_ACTIVATION/activate"
+chmod +x "\$MOCK_ACTIVATION/activate"
+printf '%s\\n' "\$MOCK_ACTIVATION"
+EOF
+chmod +x "$boxbin/nix"
+
+# Each case gets a home of its own, so it sees only its own logs.
+box_case=0
+new_box_home() {
+  box_case=$((box_case + 1))
+  box_home="$work/box-home-$box_case"
+  box_logs="$box_home/.local/state/bro/logs"
+  mkdir -p "$box_home/.nix-profile/bin" "$box_home/.config/tmux"
+  record_checkout "$box_home"
+  cp "$apply_home/.nix-profile/bin/tmux" "$box_home/.nix-profile/bin/tmux"
+  cp "$apply_home/.config/tmux/tmux.conf" "$box_home/.config/tmux/tmux.conf"
+}
+
+# Styled Apply with the box nix, then Esc at the menu it returns to.
+run_box_apply() {
+  local target_home=$1 && shift
+  run_styled "$target_home" $'pick Apply\nesc' env PATH="$boxbin:$gumbin:$mockbin:$PATH" "$@"
+}
+
+# What the terminal was sent, with colours, cursor moves and carriage returns
+# dropped, so frames read as plain lines.
+plain_screen() {
+  sed -e $'s/\e\\[[0-9;?]*[A-Za-z]//g' -e $'s/\r//g'
+}
+
+box_log_file() {
+  local logs=("$box_logs"/apply-*.log)
+  [ "${#logs[@]}" = 1 ] && [ -f "${logs[0]}" ] || {
+    echo "bro test: expected exactly one Apply log in $box_logs" >&2; exit 1; }
+  printf '%s\n' "${logs[0]}"
+}
+
+# Many lines: the box shows the last six, cut to fit, and counts them all.
+# Both steps then shrink to ✓ lines, followed by the finish line and the log.
+new_box_home
+: >"$log"
+raw=$(run_box_apply "$box_home" MOCK_BOX_LINES=40 MOCK_BOX_SILENCE=1 MOCK_BOX_ACTIVATE_LINES=8 2>&1)
+screen=$(plain_screen <<<"$raw")
+grep -q '^activation$' "$log" || { echo 'bro test: boxed Apply did not activate' >&2; exit 1; }
+grep -Eq '^╭─ . build ─+ 0:0[0-9] ─╮$' <<<"$screen" || {
+  echo 'bro test: the build box had no spinner, step name, and elapsed time in its title' >&2; exit 1; }
+grep -Eq '^╰─+ last 6 of 40 ─╯$' <<<"$screen" || {
+  echo 'bro test: the build box did not count every line it was sent' >&2; exit 1; }
+grep -Fq "│ copying path '/nix/store/box-40' from 'https://cache.ni… │" <<<"$screen" || {
+  echo 'bro test: the build box did not show the newest line cut to fit with an ellipsis' >&2; exit 1; }
+! grep -Fq "box-34'" <<<"$screen" || {
+  echo 'bro test: the build box showed more than the last six lines' >&2; exit 1; }
+while IFS= read -r row; do
+  measured=${row//…/.}
+  [ "${#measured}" -le 60 ] || { echo "bro test: a box row is wider than 60 columns: $row" >&2; exit 1; }
+done < <(grep -E '^[╭│╰]' <<<"$screen")
+grep -Fq 'nix build --impure --no-link --print-out-paths --print-build-logs' "$log" || {
+  echo 'bro test: the boxed build did not ask Nix for its build logs' >&2; exit 1; }
+# Durations are whole seconds, so which one a second boundary lands in varies.
+summary=$(grep -E '^ (✓|✗) |^   log: ' <<<"$screen" | sed -E 's/ [0-9]+s$/ Ns/')
+expected_summary=$(printf '%s\n' ' ✓ build  Ns' ' ✓ activate  Ns' ' ✓ reloaded active tmux configuration' \
+  ' ✓ Apply finished in Ns' "   log: ~/.local/state/bro/logs/$(basename "$(box_log_file)")")
+[ "$summary" = "$expected_summary" ] || {
+  printf 'bro test: styled Apply did not end in its step and finish lines:\n%s\n' "$summary" >&2; exit 1; }
+! grep -Fq 'nix-config: building' <<<"$screen" || {
+  echo 'bro test: styled Apply still printed the plain progress lines' >&2; exit 1; }
+[ "$(gum_calls)" = 2 ] || { echo 'bro test: the menu did not return after a boxed Apply' >&2; exit 1; }
+# The cursor is hidden while a box is drawn and always shown again.
+[ "$(grep -o $'\e\\[?25[lh]' <<<"$raw" | tail -n 1)" = $'\e[?25h' ] || {
+  echo 'bro test: a box left the cursor hidden' >&2; exit 1; }
+
+# The log holds every line of both steps, the build's result included.
+box_log=$(box_log_file)
+for line in $(seq 1 40); do
+  grep -Fxq "copying path '/nix/store/box-$line' from 'https://cache.nixos.org'..." "$box_log" || {
+    echo "bro test: the Apply log lost build line $line" >&2; exit 1; }
+done
+for line in $(seq 1 8); do
+  grep -Fxq "activation step $line" "$box_log" || {
+    echo "bro test: the Apply log lost activation line $line" >&2; exit 1; }
+done
+grep -Fxq "$work/activation" "$box_log" || { echo 'bro test: the Apply log lost the build result' >&2; exit 1; }
+
+# A silent step still moves: the spinner turns and the timer counts.
+new_box_home
+raw=$(run_box_apply "$box_home" MOCK_BOX_SILENCE=3 2>&1)
+screen=$(plain_screen <<<"$raw")
+spinners=$(grep -E '^╭─ . build ' <<<"$screen" | sed 's/ build .*//' | sort -u | wc -l | tr -d ' ')
+[ "$spinners" -ge 5 ] || {
+  echo "bro test: the spinner showed only $spinners frames through three silent seconds" >&2; exit 1; }
+for clock in 0:00 0:01 0:02; do
+  grep -Eq "^╭─ . build ─+ $clock ─╮\$" <<<"$screen" || {
+    echo "bro test: the timer never showed $clock while the step was silent" >&2; exit 1; }
+done
+grep -Eq '^╰─+╯$' <<<"$screen" || { echo 'bro test: an empty box did not close cleanly' >&2; exit 1; }
+
+# A failing build shows its last 30 lines and why, Apply fails with today's
+# message, and the menu is offered again.
+new_box_home
+: >"$log"
+status=0
+raw=$(run_box_apply "$box_home" MOCK_BOX_LINES=40 MOCK_BOX_FAIL=1 2>&1) || status=$?
+[ "$status" = 0 ] || { echo "bro test: a failed boxed build ended bro with $status" >&2; exit 1; }
+# What stays on screen starts where the box was last cleared.
+tail_screen=$(plain_screen <<<"${raw##*$'\e[J'}")
+expected_tail=$(for line in $(seq 12 40); do
+    printf "copying path '/nix/store/box-%d' from 'https://cache.nixos.org'...\n" "$line"
+  done
+  printf '%s\n' 'error: builder for box failed' ' ✗ build failed')
+[ "$(head -n 31 <<<"$tail_screen")" = "$expected_tail" ] || {
+  printf 'bro test: a failed build did not show exactly its last 30 lines and the failed step:\n%s\n' "$tail_screen" >&2; exit 1; }
+for expected in 'nix-config: ERROR: Home Manager activation package build failed for' ' ✗ Apply failed' \
+  '   log: ~/.local/state/bro/logs/apply-' 'nix-config: returning to the menu'; do
+  grep -Fq -- "$expected" <<<"$tail_screen" || {
+    echo "bro test: a failed boxed build did not report: $expected" >&2; exit 1; }
+done
+! grep -q '^activation$' "$log" || { echo 'bro test: Apply activated after a failed build' >&2; exit 1; }
+[ "$(gum_calls)" = 2 ] || { echo 'bro test: the menu did not return after a failed boxed build' >&2; exit 1; }
+grep -Fxq 'error: builder for box failed' "$(box_log_file)" || {
+  echo 'bro test: the Apply log lost the build error' >&2; exit 1; }
+
+# Plain Apply prints exactly what it always has, and still writes the log. The
+# answers were typed ahead and echoed then, so the first line of Apply's output
+# follows the menu prompt, and the menu's blank line ends it.
+plain_apply_output() {
+  printf '%s\n' "${1//$'\r'/}" | sed -n '/^  choose \[1-[0-9]*\]: ./,/^$/p' \
+    | sed -e '1s/^  choose \[1-[0-9]*\]: //'
+}
+new_box_home
+output=$(run_menu "$box_home" "1\n${quit}\n" env PATH="$boxbin:$mockbin:$PATH" MOCK_BOX_LINES=3 MOCK_BOX_ACTIVATE_LINES=2 2>&1)
+apply_output=$(plain_apply_output "$output")
+platform_name=$(sed -n 's/^nix-config  (\([^)]*\)).*/\1/p' <<<"$output" | head -n 1)
+expected_output=$(printf 'nix-config: building %s\n' "$platform_name"
+  for line in 1 2 3; do printf "copying path '/nix/store/box-%d' from 'https://cache.nixos.org'...\n" "$line"; done
+  printf 'nix-config: activating %s\n' "$platform_name"
+  printf 'activation step %d\n' 1 2
+  printf '%s\n' 'nix-config: reloaded active tmux configuration')
+[ "$apply_output" = "$expected_output" ] || {
+  printf 'bro test: plain Apply output changed:\n%s\n' "$apply_output" >&2; exit 1; }
+# A captured result is logged once its step ends, after the step's progress.
+expected_log=$(sed -n '2,4p' <<<"$expected_output"; printf '%s\n' "$work/activation"; sed -n '6,7p' <<<"$expected_output")
+[ "$(cat "$(box_log_file)")" = "$expected_log" ] || {
+  echo 'bro test: plain Apply did not write every line to the log' >&2; exit 1; }
+
+# Only the 20 newest logs are kept: the 21st deletes the oldest.
+new_box_home
+mkdir -p "$box_logs"
+for index in $(seq -w 1 20); do
+  touch -t "2020010100$index" "$box_logs/apply-old-$index.log"
+done
+run_menu "$box_home" "1\n${quit}\n" >/dev/null
+[ "$(find "$box_logs" -name '*.log' | wc -l | tr -d ' ')" = 20 ] || {
+  echo 'bro test: a 21st log did not leave exactly 20' >&2; exit 1; }
+[ ! -e "$box_logs/apply-old-01.log" ] && [ -e "$box_logs/apply-old-02.log" ] || {
+  echo 'bro test: a 21st log did not delete exactly the oldest' >&2; exit 1; }
+
+# A failed activation fails Apply and skips the tmux reload. Styled, the step
+# shows what it printed and fails, then Apply fails with its log.
+new_box_home
+: >"$log"
+raw=$(run_box_apply "$box_home" MOCK_BOX_ACTIVATE_LINES=2 MOCK_BOX_ACTIVATE_FAIL=1 2>&1)
+screen=$(plain_screen <<<"$raw")
+summary=$(grep -E '^ (✓|✗) |^   log: |^nix-config: ' <<<"$screen" | sed -E 's/ [0-9]+s$/ Ns/')
+expected_summary=$(printf '%s\n' ' ✓ build  Ns' ' ✗ activate failed' \
+  "nix-config: ERROR: Home Manager activation failed for $platform_name" ' ✗ Apply failed' \
+  "   log: ~/.local/state/bro/logs/$(basename "$(box_log_file)")" 'nix-config: returning to the menu')
+[ "$summary" = "$expected_summary" ] || {
+  printf 'bro test: a failed styled activation did not fail Apply:\n%s\n' "$summary" >&2; exit 1; }
+grep -Fxq 'activation broke' <<<"${screen##*╯}" || {
+  echo 'bro test: a failed styled activation did not show its last lines' >&2; exit 1; }
+! grep -q '^tmux ' "$log" || { echo 'bro test: Apply reloaded tmux after a failed activation' >&2; exit 1; }
+[ "$(gum_calls)" = 2 ] || { echo 'bro test: the menu did not return after a failed activation' >&2; exit 1; }
+
+# Plain, the activation's own output is followed by the new error.
+new_box_home
+: >"$log"
+output=$(run_menu "$box_home" "1\n${quit}\n" env PATH="$boxbin:$mockbin:$PATH" MOCK_BOX_ACTIVATE_LINES=2 MOCK_BOX_ACTIVATE_FAIL=1 2>&1)
+expected_output=$(printf 'nix-config: %s %s\n' building "$platform_name" activating "$platform_name"
+  printf 'activation step %d\n' 1 2
+  printf '%s\n' 'activation broke' "nix-config: ERROR: Home Manager activation failed for $platform_name" \
+    'nix-config: returning to the menu')
+[ "$(plain_apply_output "$output")" = "$expected_output" ] || {
+  printf 'bro test: a failed plain activation did not fail Apply:\n%s\n' "$(plain_apply_output "$output")" >&2; exit 1; }
+! grep -q '^tmux ' "$log" || { echo 'bro test: plain Apply reloaded tmux after a failed activation' >&2; exit 1; }
+
+# Coloured output reaches the box as plain text whatever the locale's
+# collation, which decides what a range such as [@-~] matches.
+utf8_locale=$(locale -a 2>/dev/null | grep -Eix 'en_US\.utf-?8|C\.utf-?8' | sort -r | head -n 1 || true)
+new_box_home
+raw=$(run_box_apply "$box_home" MOCK_BOX_COLOUR=1 MOCK_BOX_SILENCE=1 ${utf8_locale:+LC_ALL="$utf8_locale"} 2>&1)
+screen=$(plain_screen <<<"$raw")
+grep -Eq '^│ warning: coloured line 3 +│$' <<<"$screen" || {
+  echo "bro test: a coloured line did not reach the box as plain text under ${utf8_locale:-the default locale}" >&2; exit 1; }
+! grep -E '^│' <<<"$screen" | grep -Eq '\[[0-9;]*m' || {
+  echo "bro test: colour codes were left in the box under ${utf8_locale:-the default locale}" >&2; exit 1; }
+
+# Logging is best effort: with nowhere to write a log, Apply still runs, as it
+# would in plain mode, and its finish line names no log.
+new_box_home
+: >"$log"
+chmod 500 "$box_home/.local/state/bro"
+raw=$(run_box_apply "$box_home" 2>&1)
+chmod 700 "$box_home/.local/state/bro"
+screen=$(plain_screen <<<"$raw")
+grep -q '^activation$' "$log" || { echo 'bro test: Apply did not run without a log' >&2; exit 1; }
+for expected in "nix-config: could not create the log directory $box_logs" 'nix-config: Apply runs without a log' \
+  "nix-config: building $platform_name" ' ✓ Apply finished in '; do
+  grep -Fq -- "$expected" <<<"$screen" || {
+    echo "bro test: Apply without a log did not report: $expected" >&2; exit 1; }
+done
+! grep -q '^╭─' <<<"$screen" || { echo 'bro test: Apply without a log was boxed' >&2; exit 1; }
+! grep -q 'log:' <<<"$screen" || { echo 'bro test: Apply without a log named a log' >&2; exit 1; }
+[ ! -e "$box_logs" ] || { echo 'bro test: Apply wrote a log it reported it could not' >&2; exit 1; }
+
+echo 'bro test: PASSED (menu-only entry, apply identity, DNS retry, sync push boundary, accounts wrapper, Pi extensions, Pi + ext, Playwright, Jobs, styled prompts, Health, log box)'

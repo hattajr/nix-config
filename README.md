@@ -56,6 +56,15 @@ pushing after a sync or showing a generated diff, are prompts inside the step
 that needs them. A step that fails returns to the menu rather than ending the
 session.
 
+`Apply` runs in two steps, `build` and `activate`, and keeps everything they
+print in `~/.local/state/bro/logs/apply-<time>.log`; only the 20 newest logs
+are kept. With gum, each running step shows its last six lines in a box, then
+shrinks to a ✓ line; a failed step instead shows its last 30 lines. A failed
+build or activation fails Apply, which then skips the tmux reload. Apply ends
+by saying whether it finished and where its log is. The numbered prompts show
+the same output as it arrives, as before. A log that cannot be written is only
+a warning: Apply then runs without one, unboxed.
+
 `Sync` makes a machine match the versions committed here. `Update` is the
 intentional version-change workflow: it syncs first, asks what may change, shows
 an old-to-new summary, then asks before applying, committing, and pushing. Other
@@ -85,6 +94,14 @@ failed (with the failure time and `journalctl --user -u gh-board-sync` for the
 details), has not run since the user manager started, or systemd cannot be
 asked. Like a shadowed binary, a failed sync never fails `Health`. Machines
 without the job show nothing about it.
+
+With gum, `Health` shows its results grouped under Core, Accounts, PATH, and
+Jobs, each marked with a green ✓, a yellow !, a red ✗, or a dim · for an
+optional step, and a problem with a fix ends in `→` and the menu item to
+choose. The numbered prompts keep the `OK:` and `CORE FAIL:` style lines. Every
+run saves its results to `~/.local/state/bro/health`: a `checked` line with the
+run time in epoch seconds, then one `level<TAB>area<TAB>message` line per
+result. A state directory that cannot be written only warns.
 
 Pi updates also persist `home/modules/pi-package-lock.json`. If the npm tarball
 ships no lockfile, the updater uses npm to resolve runtime dependencies with
