@@ -30,7 +30,7 @@ A bare number refers to an issue in the resolved repository, never an unrelated 
 ## Boundaries and approval
 
 - Discovery and investigation are read-only apart from safe, authorized reproduction/validation in disposable execution resources. Do not implement a fix, commit code, run `implement-issues`, or modify design docs implicitly.
-- Present the title/body or body changes, category/state labels, `grilled` decision, and any closing action before publication. Wait for explicit approval of those concrete changes. One approval may cover a clearly enumerated batch; do not ask again for unchanged approved operations.
+- Present the title/body or body changes, category/state labels, `grilled` decision, any closing action, and a new issue's target board or not-on-allowlist note before publication. Wait for explicit approval of those concrete changes. One approval may cover a clearly enumerated batch; do not ask again for unchanged approved operations.
 - A request to capture authorizes drafting, not silent publication. Use Pi's `create_github_issue` only after creation approval with the latest approved title and body; use authenticated `gh` when that tool is unavailable. Apply approved labels separately when necessary.
 - GitHub owns issue briefs, discussion, decisions, labels, and dependencies. Never create `PLANS/`, `.scratch/` tickets, `.out-of-scope/` records, local status tables, or a mirrored backlog. Keep temporary command files outside the checkout.
 - `grilled` records a completed discussion confirmed by the user. It does not imply readiness. Never infer it merely from detailed docs, many comments, approval of a brief, or an interrupted interview.
@@ -111,7 +111,7 @@ Check each write and report partial failures. Do not claim readiness until the b
 
 ## Final response
 
-Report the exact issue links, persisted body/state changes, whether `grilled` was added, unresolved questions, and blockers. Distinguish drafted, captured, fully specified, and eligible-to-start. If ready, suggest `implement-issues` or its explicit issue invocation as the user's next step—never start it automatically.
+Report the exact issue links, persisted body/state changes, whether `grilled` was added, any `gh-board` warnings, unresolved questions, and blockers. Distinguish drafted, captured, fully specified, and eligible-to-start. If ready, suggest `implement-issues` or its explicit issue invocation as the user's next step—never start it automatically.
 
 ## Credits
 

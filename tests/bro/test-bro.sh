@@ -99,11 +99,21 @@ printf 'tmux %s\n' "$*" >>"$MOCK_LOG"
 EOF
 chmod +x "$apply_home/.nix-profile/bin/tmux"
 
+# An inherited XDG_STATE_HOME would point bro at the developer's real state.
+# Trailing end-of-file marks end every prompt, nested ones included, still
+# waiting after the last answer, so a misnumbered answer fails an assertion
+# instead of hanging the suite.
 run_menu() {
   local target_home=$1 answers=$2 && shift 2
-  printf '%b' "$answers" | "$pty_run" env \
+  printf '%b\004\004\004' "$answers" | "$pty_run" env -u XDG_STATE_HOME \
     HOME="$target_home" USER=apply-user PATH="$mockbin:$PATH" "$@" "$bro"
 }
+
+# Jobs appears only on Linux, just before Quit, so Quit moves with the host.
+case "$(uname -s)" in
+  Linux) quit=8 ;;
+  *) quit=7 ;;
+esac
 
 # --- the menu is the only interface ----------------------------------------
 
@@ -119,7 +129,7 @@ grep -Fq 'takes no arguments' <<<"$output" || { echo 'bro test: rejection did no
 # Quit leaves immediately. Resolving the recorded checkout verifies the Git
 # origin first, so that call is expected; nothing else may run.
 : >"$log"
-run_menu "$apply_home" '7\n' >/dev/null
+run_menu "$apply_home" "${quit}\n" >/dev/null
 ! grep -q '^nix ' "$log" || { echo 'bro test: quitting the menu invoked Nix' >&2; exit 1; }
 ! grep -q '^activation$' "$log" || { echo 'bro test: quitting the menu activated' >&2; exit 1; }
 grep -Fq 'remote get-url origin' "$log" || {
@@ -128,7 +138,7 @@ grep -Fq 'remote get-url origin' "$log" || {
 # --- Apply ------------------------------------------------------------------
 
 : >"$log"
-output=$(run_menu "$apply_home" '1\n7\n')
+output=$(run_menu "$apply_home" "1\n${quit}\n")
 grep -q '^activation$' "$log" || { echo 'bro test: Apply did not activate' >&2; exit 1; }
 grep -Fq 'nix build --impure --no-link' "$log" || {
   echo 'bro test: Apply did not build with the active user identity' >&2; exit 1; }
@@ -153,7 +163,7 @@ grep -Fq 'reloaded active tmux configuration' <<<"$output" || {
 
 : >"$log"
 retry_state="$work/retry-state"
-output=$(run_menu "$apply_home" '1\n7\n' env MOCK_NIX_DNS_FAILURES=2 MOCK_NIX_RETRY_STATE="$retry_state" 2>&1)
+output=$(run_menu "$apply_home" "1\n${quit}\n" env MOCK_NIX_DNS_FAILURES=2 MOCK_NIX_RETRY_STATE="$retry_state" 2>&1)
 [ "$(grep -c '^nix build ' "$log")" -eq 3 ] || {
   echo 'bro test: Apply did not retry transient DNS failures' >&2; exit 1; }
 if ! grep -Fxq 'sleep 1' "$log" || ! grep -Fxq 'sleep 2' "$log"; then
@@ -165,7 +175,7 @@ grep -Fq 'retrying in 1s (attempt 2/5)' <<<"$output" || {
 
 : >"$log"
 rm -f "$retry_state"
-output=$(run_menu "$apply_home" '1\n7\n' env MOCK_NIX_DNS_FAILURES=9 MOCK_NIX_RETRY_STATE="$retry_state" 2>&1)
+output=$(run_menu "$apply_home" "1\n${quit}\n" env MOCK_NIX_DNS_FAILURES=9 MOCK_NIX_RETRY_STATE="$retry_state" 2>&1)
 [ "$(grep -c '^nix build ' "$log")" -eq 5 ] || {
   echo 'bro test: Apply did not stop after five DNS attempts' >&2; exit 1; }
 [ "$(grep -c '^sleep ' "$log")" -eq 4 ] || {
@@ -180,7 +190,7 @@ grep -Fq 'returning to the menu' <<<"$output" || {
 # names the offending files so it is a next step rather than a dead end.
 : >"$log"
 printf dirty >"$checkout/dirty"
-output=$(run_menu "$apply_home" '2\n7\n' 2>&1)
+output=$(run_menu "$apply_home" "2\n${quit}\n" 2>&1)
 ! grep -Eq '^git .* fetch' "$log" || { echo 'bro test: dirty sync fetched' >&2; exit 1; }
 grep -Fq 'Sync needs a clean checkout' <<<"$output" || {
   echo 'bro test: dirty sync was not explained' >&2; exit 1; }
@@ -192,21 +202,21 @@ rm "$checkout/dirty"
 
 # Local commits are published only after an explicit yes.
 : >"$log"
-run_menu "$apply_home" '2\nn\n7\n' env MOCK_GIT_MODE=sync >/dev/null
+run_menu "$apply_home" "2\nn\n${quit}\n" env MOCK_GIT_MODE=sync >/dev/null
 ! grep -Eq '^git .* push($| )' "$log" || { echo 'bro test: declining the prompt still pushed' >&2; exit 1; }
 : >"$log"
-run_menu "$apply_home" '2\ny\n7\n' env MOCK_GIT_MODE=sync >/dev/null
+run_menu "$apply_home" "2\ny\n${quit}\n" env MOCK_GIT_MODE=sync >/dev/null
 grep -Eq '^git .* push($| )' "$log" || { echo 'bro test: accepting the prompt did not push' >&2; exit 1; }
 
 # A bare Return is the likeliest accidental answer, so it must not publish.
 : >"$log"
-run_menu "$apply_home" '2\n\n7\n' env MOCK_GIT_MODE=sync >/dev/null
+run_menu "$apply_home" "2\n\n${quit}\n" env MOCK_GIT_MODE=sync >/dev/null
 ! grep -Eq '^git .* push($| )' "$log" || {
   echo 'bro test: an empty answer at the push prompt published commits' >&2; exit 1; }
 
 # With nothing ahead of upstream there is no push prompt at all.
 : >"$log"
-run_menu "$apply_home" '2\n7\n' env MOCK_GIT_MODE=sync MOCK_GIT_AHEAD=0 >/dev/null
+run_menu "$apply_home" "2\n${quit}\n" env MOCK_GIT_MODE=sync MOCK_GIT_AHEAD=0 >/dev/null
 ! grep -Eq '^git .* push($| )' "$log" || { echo 'bro test: sync pushed with nothing ahead' >&2; exit 1; }
 
 # --- Accounts ---------------------------------------------------------------
@@ -224,7 +234,7 @@ printf 'proton %s\n' "$*" >>"$MOCK_LOG"
 EOF
 chmod +x "$auth_home/.local/bin/nix-config-setup" "$auth_home/.local/bin/proton-pass-session"
 : >"$log"
-run_menu "$auth_home" '4\n7\n' env MOCK_UNAME_S=Linux >/dev/null
+run_menu "$auth_home" '4\n8\n' env MOCK_UNAME_S=Linux >/dev/null
 grep -Fq "proton $auth_home/.local/bin/nix-config-setup" "$log" || {
   echo 'bro test: Linux Accounts did not use the Proton Pass session' >&2; exit 1; }
 : >"$log"
@@ -233,7 +243,7 @@ grep -q '^setup ' "$log" && ! grep -q '^proton ' "$log" || {
   echo 'bro test: macOS Accounts did not run setup directly' >&2; exit 1; }
 rm "$auth_home/.local/bin/proton-pass-session"
 : >"$log"
-run_menu "$auth_home" '4\n7\n' >/dev/null
+run_menu "$auth_home" "4\n${quit}\n" >/dev/null
 grep -q '^setup ' "$log" || { echo 'bro test: Accounts fallback did not run setup' >&2; exit 1; }
 
 # --- Update: Pi extensions --------------------------------------------------
@@ -250,7 +260,7 @@ EOF
 chmod +x "$extensions_home/.local/bin/pi"
 
 : >"$log"
-run_menu "$extensions_home" '3\n3\n7\n' env MOCK_GIT_MODE=sync MOCK_GIT_AHEAD=0 >/dev/null
+run_menu "$extensions_home" "3\n3\n${quit}\n" env MOCK_GIT_MODE=sync MOCK_GIT_AHEAD=0 >/dev/null
 grep -Fq 'pi update --extensions (skip=1)' "$log" || {
   echo 'bro test: Update did not offer a working Pi extension update' >&2; exit 1; }
 ! grep -Eq '^git .* (add|commit)($| )' "$log" || {
@@ -267,7 +277,7 @@ printf 'update-pi %s\n' "$*" >>"$MOCK_LOG"
 EOF
 chmod +x "$checkout/scripts/update-pi"
 : >"$log"
-run_menu "$extensions_home" '3\n4\n7\n' env MOCK_GIT_MODE=sync MOCK_GIT_AHEAD=0 >/dev/null
+run_menu "$extensions_home" "3\n4\n${quit}\n" env MOCK_GIT_MODE=sync MOCK_GIT_AHEAD=0 >/dev/null
 grep -Fq "update-pi $checkout" "$log" || {
   echo 'bro test: Pi + ext did not update the Pi pin' >&2; exit 1; }
 grep -Fq 'pi update --extensions (skip=1)' "$log" || {
@@ -284,7 +294,7 @@ printf 'update-playwright-cli %s\n' "$*" >>"$MOCK_LOG"
 EOF
 chmod +x "$checkout/scripts/update-playwright-cli"
 : >"$log"
-run_menu "$extensions_home" '3\n5\n7\n' env MOCK_GIT_MODE=sync MOCK_GIT_AHEAD=0 >/dev/null
+run_menu "$extensions_home" "3\n5\n${quit}\n" env MOCK_GIT_MODE=sync MOCK_GIT_AHEAD=0 >/dev/null
 grep -Fq "update-playwright-cli $checkout" "$log" || {
   echo 'bro test: Playwright did not update the playwright-cli pin' >&2; exit 1; }
 ! grep -Eq '^(update-pi|pi update) ' "$log" || {
@@ -295,7 +305,7 @@ grep -Fq "update-playwright-cli $checkout" "$log" || {
 # A failed pin update is reported as a failure, never as already current, and
 # stops before extensions update against a Pi that did not move.
 : >"$log"
-output=$(run_menu "$extensions_home" '3\n4\n7\n' env MOCK_GIT_MODE=sync MOCK_GIT_AHEAD=0 MOCK_UPDATE_PI_FAIL=1 2>&1)
+output=$(run_menu "$extensions_home" "3\n4\n${quit}\n" env MOCK_GIT_MODE=sync MOCK_GIT_AHEAD=0 MOCK_UPDATE_PI_FAIL=1 2>&1)
 grep -Fq 'Pi pin update failed' <<<"$output" || {
   echo 'bro test: a failed Pi pin update was not reported' >&2; exit 1; }
 ! grep -Fq 'already current' <<<"$output" || {
@@ -306,8 +316,86 @@ grep -Fq 'Pi pin update failed' <<<"$output" || {
 # Without Pi installed the step explains itself rather than failing silently.
 rm "$extensions_home/.local/bin/pi"
 : >"$log"
-output=$(run_menu "$extensions_home" '3\n3\n7\n' env MOCK_GIT_MODE=sync MOCK_GIT_AHEAD=0 2>&1)
+output=$(run_menu "$extensions_home" "3\n3\n${quit}\n" env MOCK_GIT_MODE=sync MOCK_GIT_AHEAD=0 2>&1)
 grep -Fq 'Pi is not installed for this account yet' <<<"$output" || {
   echo 'bro test: a missing Pi did not explain the extension update failure' >&2; exit 1; }
 
-echo 'bro test: PASSED (menu-only entry, apply identity, DNS retry, sync push boundary, accounts wrapper, Pi extensions, Pi + ext, Playwright)'
+# --- Jobs -------------------------------------------------------------------
+
+# Every Jobs case fakes Linux so it runs the same on a macOS host; Jobs is then
+# item 7 and Quit item 8.
+jobs_home="$work/jobs-home"
+mkdir -p "$jobs_home"
+record_checkout "$jobs_home"
+jobs_file="$jobs_home/.local/state/bro/background-jobs"
+linux=(env MOCK_UNAME_S=Linux MOCK_UNAME_M=x86_64)
+host=$(uname -n)
+
+output=$(run_menu "$jobs_home" '8\n' "${linux[@]}")
+grep -Eq '7\) Jobs +choose background jobs for this machine' <<<"$output" || {
+  echo 'bro test: the Linux menu did not offer Jobs' >&2; exit 1; }
+output=$(run_menu "$jobs_home" '7\n' env MOCK_UNAME_S=Darwin MOCK_UNAME_M=arm64)
+! grep -Fq 'Jobs' <<<"$output" || { echo 'bro test: the macOS menu offered Jobs' >&2; exit 1; }
+grep -Eq '7\) Quit' <<<"$output" || { echo 'bro test: Quit moved on macOS' >&2; exit 1; }
+
+# With no state file this machine has no jobs, and neither Apply nor Sync
+# creates one or asks Home Manager for the timer.
+: >"$log"
+run_menu "$jobs_home" '1\n8\n' "${linux[@]}" >/dev/null
+grep -Fq 'jobs = [ ]; })' "$log" || {
+  echo 'bro test: Apply without a jobs file did not pass an empty job list' >&2; exit 1; }
+: >"$log"
+run_menu "$jobs_home" '2\n8\n' "${linux[@]}" MOCK_GIT_MODE=sync MOCK_GIT_AHEAD=0 >/dev/null
+grep -Fq 'jobs = [ ]; })' "$log" || {
+  echo 'bro test: Sync without a jobs file did not pass an empty job list' >&2; exit 1; }
+! grep -Fq 'board-sync' "$log" || { echo 'bro test: Apply or Sync enabled Board sync unasked' >&2; exit 1; }
+[ ! -e "$jobs_file" ] || { echo 'bro test: Apply or Sync wrote the jobs file' >&2; exit 1; }
+
+# Enabling: toggle Board sync, then Done saves the file and applies it.
+: >"$log"
+output=$(run_menu "$jobs_home" '7\n1\n2\n8\n' "${linux[@]}")
+grep -Fq "Background jobs on $host" <<<"$output" || {
+  echo 'bro test: Jobs did not name this machine' >&2; exit 1; }
+grep -Eq '1\) \[ \] Board sync +hourly: add your open GitHub issues to your boards' <<<"$output" || {
+  echo 'bro test: Jobs did not list Board sync as off' >&2; exit 1; }
+grep -Eq '1\) \[x\] Board sync +hourly' <<<"$output" || {
+  echo 'bro test: toggling Board sync did not mark it on' >&2; exit 1; }
+grep -Eq '2\) Done +apply and return' <<<"$output" || {
+  echo 'bro test: Jobs did not offer Done' >&2; exit 1; }
+[ "$(cat "$jobs_file")" = board-sync ] || { echo 'bro test: Done did not save Board sync' >&2; exit 1; }
+grep -Fq 'jobs = [ "board-sync" ]; })' "$log" && grep -q '^activation$' "$log" || {
+  echo 'bro test: Done did not apply with Board sync enabled' >&2; exit 1; }
+
+# The saved file is what later activations read back.
+: >"$log"
+run_menu "$jobs_home" '1\n8\n' "${linux[@]}" >/dev/null
+grep -Fq 'jobs = [ "board-sync" ]; })' "$log" || {
+  echo 'bro test: Apply did not read the saved jobs back' >&2; exit 1; }
+
+# Disabling: toggle it off, Done saves an empty list and applies without it.
+: >"$log"
+run_menu "$jobs_home" '7\n1\n2\n8\n' "${linux[@]}" >/dev/null
+[ -e "$jobs_file" ] && [ ! -s "$jobs_file" ] || {
+  echo 'bro test: disabling Board sync did not save an empty job list' >&2; exit 1; }
+grep -Fq 'jobs = [ ]; })' "$log" && grep -q '^activation$' "$log" || {
+  echo 'bro test: disabling Board sync did not apply without it' >&2; exit 1; }
+
+# Toggling twice is no change, but Done still saves and applies.
+: >"$log"
+run_menu "$jobs_home" '7\n1\n1\n2\n8\n' "${linux[@]}" >/dev/null
+[ ! -s "$jobs_file" ] && grep -q '^activation$' "$log" || {
+  echo 'bro test: toggling twice then Done did not leave Board sync off and apply' >&2; exit 1; }
+
+# An unknown name is refused with the file and the name, never skipped: no
+# build runs and the Jobs prompt leaves the file as it was.
+printf '%s\n' board-sync weekly-backup >"$jobs_file"
+: >"$log"
+output=$(run_menu "$jobs_home" '1\n7\n8\n' "${linux[@]}" 2>&1)
+[ "$(grep -c "unknown background job \"weekly-backup\" in $jobs_file" <<<"$output")" -eq 2 ] || {
+  echo 'bro test: an unknown job was not rejected clearly by both Apply and Jobs' >&2; exit 1; }
+! grep -Eq '^nix |^activation$' "$log" || {
+  echo 'bro test: an unknown job still reached Nix' >&2; exit 1; }
+[ "$(cat "$jobs_file")" = "$(printf '%s\n' board-sync weekly-backup)" ] || {
+  echo 'bro test: rejecting an unknown job rewrote the file' >&2; exit 1; }
+
+echo 'bro test: PASSED (menu-only entry, apply identity, DNS retry, sync push boundary, accounts wrapper, Pi extensions, Pi + ext, Playwright, Jobs)'

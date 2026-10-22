@@ -45,6 +45,39 @@
         x86_64-linux.activation =
           self.homeConfigurations."x86_64-linux".activationPackage;
 
+        # No committed configuration enables a background job, so this is the
+        # only output that builds the Board sync units. Building the activation
+        # alone would accept a misspelt unit key, which systemd merely logs and
+        # ignores, so the check fails on those log lines too.
+        x86_64-linux.board-sync =
+          let
+            home = mkHome {
+              system = "x86_64-linux";
+              username = "hattajr";
+              homeDirectory = "/home/hattajr";
+              jobs = [ "board-sync" ];
+            };
+            unit = type: home.config.xdg.configFile."systemd/user/gh-board-sync.${type}".source;
+          in
+          home.pkgs.runCommand "board-sync-check"
+            { nativeBuildInputs = [ home.pkgs.systemd ]; }
+            ''
+              mkdir units
+              cp ${unit "service"} units/gh-board-sync.service
+              cp ${unit "timer"} units/gh-board-sync.timer
+              # A user manager runs without /run, which the build sandbox lacks,
+              # and NixOS ships the stock user targets only as examples.
+              export HOME=$PWD XDG_RUNTIME_DIR=$PWD/runtime
+              export SYSTEMD_UNIT_PATH=$PWD/units:${home.pkgs.systemd}/example/systemd/user
+              mkdir -m 700 runtime
+              systemd-analyze verify --user --man=no units/gh-board-sync.service units/gh-board-sync.timer 2>&1 | tee verify.log
+              if grep -E 'gh-board-sync\.(service|timer):[0-9]+: ' verify.log; then
+                echo 'board-sync check: unit has unknown or ignored settings' >&2
+                exit 1
+              fi
+              ln -s ${home.activationPackage} $out
+            '';
+
         aarch64-linux.activation =
           self.homeConfigurations."aarch64-linux".activationPackage;
 

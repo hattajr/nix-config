@@ -10,3 +10,8 @@ config/proton-pass/pi.env
 # Private planning material
 /PLAN/
 /poc/
+
+# Left behind by running a skill's own tests
+__pycache__/
+.pytest_cache/
+.venv/

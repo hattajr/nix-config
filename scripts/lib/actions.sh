@@ -22,15 +22,17 @@ require_clean_tree() {
 }
 
 apply() {
-  local repo=$1 target=$2 package
+  local repo=$1 target=$2 expr package
   command -v nix >/dev/null 2>&1 || fail 'Nix is required'
+  # A bad background jobs file stops here, before Nix runs, rather than
+  # reaching the build as an empty expression.
+  expr=$(home_expr "$repo" "$target" activationPackage) || return 1
 
   # One build replaces a separate metadata check and drvPath evaluation: an
   # unusable flake or platform fails here with the same diagnosis, two Nix
   # round-trips sooner.
   log "building $target"
-  package=$(run_nix_with_dns_retry nix build --impure --no-link --print-out-paths \
-    --expr "$(home_expr "$repo" "$target" activationPackage)") \
+  package=$(run_nix_with_dns_retry nix build --impure --no-link --print-out-paths --expr "$expr") \
     || fail "Home Manager activation package build failed for $target"
   [ -x "$package/activate" ] || fail 'built activation package has no executable activate script'
 
@@ -231,6 +233,53 @@ auth() {
   fi
 }
 
+background_job_label() {
+  case "$1" in
+    board-sync) printf '%s\t%s\n' 'Board sync' 'hourly: add your open GitHub issues to your boards' ;;
+    *) fail "no menu label for background job \"$1\"" ;;
+  esac
+}
+
+# Which jobs run is per-machine state, so it is chosen here rather than
+# committed. Done always saves and applies, which starts or stops the timers
+# right away; leaving the prompt any other way changes nothing.
+background_jobs() {
+  local repo=$1 target=$2 host saved job mark label description kept
+  local enabled=() options=() remaining=()
+  saved=$(read_background_jobs) || return 1
+  for job in $saved; do
+    enabled+=("$job")
+  done
+  host=$(uname -n)
+
+  while true; do
+    options=()
+    for job in "${BACKGROUND_JOBS[@]}"; do
+      if list_contains "$job" "${enabled[@]+"${enabled[@]}"}"; then mark='[x]'; else mark='[ ]'; fi
+      IFS=$'\t' read -r label description <<<"$(background_job_label "$job")"
+      options+=("$mark $label"$'\t'"$description")
+    done
+    options+=($'Done\tapply and return')
+    choose "Background jobs on $host" "${options[@]}" || return 0
+    [ "$CHOICE_INDEX" -le "${#BACKGROUND_JOBS[@]}" ] || break
+
+    job=${BACKGROUND_JOBS[CHOICE_INDEX - 1]}
+    if list_contains "$job" "${enabled[@]+"${enabled[@]}"}"; then
+      remaining=()
+      for kept in "${enabled[@]}"; do
+        [ "$kept" = "$job" ] || remaining+=("$kept")
+      done
+      enabled=("${remaining[@]+"${remaining[@]}"}")
+    else
+      enabled+=("$job")
+    fi
+  done
+
+  write_background_jobs "${enabled[@]+"${enabled[@]}"}"
+  log "saved background jobs for $host: ${enabled[*]:-none}"
+  apply "$repo" "$target"
+}
+
 # Callers run actions in a subshell so a failure returns to the menu, which
 # means state cannot travel back in a variable. Ask the scanner directly.
 shadowed_binaries_present() {
@@ -245,7 +294,7 @@ shadow_review() {
 
 health() {
   local repo=$1 target=$2
-  local core_failed=0 auth_failed=0 locale_output startup_file tmux_socket
+  local core_failed=0 auth_failed=0 locale_output startup_file tmux_socket expr
 
   command -v nix >/dev/null 2>&1 || { log 'CORE FAIL: Nix is unavailable'; core_failed=1; }
   if run_nix_with_dns_retry nix flake metadata "path:$repo" >/dev/null; then
@@ -253,8 +302,8 @@ health() {
   else
     log 'CORE FAIL: flake metadata validation failed'; core_failed=1
   fi
-  if run_nix_with_dns_retry nix eval --impure --raw \
-    --expr "$(home_expr "$repo" "$target" 'activationPackage.drvPath')" >/dev/null; then
+  if expr=$(home_expr "$repo" "$target" 'activationPackage.drvPath') \
+    && run_nix_with_dns_retry nix eval --impure --raw --expr "$expr" >/dev/null; then
     log "OK: $target flake output"
   else
     log "CORE FAIL: platform output is unavailable: $target"; core_failed=1

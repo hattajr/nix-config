@@ -1,7 +1,9 @@
 # Builds one Home Manager configuration from an explicitly supplied identity.
 inputs:
 
-{ system, username, homeDirectory, extraModules ? [ ] }:
+# jobs names the background jobs this machine runs. It is per-machine state that
+# bro reads and passes explicitly, like the identity, so it defaults to none.
+{ system, username, homeDirectory, jobs ? [ ], extraModules ? [ ] }:
 
 let
   lib = inputs.nixpkgs.lib;
@@ -22,6 +24,7 @@ in
 assert require (username != "") "username must not be empty";
 assert require (lib.hasPrefix "/" homeDirectory)
   ''homeDirectory must be an absolute path, got "${homeDirectory}"'';
+assert require (builtins.isList jobs) "jobs must be a list of background job names";
 
 inputs.home-manager.lib.homeManagerConfiguration {
   inherit pkgs;
@@ -32,6 +35,7 @@ inputs.home-manager.lib.homeManagerConfiguration {
     {
       home.username = username;
       home.homeDirectory = homeDirectory;
+      nixConfig.backgroundJobs = jobs;
     }
   ] ++ extraModules;
 }

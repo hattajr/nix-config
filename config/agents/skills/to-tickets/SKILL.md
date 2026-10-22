@@ -66,7 +66,7 @@ Explain the currently unblocked frontier and potential concurrency, including mi
 
 Show a numbered breakdown with each ticket's title, delivered behavior, category, acceptance criteria, scope boundaries, and blocking edges. Present full proposed briefs when needed to approve implementation contracts—not merely appealing titles.
 
-Use structured questions (`ask_user_question` in Pi, `AskUserQuestion` in Claude Code), respecting the per-call limit, to ask whether granularity and dependencies are right and whether slices need merging/splitting. Iterate without reopening already-settled choices. Obtain explicit approval to publish the latest concrete titles/bodies, relationships, and labels.
+Use structured questions (`ask_user_question` in Pi, `AskUserQuestion` in Claude Code), respecting the per-call limit, to ask whether granularity and dependencies are right and whether slices need merging/splitting. Iterate without reopening already-settled choices. Obtain explicit approval to publish the latest concrete titles/bodies, relationships, labels, and the target board or not-on-allowlist note.
 
 Default fully specified approved tickets to `ready-for-agent`, including those waiting on explicit blockers. Do not add `grilled` just because a breakdown or design doc was approved. Apply it only for scopes actually covered by a completed user-confirmed grilling discussion and only when the user approves that marker.
 
@@ -78,7 +78,7 @@ If the user instead wants to save an incomplete breakdown, offer non-ready `need
 
 1. Re-read source/affected existing issues immediately before writes. Stop on materially changed scope, competing claims, or new decisions.
 2. Resolve minimal approved label setup and publication permissions. No upstream setup skill or local tracker configuration is required.
-3. Publish one issue per approved slice in dependency order, blockers first. Use Pi's `create_github_issue` when available, only after explicit creation approval and with the latest approved title/body; otherwise use `gh` as described in the shared transport guide.
+3. Publish one issue per approved slice in dependency order, blockers first. Use Pi's `create_github_issue` when available, only after explicit creation approval and with the latest approved title/body; otherwise use `gh` as described in the shared transport guide. By either path, add each created issue to its board with `gh-board add` as that guide describes.
 4. Substitute actual named issue links for proposal references in each body. Record `Blocked by: None` when there are genuinely no blockers. Do not publish stale `ticket 1`/`TBD` references as the final dependency contract.
 5. Add approved native blocker links using database ids, and native parent/sub-issue links when supported. Keep textual references consistent. A supported readable fallback is acceptable when native relationships are genuinely unavailable; permission/transient failures must be reported rather than silently treated as absence.
 6. Apply explicitly approved parent tracking/body/state changes. Preserve unrelated context and labels. If parent handling fails and leaves duplicate executable scope, withhold child readiness until it is corrected.
@@ -89,7 +89,7 @@ No parent is automatically closed, no issue is marked complete, and no implement
 
 ## Final response
 
-List each persisted issue title/link, category/state, blockers, and any parent changes. Identify which issues are specified but blocked versus eligible to start, plus concurrency cautions and publication failures. Suggest `implement-issues` as a separate user-triggered next step once the relevant frontier is eligible.
+List each persisted issue title/link, category/state, blockers, and any parent changes. Identify which issues are specified but blocked versus eligible to start, plus concurrency cautions, publication failures, and `gh-board` warnings. Suggest `implement-issues` as a separate user-triggered next step once the relevant frontier is eligible.
 
 ## Credits
 

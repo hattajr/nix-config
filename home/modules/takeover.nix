@@ -1,17 +1,22 @@
 { lib, ... }:
 
 let
-  relativeFiles = root: prefix:
+  relativeTargets = root: prefix: sources:
     map
       (source: "${prefix}/${lib.removePrefix "${toString root}/" (toString source)}")
-      (lib.filesystem.listFilesRecursive root);
+      sources;
+  relativeFiles = root: prefix:
+    relativeTargets root prefix (lib.filesystem.listFilesRecursive root);
+
+  # Skill targets must match exactly what agent-skills.nix links.
+  skillSources = import ../../lib/skill-files.nix { inherit lib; };
+  skillTargets = root: prefix: relativeTargets root prefix (skillSources root);
 
   sharedSkillsRoot = ../../config/agents/skills;
   claudeSkillsRoot = ../../config/claude/skills;
-  sharedSkillTargets = relativeFiles sharedSkillsRoot ".pi/agent/skills"
-    ++ relativeFiles sharedSkillsRoot ".claude/skills";
-  claudeSkillTargets = lib.optionals (builtins.pathExists claudeSkillsRoot)
-    (relativeFiles claudeSkillsRoot ".claude/skills");
+  sharedSkillTargets = skillTargets sharedSkillsRoot ".pi/agent/skills"
+    ++ skillTargets sharedSkillsRoot ".claude/skills";
+  claudeSkillTargets = skillTargets claudeSkillsRoot ".claude/skills";
 
   nvimRoot = ../../config/nvim;
   piRoot = ../../config/pi/agent;

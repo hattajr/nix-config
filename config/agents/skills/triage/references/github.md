@@ -34,7 +34,9 @@ For attention discovery, “untriaged” means lacking a triage state, not liter
 
 ## Explicit approval and minimal label setup
 
-Before remote writes, show the concrete title/body or proposed body revision, labels to add/remove, any relationship/parent changes, and any closing action. Request approval. Include missing-label creation in that summary when needed. Mere discovery or interview participation is not publication approval.
+Before remote writes, show the concrete title/body or proposed body revision, labels to add/remove, any relationship/parent changes, any closing action, and each new issue's target board. Request approval. Include missing-label creation in that summary when needed. Mere discovery or interview participation is not publication approval.
+
+Take the target board from the owner-to-board mapping and the repository allowlist at the top of the installed `gh-board` script (`command -v gh-board`). For a repository not on that allowlist, say it is not on the `gh-board` allowlist and the issue will not be added to a board; when `gh-board` is not installed, say the board step will be skipped. Publication approval covers the board add; do not ask again for it.
 
 Use the shared [label policy](labels.md). Replace conflicting category/state labels only as approved; preserve unrelated labels, assignees, and discussion history. Listing is read-only. Do not create a local tracker configuration or instruct the user to install upstream setup/domain-modeling skills.
 
@@ -55,6 +57,15 @@ gh issue create --repo "$repo" --title "$title" --body-file "$body_file"
 ```
 
 The body file is temporary and outside the checkout. Do not interpolate untrusted issue text into shell code. A response lost after a create attempt requires checking for the exact created issue before retrying.
+
+After each successful create, by either path and including every ticket `to-tickets` publishes, add the issue to its board:
+
+```sh
+command -v gh-board
+gh-board add "$issue_url"
+```
+
+`gh-board add` exits 0 when the issue was added or is already on its board, and otherwise exits non-zero with the reason on stderr, such as a repository off the allowlist or a GitHub failure. Skip the add when `command -v gh-board` finds nothing. A missing, skipped, or failed board add is a warning for the final report, with the issue URL and reason; the issue is still published, and a later `gh-board sync` can add it. Never retry, repeat, or undo an issue create because of the board step.
 
 For approved existing-issue changes:
 
@@ -94,6 +105,6 @@ Read the full dependency graph relevant to proposed changes and reject self-link
 
 Closing is a separate approved operation. Use `gh issue close --reason completed` only for work actually present/verified; use `--reason "not planned"` for an approved rejection/duplicate disposition as appropriate. Do not label all closed issues `wontfix`. Explain the exact reason and link evidence in an approved comment.
 
-No skill here merges PRs, changes assignees to claim implementation, or closes a parent merely because child tickets were created. Check operation results and read back persisted bodies, labels, and relationships. If a batch partially publishes, report existing issue URLs and remaining operations; resume those instead of duplicating tickets.
+No skill here merges PRs, changes assignees to claim implementation, or closes a parent merely because child tickets were created. Check operation results and read back persisted bodies, labels, and relationships. Report board-add warnings separately from publication failures. If a batch partially publishes, report existing issue URLs and remaining operations; resume those instead of duplicating tickets.
 
 GitHub failures do not authorize a local issue mirror. Keep unsaved drafts in chat; use existing GitHub issues/comments for durable partial-progress pointers when possible. Never report ready/successful publication until its required writes have actually succeeded.

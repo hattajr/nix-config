@@ -4,6 +4,7 @@ test:
 	@./tests/validate-flake.sh
 	@./tests/bootstrap/test-bootstrap.sh
 	@./tests/identity/test-identity.sh
+	@./tests/background-jobs/test-background-jobs.sh
 	@./tests/pi/test-patch-pi-package.sh
 	@./tests/pi/test-update-pi.sh
 	@./tests/pi/test-update-pins.sh

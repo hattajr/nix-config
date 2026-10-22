@@ -1,0 +1,13 @@
+# Lets `uv run pytest` run the collector tests from this directory. The skill
+# runs collect.py from its inline script metadata, so uv ignores this project there.
+[project]
+name = "get-standup"
+version = "0.0.0"
+requires-python = ">=3.12"
+dependencies = ["loguru"]
+
+[dependency-groups]
+dev = ["pytest"]
+
+[tool.uv]
+package = false

@@ -3,6 +3,11 @@
 readonly TRUSTED_ORIGIN_HTTPS='https://github.com/hattajr/nix-config.git'
 readonly TRUSTED_ORIGIN_SSH='git@github.com:hattajr/nix-config.git'
 readonly CHECKOUT_STATE_FILE="${XDG_STATE_HOME:-$HOME/.local/state}/bro/checkout"
+readonly BACKGROUND_JOBS_STATE_FILE="${XDG_STATE_HOME:-$HOME/.local/state}/bro/background-jobs"
+
+# Every background job a machine may enable, by the name its state file stores.
+# home/modules/background-jobs.nix accepts exactly these names.
+readonly BACKGROUND_JOBS=(board-sync)
 
 enable_nix_features() {
   export NIX_CONFIG="${NIX_CONFIG:+$NIX_CONFIG$'\n'}experimental-features = nix-command flakes"
@@ -85,15 +90,17 @@ resolve_identity() {
   reject_nix_metacharacters "$IDENTITY_USERNAME$IDENTITY_HOME" 'identity'
 }
 
-# Passing the identity as an explicit builder argument keeps every committed
-# flake output pure while still activating accounts this repository never names.
+# Passing the identity and background jobs as explicit builder arguments keeps
+# every committed flake output pure while still activating accounts this
+# repository never names, with jobs only this machine runs.
 # Copy the working tree so newly created configuration is visible, but never
 # traverse .git: maintenance may remove loose-object directories while Nix is
 # snapshotting the source immediately after Sync.
 home_expr() {
-  local repo=$1 platform=$2 attribute=$3
-  printf 'let source = builtins.path { path = "%s"; name = "nix-config-source"; filter = path: type: builtins.baseNameOf path != ".git"; }; flake = builtins.getFlake (builtins.unsafeDiscardStringContext "path:${source}"); in (flake.lib.mkHome { system = "%s"; username = "%s"; homeDirectory = "%s"; }).%s' \
-    "$repo" "$platform" "$IDENTITY_USERNAME" "$IDENTITY_HOME" "$attribute"
+  local repo=$1 platform=$2 attribute=$3 jobs
+  jobs=$(background_jobs_nix_list) || return 1
+  printf 'let source = builtins.path { path = "%s"; name = "nix-config-source"; filter = path: type: builtins.baseNameOf path != ".git"; }; flake = builtins.getFlake (builtins.unsafeDiscardStringContext "path:${source}"); in (flake.lib.mkHome { system = "%s"; username = "%s"; homeDirectory = "%s"; jobs = %s; }).%s' \
+    "$repo" "$platform" "$IDENTITY_USERNAME" "$IDENTITY_HOME" "$jobs" "$attribute"
 }
 
 detect_platform() {
@@ -127,6 +134,61 @@ resolve_checkout() {
   origin_is_trusted "$origin" || fail "checkout origin is not $TRUSTED_ORIGIN_HTTPS"
   reject_nix_metacharacters "$candidate" 'checkout path'
   printf '%s\n' "$candidate"
+}
+
+list_contains() {
+  local wanted=$1 item && shift
+  for item in "$@"; do
+    [ "$item" != "$wanted" ] || return 0
+  done
+  return 1
+}
+
+is_background_job() {
+  list_contains "$1" "${BACKGROUND_JOBS[@]}"
+}
+
+# Prints the jobs enabled on this machine, one per line. A missing state file
+# means none. An unknown name is refused rather than skipped, because skipping
+# it would quietly stop a job the file asks for.
+read_background_jobs() {
+  local job
+  [ -e "$BACKGROUND_JOBS_STATE_FILE" ] || return 0
+  [ -r "$BACKGROUND_JOBS_STATE_FILE" ] \
+    || fail "cannot read the background jobs file $BACKGROUND_JOBS_STATE_FILE"
+  while IFS= read -r job || [ -n "$job" ]; do
+    [ -n "$job" ] || continue
+    is_background_job "$job" \
+      || fail "unknown background job \"$job\" in $BACKGROUND_JOBS_STATE_FILE; known jobs: ${BACKGROUND_JOBS[*]}"
+    printf '%s\n' "$job"
+  done <"$BACKGROUND_JOBS_STATE_FILE"
+}
+
+# Every name is a known job by now, so none can close the Nix string literal.
+background_jobs_nix_list() {
+  local jobs job list='['
+  jobs=$(read_background_jobs) || return 1
+  for job in $jobs; do
+    list="$list \"$job\""
+  done
+  printf '%s ]\n' "$list"
+}
+
+write_background_jobs() {
+  local state_dir tmp job
+  state_dir=$(dirname "$BACKGROUND_JOBS_STATE_FILE")
+  mkdir -p "$state_dir" || fail 'could not create the bro state directory'
+  chmod 700 "$state_dir" || fail 'could not secure the bro state directory'
+  tmp=$(mktemp "$state_dir/.background-jobs.XXXXXX") || fail 'could not create the background jobs file'
+  for job in "$@"; do
+    is_background_job "$job" || {
+      rm -f "$tmp"
+      fail "refusing to save unknown background job \"$job\""
+    }
+    printf '%s\n' "$job" >>"$tmp"
+  done
+  chmod 600 "$tmp"
+  mv -f "$tmp" "$BACKGROUND_JOBS_STATE_FILE"
 }
 
 write_checkout_state() {
