@@ -482,6 +482,37 @@ gum_calls() {
   grep -c '^gum ' "$gum_log" || true
 }
 
+# The text gum showed for the first row starting with LABEL, without its colour
+# codes or answer value.
+gum_row() {
+  grep -o "\[$1 [^]]*\]" "$gum_log" | head -n 1 \
+    | sed -e $'s/\e\\[[0-9;]*m//g' -e 's/^\[//' -e $'s/\t[0-9]*]$//'
+}
+
+# Asserts a gum row fits 60 columns after MARKS columns of gum's own cursor and
+# tick marks, and that its description is DESCRIPTION, either whole or cut to
+# the full width with an ellipsis that marks the cut.
+expect_gum_row() {
+  local label=$1 marks=$2 description=$3 row shown measured
+  row=$(gum_row "$label")
+  shown=${row#"$label"}
+  shown=${shown#"${shown%%[! ]*}"}
+  # A one-byte stand-in for the ellipsis keeps the width count right in any locale.
+  measured=${row/…/.}
+  [ $((marks + ${#measured})) -le 60 ] || {
+    echo "bro test: the styled $label row is wider than 60 columns: $row" >&2; exit 1; }
+  case "$shown" in
+    "$description") ;;
+    *…)
+      [ "${description#"${shown%…}"}" != "$description" ] || {
+        echo "bro test: the styled $label row cut its description to something else: $row" >&2; exit 1; }
+      # A cut description uses all the room there is.
+      [ $((marks + ${#measured})) -eq 60 ] || {
+        echo "bro test: the styled $label row was cut shorter than 60 columns: $row" >&2; exit 1; } ;;
+    *) echo "bro test: the styled $label row cut its description without marking it: $row" >&2; exit 1 ;;
+  esac
+}
+
 # The main menu goes through gum, keeps each description beside its label, and
 # the chosen item runs; Esc then quits with success.
 : >"$log"
@@ -495,6 +526,12 @@ grep -Fq '[choose]' "$gum_log" && grep -Fq '[--header=nix-config  (' "$gum_log" 
   echo 'bro test: the main menu did not go through gum choose' >&2; exit 1; }
 grep -Eq '\[Apply +.*activate this checkout' "$gum_log" || {
   echo 'bro test: the styled main menu lost its descriptions' >&2; exit 1; }
+# A description that fits stays whole; one that does not ends in an ellipsis.
+expect_gum_row Apply 2 'activate this checkout'
+expect_gum_row Update 2 'change pinned versions or update Pi extensions'
+case "$(gum_row Update)" in *…) ;; *)
+  echo "bro test: the long Update description was not visibly cut at 60 columns: $(gum_row Update)" >&2; exit 1 ;;
+esac
 ! grep -Fq 'choose [1-' <<<"$output" || { echo 'bro test: styled mode also drew the plain menu' >&2; exit 1; }
 [ "$(gum_calls)" = 2 ] || { echo 'bro test: the styled menu did not return after Apply' >&2; exit 1; }
 
@@ -547,6 +584,7 @@ grep -Fq '[--no-limit]' "$gum_log" && grep -Fq "[--header=Background jobs on $ho
   echo 'bro test: styled Jobs was not a gum multi-select naming this machine' >&2; exit 1; }
 grep -Eq '\[Board sync +.*hourly: add your open GitHub issues' "$gum_log" || {
   echo 'bro test: styled Jobs did not list Board sync with its description' >&2; exit 1; }
+expect_gum_row 'Board sync' 4 'hourly: add your open GitHub issues to your boards'
 ! grep -Fq -e '[--selected=' -e '[x]' -e '[ ]' -e '[Done' "$gum_log" || {
   echo 'bro test: styled Jobs ticked a job no file asked for, or kept the plain toggle rows' >&2; exit 1; }
 [ ! -e "$jobs_file" ] && ! grep -Eq '^nix |^activation$' "$log" || {

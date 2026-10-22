@@ -150,21 +150,24 @@ choose_plain() {
 
 # Prints one gum row per option: the aligned label and dimmed description, a
 # tab, then the option's index. gum shows the text and answers with the index,
-# so the answer never depends on what a label says. Descriptions are cut to fit
-# the width, leaving room for gum's cursor and tick marks.
+# so the answer never depends on what a label says. gum draws MARKS columns
+# before each row (its cursor, and in a multi-select a tick mark), and a
+# description too long for what is left ends in an ellipsis so the cut shows.
 styled_rows() {
+  local marks=$1 && shift
   local options=("$@") index label description width room
   width=$(label_column_width "$@")
-  room=$(($(styled_width) - 4 - width - 1))
+  room=$(($(styled_width) - marks - width - 1))
   for index in "${!options[@]}"; do
     label=${options[index]%%$'\t'*}
     description=${options[index]#*$'\t'}
     if [ "$label" = "$description" ] || [ "$room" -le 0 ]; then
       printf '%s\t%d\n' "$label" "$((index + 1))"
-    else
-      printf '%-*s %s%s%s\t%d\n' "$width" "$label" \
-        "$STYLE_DIM" "${description:0:room}" "$STYLE_UNDIM" "$((index + 1))"
+      continue
     fi
+    [ "${#description}" -le "$room" ] || description="${description:0:room-1}…"
+    printf '%-*s %s%s%s\t%d\n' "$width" "$label" \
+      "$STYLE_DIM" "$description" "$STYLE_UNDIM" "$((index + 1))"
   done
 }
 
@@ -178,7 +181,7 @@ choose_styled() {
   local count=$# rows=() row answer status=0
   while IFS= read -r row; do
     rows+=("$row")
-  done < <(styled_rows "$@")
+  done < <(styled_rows 2 "$@")
   answer=$(gum choose --header="$title" --label-delimiter=$'\t' --no-show-help \
     --header.foreground="$STYLE_ACCENT" --cursor.foreground="$STYLE_ACCENT" \
     -- "${rows[@]}" </dev/tty 2>/dev/tty) || status=$?
@@ -253,7 +256,7 @@ choose_many_styled() {
   local count=$# rows=() selected=() answers=() row index answer status=0
   while IFS= read -r row; do
     rows+=("$row")
-  done < <(styled_rows "$@")
+  done < <(styled_rows 4 "$@")
   for index in "${CHOSEN_INDEXES[@]+"${CHOSEN_INDEXES[@]}"}"; do
     is_option_index "$index" "$count" || continue
     row=${rows[index - 1]%$'\t'*}
