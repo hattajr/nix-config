@@ -45,9 +45,11 @@ styled_width() {
   printf '%s\n' "$columns"
 }
 
-# gum leaves a prompt with 1 on Esc (or No) and 130 on ctrl-c; either way the
-# user left it, as end-of-input does at a plain prompt. Anything else is gum
-# itself failing, which must not pass for an answer.
+# gum exits 130 on ctrl-c and 1 on Esc or No, which count as leaving the
+# prompt, as end-of-input does at a plain prompt. gum also exits 1 for its own
+# usage errors, which no status can tell apart; it reports those on the
+# terminal itself. Any other status is a failure that must not pass for an
+# answer.
 gum_answered() {
   case "$1" in
     0) return 0 ;;
