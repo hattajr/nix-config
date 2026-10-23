@@ -500,12 +500,14 @@ chmod +x "$gumbin/gum"
 
 # Styled mode needs no test switch, a terminal, and gum on PATH. Esc after the
 # scripted answers ends the menu, and plain-prompt end-of-file marks stop a
-# wrong fallback to the numbered menu from hanging the suite.
+# wrong fallback to the numbered menu from hanging the suite. The keys typed
+# first answer the pause after each action, which reads a single key and never
+# sees an end-of-file mark.
 run_styled() {
   local target_home=$1 answers=$2 && shift 2
   : >"$gum_log"
   rm -f "$gum_state"
-  printf '\004\004\004' | "$pty_run" env -u XDG_STATE_HOME -u NIX_CONFIG_TEST_PLAIN \
+  printf 'kkkk\004\004\004' | "$pty_run" env -u XDG_STATE_HOME -u NIX_CONFIG_TEST_PLAIN \
     HOME="$target_home" USER=apply-user PATH="$gumbin:$mockbin:$PATH" \
     MOCK_GUM_LOG="$gum_log" MOCK_GUM_STATE="$gum_state" MOCK_GUM_ANSWERS="$answers" \
     "$@" "$bro"
@@ -1017,7 +1019,9 @@ for clock in 0:00 0:01 0:02; do
   grep -Eq "^╭─ . build ─+ $clock ─╮\$" <<<"$screen" || {
     echo "bro test: the timer never showed $clock while the step was silent" >&2; exit 1; }
 done
-grep -Eq '^╰─+╯$' <<<"$screen" || { echo 'bro test: an empty box did not close cleanly' >&2; exit 1; }
+# The status card has a bottom border too, so only the box's own rows count.
+grep -A "$((6 + 1))" -E '^╭─ . build ' <<<"$screen" | grep -Eq '^╰─+╯$' || {
+  echo 'bro test: an empty box did not close cleanly' >&2; exit 1; }
 
 # A failing build shows its last 30 lines and why, Apply fails with today's
 # message, and the menu is offered again.
@@ -1091,7 +1095,10 @@ expected_summary=$(printf '%s\n' ' ✓ build  Ns' ' ✗ activate failed' \
   "   log: ~/.local/state/bro/logs/$(basename "$(box_log_file)")" 'nix-config: returning to the menu')
 [ "$summary" = "$expected_summary" ] || {
   printf 'bro test: a failed styled activation did not fail Apply:\n%s\n' "$summary" >&2; exit 1; }
-grep -Fxq 'activation broke' <<<"${screen##*╯}" || {
+# The status card drawn after Apply ends in a border too, so only what came
+# after the activation box and before the report counts.
+before_report=${screen%%' ✗ Apply failed'*}
+grep -Fxq 'activation broke' <<<"${before_report##*╯}" || {
   echo 'bro test: a failed styled activation did not show its last lines' >&2; exit 1; }
 ! grep -q '^tmux ' "$log" || { echo 'bro test: Apply reloaded tmux after a failed activation' >&2; exit 1; }
 [ "$(gum_calls)" = 2 ] || { echo 'bro test: the menu did not return after a failed activation' >&2; exit 1; }
@@ -1133,7 +1140,8 @@ for expected in "nix-config: could not create the log directory $box_logs" 'nix-
   grep -Fq -- "$expected" <<<"$screen" || {
     echo "bro test: Apply without a log did not report: $expected" >&2; exit 1; }
 done
-! grep -q '^╭─' <<<"$screen" || { echo 'bro test: Apply without a log was boxed' >&2; exit 1; }
+# A box's top border names its step, unlike the status card's.
+! grep -q '^╭─ ' <<<"$screen" || { echo 'bro test: Apply without a log was boxed' >&2; exit 1; }
 ! grep -q 'log:' <<<"$screen" || { echo 'bro test: Apply without a log named a log' >&2; exit 1; }
 [ ! -e "$box_logs" ] || { echo 'bro test: Apply wrote a log it reported it could not' >&2; exit 1; }
 

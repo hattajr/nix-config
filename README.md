@@ -51,6 +51,25 @@ move, Enter picks, questions are Yes/No buttons, and Esc leaves the menu or
 cancels the current prompt. Without gum, as on a first install before the
 first apply, the same menu and prompts are the numbered ones shown above.
 
+With gum, the menu starts on a cleared screen under a status card:
+
+```text
+╭──────────────────────────────────────────────────────────╮
+│ bro · nix-config                            x86_64-linux │
+│ main ✓ clean · 1 behind (fetched 3h ago)                 │
+│ health ! PATH: unmanaged bin… (+1 more) · checked 2h ago │
+╰──────────────────────────────────────────────────────────╯
+```
+
+The second line is the checkout's branch (or commit, when detached), its
+uncommitted changes, how far it is ahead of or behind its upstream, and when it
+last fetched. The third is the last saved `Health` run: its first failure, else
+its first warning and how many more, and when it ran. The card reads only local
+state, so it never runs Nix, fetches, or checks anything; `Sync` and `Health`
+are what bring it up to date. After each action, bro waits for a key before
+clearing the screen, so the action's output stays up until it has been read.
+The numbered prompts show no card and never pause.
+
 `bro` takes no arguments and no flags. Choices that used to be flags, such as
 pushing after a sync or showing a generated diff, are prompts inside the step
 that needs them. A step that fails returns to the menu rather than ending the
