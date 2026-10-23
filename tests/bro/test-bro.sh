@@ -1137,4 +1137,211 @@ done
 ! grep -q 'log:' <<<"$screen" || { echo 'bro test: Apply without a log named a log' >&2; exit 1; }
 [ ! -e "$box_logs" ] || { echo 'bro test: Apply wrote a log it reported it could not' >&2; exit 1; }
 
-echo 'bro test: PASSED (menu-only entry, apply identity, DNS retry, sync push boundary, accounts wrapper, Pi extensions, Pi + ext, Playwright, Jobs, styled prompts, Health, log box)'
+# --- Accounts table -------------------------------------------------------------
+
+# A setup tool that knows its status mode: --status prints its rows, --check
+# prints the same rows as its human table, and both fail on the Gemini row
+# unless MOCK_ACCOUNTS_READY is set. The wizard itself only records the call.
+accounts_home="$work/accounts-home"
+mkdir -p "$accounts_home/.nix-profile/bin" "$accounts_home/.config/tmux" "$accounts_home/.local/bin"
+record_checkout "$accounts_home"
+: >"$accounts_home/.config/tmux/tmux.conf"
+for stub in zsh tmux; do
+  printf '#!/bin/sh\nexit 0\n' >"$accounts_home/.nix-profile/bin/$stub"
+done
+command cat >"$accounts_home/.local/bin/nix-config-setup" <<'EOF'
+#!/usr/bin/env bash
+printf 'setup %s\n' "$*" >>"$MOCK_LOG"
+rows() {
+  printf '%s\t%s\t%s\n' ok 'Proton Pass' ready optional 'DeepSeek API key' 'not configured (optional)'
+  [ -n "${MOCK_ACCOUNTS_READY:-}" ] || printf '%s\t%s\t%s\n' fail 'Gemini API key' 'does not resolve'
+  printf '%s\t%s\t%s\n' optional 'GitHub CLI' 'unavailable; GitHub CLI is not installed' \
+    ok 'Git identity' 'Test User <test@example.com>'
+}
+case "${1:-}" in
+  --status) rows ;;
+  --check)
+    printf '\n== Current setup status ==\n'
+    rows | while IFS=$'\t' read -r _ item detail; do printf '  %-22s %s\n' "$item" "$detail"; done
+    ;;
+  *) exit 0 ;;
+esac
+[ -n "${MOCK_ACCOUNTS_READY:-}" ]
+EOF
+command cat >"$accounts_home/.local/bin/proton-pass-session" <<'EOF'
+#!/bin/sh
+printf 'proton %s\n' "$*" >>"$MOCK_LOG"
+EOF
+chmod +x "$accounts_home/.nix-profile/bin/zsh" "$accounts_home/.nix-profile/bin/tmux" \
+  "$accounts_home/.local/bin/nix-config-setup" "$accounts_home/.local/bin/proton-pass-session"
+accounts_env=(env -u LC_ALL LANG=C MOCK_UNAME_S=Darwin MOCK_UNAME_M=arm64)
+
+# What reached the setup tool and the keyring session, in order; resolving the
+# checkout also logs its Git calls.
+account_calls() {
+  grep -E '^(setup|proton) ' "$log" || true
+}
+accounts_check_table=$(printf '%s\n' '== Current setup status ==' \
+  '  Proton Pass            ready' \
+  '  DeepSeek API key       not configured (optional)' \
+  '  Gemini API key         does not resolve' \
+  '  GitHub CLI             unavailable; GitHub CLI is not installed' \
+  '  Git identity           Test User <test@example.com>')
+
+# Styled Health lists every account row under Accounts with its marker, points
+# the failing row at Accounts, and no longer prints --check's own table above
+# the screen. The failing row still fails the step, as --check does.
+: >"$log"
+health_started=$(date +%s)
+output=$(run_styled "$accounts_home" $'pick Health\nesc' "${accounts_env[@]}" 2>&1)
+expected=$(printf '%s\n' \
+  'Health · checked HH:MM' \
+  'Core' \
+  '  ✓ checkout metadata' \
+  '  ✓ aarch64-darwin flake output' \
+  '  ✓ managed zsh startup' \
+  '  ✓ managed tmux server' \
+  'Accounts' \
+  '  ✓ Proton Pass: ready' \
+  '  · DeepSeek API key: not configured (optional)' \
+  '  ✗ Gemini API key: does not resolve → Accounts' \
+  '  · GitHub CLI: unavailable; GitHub CLI is not installed' \
+  '  ✓ Git identity: Test User <test@example.com>')
+[ "$(health_screen "$output")" = "$expected" ] || {
+  echo "bro test: styled Health did not list the account rows: $output" >&2; exit 1; }
+for marked in $'\e[32m✓\e[39m Proton Pass: ready' $'\e[2m·\e[22m DeepSeek API key' \
+  $'\e[31m✗\e[39m Gemini API key'; do
+  grep -Fq "$marked" <<<"$output" || {
+    echo "bro test: styled Health did not mark an account row: $(cat -v <<<"$marked")" >&2; exit 1; }
+done
+! grep -Fq 'Current setup status' <<<"$output" || {
+  echo 'bro test: styled Health still printed the --check table' >&2; exit 1; }
+grep -Fq 'returning to the menu' <<<"$output" || {
+  echo 'bro test: a failing account row did not fail styled Health' >&2; exit 1; }
+expect_saved_health "$accounts_home/.local/state/bro/health" "$health_started" \
+  $'ok\tcore\tcheckout metadata' \
+  $'ok\tcore\taarch64-darwin flake output' \
+  $'ok\tcore\tmanaged zsh startup' \
+  $'ok\tcore\tmanaged tmux server' \
+  $'ok\taccounts\tProton Pass: ready' \
+  $'optional\taccounts\tDeepSeek API key: not configured (optional)' \
+  $'fail\taccounts\tGemini API key: does not resolve; choose Accounts from the menu' \
+  $'optional\taccounts\tGitHub CLI: unavailable; GitHub CLI is not installed' \
+  $'ok\taccounts\tGit identity: Test User <test@example.com>'
+output=$(run_styled "$accounts_home" $'pick Health\nesc' "${accounts_env[@]}" MOCK_ACCOUNTS_READY=1 2>&1)
+! grep -Fq 'returning to the menu' <<<"$output" || {
+  echo 'bro test: styled Health failed without a failing account row' >&2; exit 1; }
+! grep -Fq '✗' <<<"$output" || {
+  echo 'bro test: styled Health marked a failure without a failing account row' >&2; exit 1; }
+
+# A setup tool from before the status mode rejects it with its usage text and
+# prints no rows; styled Health then reports --check's single result, quietly,
+# and still fails with it, and styled Accounts shows --check's own table.
+command cat >"$work/old-setup" <<'EOF'
+#!/bin/sh
+[ "$1" != --status ] || { printf 'Usage: nix-config-setup [--check]\n' >&2; exit 2; }
+printf '  some table\n'
+exit 1
+EOF
+chmod +x "$work/old-setup"
+mv "$accounts_home/.local/bin/nix-config-setup" "$work/accounts-setup"
+cp "$work/old-setup" "$accounts_home/.local/bin/nix-config-setup"
+output=$(run_styled "$accounts_home" $'pick Health\nesc' "${accounts_env[@]}" 2>&1)
+health_screen "$output" | grep -Fxq '  ✗ configured account setup has errors → Accounts' || {
+  echo "bro test: styled Health did not fall back to --check for an older setup tool: $output" >&2; exit 1; }
+! grep -Fq 'some table' <<<"$output" || {
+  echo 'bro test: the fallback to --check printed its table on the styled screen' >&2; exit 1; }
+grep -Fq 'returning to the menu' <<<"$output" || {
+  echo 'bro test: the fallback to --check did not fail styled Health' >&2; exit 1; }
+output=$(run_styled "$accounts_home" $'pick Accounts\npick Back\nesc' "${accounts_env[@]}" 2>&1)
+grep -Fq 'some table' <<<"$output" || {
+  echo "bro test: styled Accounts did not show --check for an older setup tool: $output" >&2; exit 1; }
+! grep -Fq 'Usage:' <<<"$output" || {
+  echo 'bro test: styled Accounts showed the older setup tool rejecting --status' >&2; exit 1; }
+mv "$work/accounts-setup" "$accounts_home/.local/bin/nix-config-setup"
+
+# Plain Health prints exactly what it printed before: --check's own table and
+# the single account line, and never asks for the rows.
+: >"$log"
+output=$(run_menu "$accounts_home" '5\n7\n' "${accounts_env[@]}" 2>&1)
+expected=$(printf '%s\n' \
+  'nix-config: OK: checkout metadata' \
+  'nix-config: OK: aarch64-darwin flake output' \
+  'nix-config: OK: managed zsh startup' \
+  'nix-config: OK: managed tmux server' \
+  'nix-config: AUTH FAIL: configured account setup has errors; choose Accounts from the menu' \
+  'nix-config: returning to the menu')
+[ "$(tr -d '\r' <<<"$output" | grep -o 'nix-config: .*')" = "$expected" ] || {
+  echo "bro test: plain Health with account rows changed: $output" >&2; exit 1; }
+[ "$(tr -d '\r' <<<"$output" | grep -A 5 -Fx '== Current setup status ==')" = "$accounts_check_table" ] || {
+  echo "bro test: plain Health no longer showed the --check table: $output" >&2; exit 1; }
+[ "$(account_calls)" = 'setup --check' ] || {
+  echo "bro test: plain Health asked the setup tool for more than --check: $(account_calls)" >&2; exit 1; }
+
+# The styled Accounts screen as the terminal shows it, colours taken out.
+accounts_screen() {
+  tr -d '\r' <<<"$1" | sed -e $'s/\e\\[[0-9;]*m//g' \
+    | awk '/^Accounts$/ { on = 1; print; next } on && /^  / { print; next } on { exit }'
+}
+expected_accounts_screen=$(printf '%s\n' \
+  'Accounts' \
+  '  ✓ Proton Pass       ready' \
+  '  · DeepSeek API key  not configured (optional)' \
+  '  ✗ Gemini API key    does not resolve' \
+  '  · GitHub CLI        unavailable; GitHub CLI is not' \
+  '                      installed' \
+  '  ✓ Git identity      Test User <test@example.com>')
+
+# Styled Accounts shows the table first, then offers Run setup or Back. Run
+# setup hands the terminal to the wizard, on Linux inside the keyring session.
+: >"$log"
+output=$(run_styled "$accounts_home" $'pick Accounts\npick Run setup\nesc' env MOCK_UNAME_S=Linux 2>&1)
+[ "$(accounts_screen "$output")" = "$expected_accounts_screen" ] || {
+  echo "bro test: styled Accounts did not show the account table: $output" >&2; exit 1; }
+accounts_screen "$output" | sed -e 's/✓/./g' -e 's/✗/./g' -e 's/·/./g' \
+  | awk 'length($0) > 60 { wide = 1 } END { exit wide }' || {
+  echo "bro test: a styled Accounts line is wider than 60 columns: $output" >&2; exit 1; }
+grep -Fq $'\e[31m✗\e[39m Gemini API key' <<<"$output" || {
+  echo 'bro test: styled Accounts did not mark the failing row' >&2; exit 1; }
+grep -Eq '\[Run setup +.*\]' "$gum_log" || {
+  echo 'bro test: styled Accounts did not offer Run setup' >&2; exit 1; }
+grep -Eq '\[Back +.*\]' "$gum_log" || {
+  echo 'bro test: styled Accounts did not offer Back' >&2; exit 1; }
+[ "$(account_calls)" = "$(printf '%s\n' 'setup --status' "proton $accounts_home/.local/bin/nix-config-setup")" ] || {
+  echo "bro test: Run setup did not start the wizard in the keyring session: $(account_calls)" >&2; exit 1; }
+! grep -Fq 'returning to the menu' <<<"$output" || {
+  echo 'bro test: a failing account row failed the Accounts step before setup' >&2; exit 1; }
+: >"$log"
+run_styled "$accounts_home" $'pick Accounts\npick Run setup\nesc' env MOCK_UNAME_S=Darwin MOCK_UNAME_M=arm64 >/dev/null 2>&1
+[ "$(account_calls)" = "$(printf '%s\n' 'setup --status' 'setup ')" ] || {
+  echo "bro test: styled Run setup on macOS did not run the wizard directly: $(account_calls)" >&2; exit 1; }
+
+# Back, or Esc, returns to the menu without starting the wizard.
+for answer in 'pick Back' esc; do
+  : >"$log"
+  run_styled "$accounts_home" "pick Accounts"$'\n'"$answer"$'\nesc' env MOCK_UNAME_S=Linux >/dev/null 2>&1
+  [ "$(account_calls)" = 'setup --status' ] || {
+    echo "bro test: $answer at Accounts started the wizard: $(account_calls)" >&2; exit 1; }
+  [ "$(gum_calls)" = 3 ] && [ "$(grep -c '\[--header=nix-config  (' "$gum_log")" = 2 ] || {
+    echo "bro test: $answer at Accounts did not return to the menu" >&2; exit 1; }
+done
+
+# Plain Accounts goes straight to the wizard, as before.
+: >"$log"
+run_menu "$accounts_home" '4\n8\n' env MOCK_UNAME_S=Linux >/dev/null
+[ "$(account_calls)" = "proton $accounts_home/.local/bin/nix-config-setup" ] || {
+  echo "bro test: plain Accounts did something besides starting the wizard: $(account_calls)" >&2; exit 1; }
+
+# A missing setup tool still says to apply the configuration first, in both modes.
+for mode in styled plain; do
+  if [ "$mode" = styled ]; then
+    output=$(run_styled "$apply_home" $'pick Accounts\nesc' 2>&1)
+    [ "$(gum_calls)" = 2 ] || { echo 'bro test: styled Accounts without the setup tool still asked' >&2; exit 1; }
+  else
+    output=$(run_menu "$apply_home" "4\n${quit}\n" 2>&1)
+  fi
+  grep -Fq 'nix-config: ERROR: account setup is unavailable; apply the configuration first' <<<"$output" || {
+    echo "bro test: $mode Accounts without the setup tool did not say to apply first: $output" >&2; exit 1; }
+done
+
+echo 'bro test: PASSED (menu-only entry, apply identity, DNS retry, sync push boundary, accounts wrapper, Pi extensions, Pi + ext, Playwright, Jobs, styled prompts, Health, log box, Accounts table)'

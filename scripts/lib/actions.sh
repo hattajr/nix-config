@@ -232,8 +232,52 @@ update() {
   fi
 }
 
+# The setup tool's status rows, "level<TAB>item<TAB>detail" with level ok,
+# optional or fail, in the order and words of its --check table. A setup tool
+# from before the status mode prints none and fails, so callers fall back to
+# --check. Its stderr would only be that tool's usage text.
+ACCOUNT_ROWS=''
+ACCOUNT_ROWS_STATUS=0
+read_account_rows() {
+  ACCOUNT_ROWS_STATUS=0
+  ACCOUNT_ROWS=$("$ACCOUNT_SETUP" --status 2>/dev/null) || ACCOUNT_ROWS_STATUS=$?
+}
+
+# The table the Accounts screen shows before offering the wizard. A long
+# detail wraps under its own column.
+account_table() {
+  local level item detail width=0 room line indent
+  while IFS=$'\t' read -r level item detail; do
+    [ "${#item}" -le "$width" ] || width=${#item}
+  done <<<"$ACCOUNT_ROWS"
+  room=$(($(styled_width) - width - 6))
+  [ "$room" -gt 0 ] || room=1
+  printf '\n\e[3%sm%s\e[39m\n' "$STYLE_ACCENT" Accounts
+  while IFS=$'\t' read -r level item detail; do
+    indent=$(printf '  %s %-*s  ' "$(styled_mark "$level")" "$width" "$item")
+    while IFS= read -r line; do
+      printf '%s%s\n' "$indent" "${line%"${line##*[! ]}"}"
+      indent=$(printf '%*s' "$((width + 6))" '')
+    done < <(printf '%s\n' "$detail" | fold -s -w "$room")
+  done <<<"$ACCOUNT_ROWS"
+}
+
+# Styled mode shows where every account stands before anything changes, and
+# the wizard runs only when asked. Plain mode goes straight to the wizard.
 auth() {
   [ -x "$ACCOUNT_SETUP" ] || fail 'account setup is unavailable; apply the configuration first'
+  if styled_prompts; then
+    read_account_rows
+    if [ -n "$ACCOUNT_ROWS" ]; then
+      account_table
+    else
+      "$ACCOUNT_SETUP" --check || true
+    fi
+    choose 'Run the setup wizard now?' \
+      $'Run setup\tconnect Proton Pass, logins and API keys' \
+      $'Back\treturn to the menu' || return 0
+    [ "$CHOICE_INDEX" = 1 ] || return 0
+  fi
   if [ "$(uname -s)" = Linux ] && [ -x "$PROTON_PASS_SESSION" ]; then
     "$PROTON_PASS_SESSION" "$ACCOUNT_SETUP"
   else
@@ -430,6 +474,32 @@ health_screen() {
   done
 }
 
+# Styled Health gives every account row a result of its own, in place of
+# --check's table and single summary. A failing row is exactly what fails
+# --check, so Health still fails exactly when it does; should the rows and the
+# exit status ever disagree, the summary failure keeps Health failing. Without
+# rows, from a setup tool that predates them, --check answers quietly.
+account_rows_health() {
+  local level item detail failed=no
+  read_account_rows
+  if [ -z "$ACCOUNT_ROWS" ]; then
+    ACCOUNT_ROWS_STATUS=0
+    "$ACCOUNT_SETUP" --check >/dev/null 2>&1 || ACCOUNT_ROWS_STATUS=$?
+    [ "$ACCOUNT_ROWS_STATUS" != 0 ] || health_result ok accounts 'optional account setup check'
+  fi
+  while IFS=$'\t' read -r level item detail; do
+    case "$level" in
+      ok | optional) health_result "$level" accounts "$item: $detail" ;;
+      fail)
+        failed=yes
+        health_result fail accounts "$item: $detail; choose Accounts from the menu"
+        ;;
+    esac
+  done <<<"$ACCOUNT_ROWS"
+  [ "$ACCOUNT_ROWS_STATUS" = 0 ] || [ "$failed" = yes ] \
+    || health_result fail accounts 'configured account setup has errors; choose Accounts from the menu'
+}
+
 # Only a core or accounts failure fails Health. A shadowed binary or a Board
 # sync problem is a warning, so a first install on a machine with a
 # hand-installed tool still succeeds.
@@ -496,7 +566,9 @@ health() {
     health_result fail core 'managed tmux or configuration is unavailable'
   fi
 
-  if [ -x "$ACCOUNT_SETUP" ]; then
+  if [ -x "$ACCOUNT_SETUP" ] && styled_prompts; then
+    account_rows_health
+  elif [ -x "$ACCOUNT_SETUP" ]; then
     if "$ACCOUNT_SETUP" --check; then
       health_result ok accounts 'optional account setup check'
     else
