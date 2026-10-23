@@ -1247,8 +1247,13 @@ expect_saved_health "$accounts_home/.local/state/bro/health" "$health_started" \
 output=$(run_styled "$accounts_home" $'pick Health\nesc' "${accounts_env[@]}" MOCK_ACCOUNTS_READY=1 2>&1)
 ! grep -Fq 'returning to the menu' <<<"$output" || {
   echo 'bro test: styled Health failed without a failing account row' >&2; exit 1; }
-! grep -Fq '✗' <<<"$output" || {
+# The status card drawn before Health still shows the previous, failing run,
+# so only the Health screen counts here; the card drawn after it shows the new
+# run passing.
+! grep -Fq '✗' <<<"$(health_screen "$output")" || {
   echo 'bro test: styled Health marked a failure without a failing account row' >&2; exit 1; }
+grep -Eq '^│ health ✓ all checks passed · checked [0-9]+s ago +│$' <<<"$(plain_screen <<<"$output")" || {
+  echo "bro test: the status card did not show the passing Health run: $output" >&2; exit 1; }
 
 # A setup tool from before the status mode rejects it with its usage text and
 # prints no rows; styled Health then reports --check's single result, quietly,
