@@ -2045,12 +2045,19 @@ expect_no_pause "$(run_styled "$jobs_home" $'pick Jobs\nesc' "${linux[@]}" 2>&1)
 expect_pause "$(run_styled "$jobs_home" $'pick Jobs\npick Board sync' "${linux[@]}" 2>&1)" 'saving Jobs'
 rm -f "$jobs_file"
 
+# Update's sync has run before its choice, so a cancel there still finishes,
+# reports its log, and waits for a key.
 for answers in $'pick Update\npick\nesc' $'pick Update\nesc\nesc'; do
   new_update_checkout
   output=$(run_styled "$update_home" "$answers" "${update_env[@]}" 2>&1)
-  grep -Fq 'nix-config: update cancelled' <<<"$output" || {
-    echo "bro test: the cancelled styled Update did not say so: $answers" >&2; exit 1; }
-  expect_no_pause "$output" "a cancelled styled Update ($answers)"
+  screen=$(plain_screen <<<"$output")
+  for expected in 'nix-config: update cancelled' ' ✓ Update finished in ' '   log: ~/.local/state/bro/logs/update-'; do
+    grep -Fq -- "$expected" <<<"$screen" || {
+      printf 'bro test: a cancelled styled Update (%s) did not report: %s\n%s\n' "$answers" "$expected" "$screen" >&2; exit 1; }
+  done
+  ! grep -Fq 'returning to the menu' <<<"$screen" || {
+    echo "bro test: a cancelled styled Update failed: $answers" >&2; exit 1; }
+  expect_pause "$output" "a cancelled styled Update ($answers)"
 done
 new_update_checkout
 expect_pause "$(run_styled "$update_home" $'pick Update\npick Pi  \npick Discard\nesc' "${update_env[@]}" 2>&1)" \

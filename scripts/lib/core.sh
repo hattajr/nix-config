@@ -354,10 +354,11 @@ report_action() {
   [ -z "$shown" ] || printf '   %slog: %s%s\n' "$STYLE_DIM" "$shown" "$STYLE_UNDIM"
 }
 
-# An item that ends because the user backed out, at a Back choice or with Esc,
-# before anything ran returns BACKED_OUT. The menu then comes straight back,
-# with no pause, since there is nothing on screen worth keeping. No step here
-# exits with this status.
+# An item that the user leaves, at a Back choice or with Esc, before it has
+# run anything returns BACKED_OUT: today Accounts' Back or Esc, and Jobs' Esc.
+# The menu then comes straight back, with no pause, since there is nothing on
+# screen worth keeping. Update's cancel comes after its sync has run, so it is
+# not one of these.
 # shellcheck disable=SC2034 # read by actions.sh and bro
 readonly BACKED_OUT=117
 

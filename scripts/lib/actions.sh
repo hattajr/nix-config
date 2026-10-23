@@ -289,7 +289,9 @@ update() {
   # Start from the shared configuration before calculating new upstream pins.
   sync "$repo" "$target"
 
-  # Nothing starts ticked, so Done straight away is a cancel, like Esc.
+  # Nothing starts ticked, so Done straight away is a cancel, like Esc. The
+  # sync has already run by then, so a cancel still finishes as an action
+  # that ran, and its steps stay on screen until a key is pressed.
   CHOSEN_INDEXES=()
   if ! choose_many 'What should be updated?' 'update the ticked items' \
     $'Nixpkgs\tnormal Nix-managed apps' \
@@ -298,7 +300,7 @@ update() {
     $'Playwright\tthe playwright-cli package and its agent skill' \
     || [ "${#CHOSEN_INDEXES[@]}" = 0 ]; then
     log 'update cancelled'
-    return "$BACKED_OUT"
+    return 0
   fi
   for index in "${CHOSEN_INDEXES[@]}"; do
     case "$index" in
