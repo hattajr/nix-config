@@ -65,17 +65,31 @@ by saying whether it finished and where its log is. The numbered prompts show
 the same output as it arrives, as before. A log that cannot be written is only
 a warning: Apply then runs without one, unboxed.
 
-`Sync` makes a machine match the versions committed here. `Update` is the
-intentional version-change workflow: it syncs first, asks what may change, shows
-an old-to-new summary, then asks before applying, committing, and pushing. Other
-machines receive the result with `Sync`.
+`Sync` makes a machine match the versions committed here. It runs `fetch`,
+`fast-forward`, `build` and `activate` as steps, boxed and logged like Apply's
+(in `sync-<time>.log`); with nothing to fast-forward, that step is a ✓ line.
+Only after the last step does it ask whether to push local commits.
 
-`Update` offers Nixpkgs, Pi, Pi extensions, playwright-cli, or everything.
-Nixpkgs, Pi, and playwright-cli are pins in tracked files, so they go through
-that review-and-commit flow. Pi extensions are the npm packages listed in
-`config/pi/agent/settings.json`, which Pi installs into its own writable
-state; choosing them runs `pi update --extensions` on this machine only and
-changes nothing in the repository, so each machine updates them itself.
+`Update` is the intentional version-change workflow: it syncs first, asks what
+may change, runs each chosen updater as a step, and shows an old-to-new
+summary. One choice then decides what happens to the moved pins:
+
+- **Apply** activates them in steps, then asks before committing and pushing.
+- **Show diff** shows the complete diff, newly generated lockfiles included,
+  and asks again.
+- **Discard**, or leaving the choice, puts every pin back as the sync left it.
+
+Other machines receive the result with `Sync`.
+
+`Update` offers Nixpkgs, Pi, Pi extensions and playwright-cli in one
+multi-select: with gum, `x` ticks an item and Enter goes on; with the numbered
+prompts, a number ticks or unticks an item and `Done` goes on. Ticking nothing,
+or Esc, cancels and changes nothing. Nixpkgs, Pi, and playwright-cli are pins
+in tracked files, so they go through that review-and-commit flow. Pi extensions
+are the npm packages listed in `config/pi/agent/settings.json`, which Pi
+installs into its own writable state; ticking them runs
+`pi update --extensions` on this machine only, after the pins, and changes
+nothing in the repository, so each machine updates them itself.
 
 `Jobs` chooses which background jobs this machine runs. Today the only one is
 Board sync, an hourly systemd user timer that runs `gh-board sync` and catches

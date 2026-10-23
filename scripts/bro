@@ -66,7 +66,7 @@ main() {
     case "${items[CHOICE_INDEX - 1]%%$'\t'*}" in
       Apply) run_action Apply apply "$repo" "$target" ;;
       Sync) run_action Sync sync "$repo" "$target" ;;
-      Update) run_step update "$repo" "$target" ;;
+      Update) run_action Update update "$repo" "$target" ;;
       Accounts) run_step auth ;;
       Health)
         run_step health "$repo" "$target"
