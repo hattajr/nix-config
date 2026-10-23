@@ -1020,7 +1020,9 @@ for clock in 0:00 0:01 0:02; do
     echo "bro test: the timer never showed $clock while the step was silent" >&2; exit 1; }
 done
 # The status card has a bottom border too, so only the box's own rows count.
-grep -A "$((6 + 1))" -E '^╭─ . build ' <<<"$screen" | grep -Eq '^╰─+╯$' || {
+# They are held in a variable: grep -q stopping early would fail a pipeline.
+box_frames=$(grep -A "$((6 + 1))" -E '^╭─ . build ' <<<"$screen")
+grep -Eq '^╰─+╯$' <<<"$box_frames" || {
   echo 'bro test: an empty box did not close cleanly' >&2; exit 1; }
 
 # A failing build shows its last 30 lines and why, Apply fails with today's
@@ -1348,7 +1350,8 @@ expect_card_line 3 "$card" 'health ! PATH: unmanaged …' 'the Health state at 3
 draw_card "$clone" "$health_state" '' >/dev/null
 ! grep -Eq '^(nix|started) ' "$log" || {
   printf 'bro test: drawing the card started Nix or a network tool:\n%s\n' "$(cat "$log")" >&2; exit 1; }
-grep -q '^git ' "$log" && ! grep -v -E "^git --no-optional-locks -C $clone (symbolic-ref|rev-parse|status|rev-list) " "$log" | grep -q . || {
+other_git=$(grep -v -E "^git --no-optional-locks -C $clone (symbolic-ref|rev-parse|status|rev-list) " "$log" || true)
+grep -q '^git ' "$log" && [ -z "$other_git" ] || {
   printf 'bro test: drawing the card ran Git beyond reading local state:\n%s\n' "$(cat "$log")" >&2; exit 1; }
 
 # In the styled menu, each time the menu appears the screen is cleared and the
