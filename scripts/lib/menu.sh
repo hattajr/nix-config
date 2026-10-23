@@ -169,6 +169,8 @@ parse_saved_health() {
   case "$line" in checked$'\t'[0-9]*) ;; *) return 1 ;; esac
   SAVED_HEALTH_CHECKED=${line#checked$'\t'}
   case "$SAVED_HEALTH_CHECKED" in *[!0-9]*) return 1 ;; esac
+  # Arithmetic would read a leading zero as octal, so the time is read in base 10.
+  SAVED_HEALTH_CHECKED=$((10#$SAVED_HEALTH_CHECKED))
 
   while IFS= read -r line || [ -n "$line" ]; do
     # A run with no results at all is saved as one empty line.
