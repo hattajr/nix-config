@@ -26,10 +26,10 @@ command cat >"$mockbin/git" <<EOF
 printf 'git %s\\n' "\$*" >>"$log"
 if [ "\${MOCK_GIT_MODE:-}" = sync ]; then
   case "\${3:-}" in
-    status|fetch|push) exit 0 ;;
+    status|fetch|push|merge) exit 0 ;;
     rev-parse) printf '%s\\n' origin/main; exit 0 ;;
     rev-list)
-      case "\${5:-}" in *..HEAD) printf '%s\\n' "\${MOCK_GIT_AHEAD:-1}" ;; *) printf '%s\\n' 0 ;; esac
+      case "\${5:-}" in *..HEAD) printf '%s\\n' "\${MOCK_GIT_AHEAD:-1}" ;; *) printf '%s\\n' "\${MOCK_GIT_BEHIND:-0}" ;; esac
       exit 0
       ;;
   esac
@@ -253,8 +253,9 @@ grep -q '^setup ' "$log" || { echo 'bro test: Accounts fallback did not run setu
 
 # --- Update: Pi extensions --------------------------------------------------
 
-# Extensions are Pi's own npm packages, so choosing them must reach Pi and must
-# not touch the pinned files or their review, apply, and commit flow.
+# Extensions are Pi's own npm packages, so ticking them must reach Pi and must
+# not touch the pinned files or their review, apply, and commit flow. Update's
+# multi-select toggles items by number and commits the ticks with Done, 5.
 extensions_home="$work/extensions-home"
 mkdir -p "$extensions_home/.local/bin"
 record_checkout "$extensions_home"
@@ -265,7 +266,7 @@ EOF
 chmod +x "$extensions_home/.local/bin/pi"
 
 : >"$log"
-run_menu "$extensions_home" "3\n3\n${quit}\n" env MOCK_GIT_MODE=sync MOCK_GIT_AHEAD=0 >/dev/null
+run_menu "$extensions_home" "3\n3\n5\n${quit}\n" env MOCK_GIT_MODE=sync MOCK_GIT_AHEAD=0 >/dev/null
 grep -Fq 'pi update --extensions (skip=1)' "$log" || {
   echo 'bro test: Update did not offer a working Pi extension update' >&2; exit 1; }
 ! grep -Eq '^git .* (add|commit)($| )' "$log" || {
@@ -273,7 +274,7 @@ grep -Fq 'pi update --extensions (skip=1)' "$log" || {
 ! grep -Fq 'nix flake update' "$log" || {
   echo 'bro test: updating Pi extensions also moved the nixpkgs pin' >&2; exit 1; }
 
-# Pi + ext moves the Pi pin first, then updates extensions against it, and
+# Pi with its extensions moves the Pi pin first, then updates extensions against it, and
 # leaves the nixpkgs pin alone.
 command cat >"$checkout/scripts/update-pi" <<'EOF'
 #!/bin/sh
@@ -282,7 +283,7 @@ printf 'update-pi %s\n' "$*" >>"$MOCK_LOG"
 EOF
 chmod +x "$checkout/scripts/update-pi"
 : >"$log"
-run_menu "$extensions_home" "3\n4\n${quit}\n" env MOCK_GIT_MODE=sync MOCK_GIT_AHEAD=0 >/dev/null
+run_menu "$extensions_home" "3\n2\n3\n5\n${quit}\n" env MOCK_GIT_MODE=sync MOCK_GIT_AHEAD=0 >/dev/null
 grep -Fq "update-pi $checkout" "$log" || {
   echo 'bro test: Pi + ext did not update the Pi pin' >&2; exit 1; }
 grep -Fq 'pi update --extensions (skip=1)' "$log" || {
@@ -299,7 +300,7 @@ printf 'update-playwright-cli %s\n' "$*" >>"$MOCK_LOG"
 EOF
 chmod +x "$checkout/scripts/update-playwright-cli"
 : >"$log"
-run_menu "$extensions_home" "3\n5\n${quit}\n" env MOCK_GIT_MODE=sync MOCK_GIT_AHEAD=0 >/dev/null
+run_menu "$extensions_home" "3\n4\n5\n${quit}\n" env MOCK_GIT_MODE=sync MOCK_GIT_AHEAD=0 >/dev/null
 grep -Fq "update-playwright-cli $checkout" "$log" || {
   echo 'bro test: Playwright did not update the playwright-cli pin' >&2; exit 1; }
 ! grep -Eq '^(update-pi|pi update) ' "$log" || {
@@ -310,7 +311,7 @@ grep -Fq "update-playwright-cli $checkout" "$log" || {
 # A failed pin update is reported as a failure, never as already current, and
 # stops before extensions update against a Pi that did not move.
 : >"$log"
-output=$(run_menu "$extensions_home" "3\n4\n${quit}\n" env MOCK_GIT_MODE=sync MOCK_GIT_AHEAD=0 MOCK_UPDATE_PI_FAIL=1 2>&1)
+output=$(run_menu "$extensions_home" "3\n2\n3\n5\n${quit}\n" env MOCK_GIT_MODE=sync MOCK_GIT_AHEAD=0 MOCK_UPDATE_PI_FAIL=1 2>&1)
 grep -Fq 'Pi pin update failed' <<<"$output" || {
   echo 'bro test: a failed Pi pin update was not reported' >&2; exit 1; }
 ! grep -Fq 'already current' <<<"$output" || {
@@ -321,7 +322,7 @@ grep -Fq 'Pi pin update failed' <<<"$output" || {
 # Without Pi installed the step explains itself rather than failing silently.
 rm "$extensions_home/.local/bin/pi"
 : >"$log"
-output=$(run_menu "$extensions_home" "3\n3\n${quit}\n" env MOCK_GIT_MODE=sync MOCK_GIT_AHEAD=0 2>&1)
+output=$(run_menu "$extensions_home" "3\n3\n5\n${quit}\n" env MOCK_GIT_MODE=sync MOCK_GIT_AHEAD=0 2>&1)
 grep -Fq 'Pi is not installed for this account yet' <<<"$output" || {
   echo 'bro test: a missing Pi did not explain the extension update failure' >&2; exit 1; }
 
@@ -427,6 +428,9 @@ call=$(( $(cat "$MOCK_GUM_STATE" 2>/dev/null || printf 0) + 1 ))
 printf '%s\n' "$call" >"$MOCK_GUM_STATE"
 answer=$(sed -n "${call}p" <<<"$MOCK_GUM_ANSWERS")
 command=$1 && shift
+# Marks on the terminal where a prompt was asked, so a case can assert what
+# was on screen before it.
+[ -z "${MOCK_GUM_MARK:-}" ] || printf '<gum %s>\n' "$command" >&2
 rows=() ticked=() default=true many=no delimiter=''
 
 # Splits a flag value on commas the way gum's flag parser does: "\," is a
@@ -584,16 +588,18 @@ printf 'pi %s (skip=%s)\n' "$*" "${PI_SKIP_PROTON_PASS:-}" >>"$MOCK_LOG"
 EOF
 chmod +x "$extensions_home/.local/bin/pi"
 : >"$log"
-run_styled "$extensions_home" $'pick Update\npick Extensions\nesc' env MOCK_GIT_MODE=sync MOCK_GIT_AHEAD=0 >/dev/null 2>&1
-grep -Fq '[--header=What should be updated?]' "$gum_log" || {
-  echo 'bro test: the Update submenu did not go through gum' >&2; exit 1; }
+run_styled "$extensions_home" $'pick Update\npick Pi extensions\nesc' env MOCK_GIT_MODE=sync MOCK_GIT_AHEAD=0 >/dev/null 2>&1
+grep -Fq '[--header=What should be updated?' "$gum_log" && grep -Fq '[--no-limit]' "$gum_log" || {
+  echo 'bro test: the Update submenu was not a gum multi-select' >&2; exit 1; }
 grep -Fq 'pi update --extensions (skip=1)' "$log" || {
   echo 'bro test: the Update choice made through gum did not run' >&2; exit 1; }
 : >"$log"
-run_styled "$extensions_home" $'pick Update\nesc\nesc' env MOCK_GIT_MODE=sync MOCK_GIT_AHEAD=0 >/dev/null 2>&1
+output=$(run_styled "$extensions_home" $'pick Update\nesc\nesc' env MOCK_GIT_MODE=sync MOCK_GIT_AHEAD=0 2>&1)
 ! grep -Eq '^(pi update|update-pi|update-playwright-cli) ' "$log" && ! grep -Fq 'nix flake update' "$log" || {
   echo 'bro test: Esc in the Update submenu still updated something' >&2; exit 1; }
 [ "$(gum_calls)" = 3 ] || { echo 'bro test: Esc in a submenu did not return to the main menu' >&2; exit 1; }
+grep -Fq 'nix-config: update cancelled' <<<"$output" || {
+  echo 'bro test: Esc in the Update submenu did not say the update was cancelled' >&2; exit 1; }
 
 # confirm goes through gum with today's default, and Esc there is a cancel.
 : >"$log"
@@ -1344,4 +1350,294 @@ for mode in styled plain; do
     echo "bro test: $mode Accounts without the setup tool did not say to apply first: $output" >&2; exit 1; }
 done
 
-echo 'bro test: PASSED (menu-only entry, apply identity, DNS retry, sync push boundary, accounts wrapper, Pi extensions, Pi + ext, Playwright, Jobs, styled prompts, Health, log box, Accounts table)'
+# --- Sync and Update steps ----------------------------------------------------
+
+# What the terminal showed, cut down to finished steps, prompts (marked by the
+# mock gum), bro's own messages, and the top of a summary box, with durations
+# made constant.
+step_lines() {
+  plain_screen | grep -E '^ (✓|✗) |^   log: |^<gum |^nix-config: |^╭─ Proposed' \
+    | sed -E -e 's/ [0-9]+s$/ Ns/' -e 's/ finished in [0-9]+s$/ finished in Ns/' -e 's/ ─+╮$//'
+}
+
+# The one log an action left in a home's log directory.
+action_log_name() {
+  local logs=("$1"/.local/state/bro/logs/"$2"-*.log)
+  [ "${#logs[@]}" = 1 ] && [ -f "${logs[0]}" ] || {
+    echo "bro test: expected exactly one $2 log in $1" >&2; exit 1; }
+  printf '%s\n' "${logs[0]##*/}"
+}
+
+# Styled Sync behind upstream: fetch and fast-forward run in boxes that shrink
+# to ✓ lines, followed by Apply's steps. Nothing is ahead, so nothing is asked.
+new_box_home
+: >"$log"
+raw=$(run_styled "$box_home" $'pick Sync\nesc' \
+  env MOCK_GIT_MODE=sync MOCK_GIT_AHEAD=0 MOCK_GIT_BEHIND=2 MOCK_GUM_MARK=1 2>&1)
+screen=$(plain_screen <<<"$raw")
+for step in fetch fast-forward; do
+  grep -Eq "^╭─ . $step ─+ 0:0[0-9] ─╮\$" <<<"$screen" || {
+    echo "bro test: styled Sync did not run $step in a box" >&2; exit 1; }
+done
+expected=$(printf '%s\n' '<gum choose>' ' ✓ fetch  Ns' ' ✓ fast-forward  Ns' ' ✓ build  Ns' \
+  ' ✓ activate  Ns' ' ✓ reloaded active tmux configuration' ' ✓ Sync finished in Ns' \
+  "   log: ~/.local/state/bro/logs/$(action_log_name "$box_home" sync)" '<gum choose>')
+[ "$(step_lines <<<"$raw")" = "$expected" ] || {
+  printf 'bro test: styled Sync did not show its boxed steps:\n%s\n' "$(step_lines <<<"$raw")" >&2; exit 1; }
+grep -Eq '^git .* fetch --prune$' "$log" && grep -Eq '^git .* merge --ff-only origin/main$' "$log" \
+  && grep -q '^activation$' "$log" || {
+  echo 'bro test: styled Sync did not fetch, fast-forward and activate' >&2; exit 1; }
+
+# Up to date with commits ahead: nothing to fast-forward is a ✓ line of its
+# own, and the push question comes only after every step has finished.
+new_box_home
+: >"$log"
+raw=$(run_styled "$box_home" $'pick Sync\nno\nesc' env MOCK_GIT_MODE=sync MOCK_GIT_AHEAD=1 MOCK_GUM_MARK=1 2>&1)
+expected=$(printf '%s\n' '<gum choose>' ' ✓ fetch  Ns' ' ✓ already up to date with origin/main' ' ✓ build  Ns' \
+  ' ✓ activate  Ns' ' ✓ reloaded active tmux configuration' '<gum confirm>' ' ✓ Sync finished in Ns' \
+  "   log: ~/.local/state/bro/logs/$(action_log_name "$box_home" sync)" '<gum choose>')
+[ "$(step_lines <<<"$raw")" = "$expected" ] || {
+  printf 'bro test: an up-to-date styled Sync did not show its steps, then the push question:\n%s\n' "$(step_lines <<<"$raw")" >&2; exit 1; }
+grep -Fq '[Push your local commits so other machines receive them?]' "$gum_log" || {
+  echo 'bro test: styled Sync did not ask to push' >&2; exit 1; }
+! grep -Fq 'fast-forward' <<<"$(plain_screen <<<"$raw")" && ! grep -Eq '^git .* merge' "$log" || {
+  echo 'bro test: an up-to-date styled Sync still fast-forwarded' >&2; exit 1; }
+! grep -Eq '^git .* push($| )' "$log" || { echo 'bro test: declining the styled push still pushed' >&2; exit 1; }
+
+# Plain Sync prints what it always has: no step lines, and no word about
+# being up to date.
+for behind in 0 2; do
+  new_box_home
+  : >"$log"
+  output=$(run_menu "$box_home" "2\n${quit}\n" env MOCK_GIT_MODE=sync MOCK_GIT_AHEAD=0 MOCK_GIT_BEHIND="$behind" 2>&1)
+  expected_output=$(printf 'nix-config: %s %s\n' building "$platform_name" activating "$platform_name"
+    printf '%s\n' 'nix-config: reloaded active tmux configuration')
+  [ "$(plain_apply_output "$output")" = "$expected_output" ] || {
+    printf 'bro test: plain Sync %s behind printed something new:\n%s\n' "$behind" "$(plain_apply_output "$output")" >&2; exit 1; }
+done
+grep -Eq '^git .* merge --ff-only origin/main$' "$log" || {
+  echo 'bro test: plain Sync behind upstream did not fast-forward' >&2; exit 1; }
+
+# A branch both ahead and behind is refused with today's message, before
+# anything is merged or built, in either mode.
+new_box_home
+: >"$log"
+raw=$(run_styled "$box_home" $'pick Sync\nesc' env MOCK_GIT_MODE=sync MOCK_GIT_AHEAD=1 MOCK_GIT_BEHIND=1 MOCK_GUM_MARK=1 2>&1)
+expected=$(printf '%s\n' '<gum choose>' ' ✓ fetch  Ns' \
+  'nix-config: ERROR: this branch is 1 ahead and 1 behind origin/main; merge or rebase it yourself first' \
+  ' ✗ Sync failed' "   log: ~/.local/state/bro/logs/$(action_log_name "$box_home" sync)" \
+  'nix-config: returning to the menu' '<gum choose>')
+[ "$(step_lines <<<"$raw")" = "$expected" ] || {
+  printf 'bro test: a diverged styled Sync was not refused as before:\n%s\n' "$(step_lines <<<"$raw")" >&2; exit 1; }
+output=$(run_menu "$box_home" "2\n${quit}\n" env MOCK_GIT_MODE=sync MOCK_GIT_AHEAD=1 MOCK_GIT_BEHIND=1 2>&1)
+expected_output=$(printf '%s\n' \
+  'nix-config: ERROR: this branch is 1 ahead and 1 behind origin/main; merge or rebase it yourself first' \
+  'nix-config: returning to the menu')
+[ "$(plain_apply_output "$output")" = "$expected_output" ] || {
+  printf 'bro test: a diverged plain Sync was not refused as before:\n%s\n' "$(plain_apply_output "$output")" >&2; exit 1; }
+! grep -Eq '^git .* merge|^nix |^activation$' "$log" || {
+  echo 'bro test: a diverged Sync merged or built' >&2; exit 1; }
+
+# The mock gum picks rows by how their text starts, and the Pi row's label is
+# padded past the one space that "Pi extensions" has, so "Pi  " is Pi alone.
+# Update runs against a checkout of its own with real commits, so the summary,
+# diff, discard and commit act on real files. Its updaters move the Pi pin and
+# generate Pi's untracked lockfile, and move both playwright-cli files; with
+# MOCK_PINS_CURRENT set they change nothing. Only fetch, merge, and push are
+# faked, and the diff is not paged.
+update_checkout="$work/update-checkout"
+update_home="$work/update-home"
+mkdir -p "$update_home/.local/state/bro" "$update_home/.local/bin"
+printf '%s\n' "$update_checkout" >"$update_home/.local/state/bro/checkout"
+cp "$extensions_home/.local/bin/pi" "$update_home/.local/bin/pi"
+new_update_checkout() {
+  rm -rf "$update_checkout"
+  mkdir -p "$update_checkout/home/modules" "$update_checkout/scripts"
+  git init -q "$update_checkout"
+  git -C "$update_checkout" config user.name 'Update Test'
+  git -C "$update_checkout" config user.email 'update@example.invalid'
+  git -C "$update_checkout" remote add origin https://github.com/hattajr/nix-config.git
+  printf '{}\n' >"$update_checkout/flake.nix"
+  printf '{}\n' >"$update_checkout/flake.lock"
+  printf '  version = "1.0.0";\n' >"$update_checkout/home/modules/pi.nix"
+  printf '  version = "0.1.0";\n' >"$update_checkout/home/modules/playwright-cli.nix"
+  printf 'original playwright lock\n' >"$update_checkout/home/modules/playwright-cli-package-lock.json"
+  command cat >"$update_checkout/scripts/update-pi" <<'EOF'
+#!/bin/sh
+printf 'update-pi %s\n' "$*" >>"$MOCK_LOG"
+[ -z "${MOCK_PINS_CURRENT:-}" ] || exit 0
+printf '  version = "1.1.0";\n' >"$1/home/modules/pi.nix"
+printf 'generated pi lock\n' >"$1/home/modules/pi-package-lock.json"
+EOF
+  command cat >"$update_checkout/scripts/update-playwright-cli" <<'EOF'
+#!/bin/sh
+printf 'update-playwright-cli %s\n' "$*" >>"$MOCK_LOG"
+[ -z "${MOCK_PINS_CURRENT:-}" ] || exit 0
+printf '  version = "0.2.0";\n' >"$1/home/modules/playwright-cli.nix"
+printf 'updated playwright lock\n' >"$1/home/modules/playwright-cli-package-lock.json"
+EOF
+  chmod +x "$update_checkout/scripts/update-pi" "$update_checkout/scripts/update-playwright-cli"
+  git -C "$update_checkout" add .
+  git -C "$update_checkout" commit -qm 'Initial fixture'
+  update_head=$(git -C "$update_checkout" rev-parse HEAD)
+  rm -rf "$update_home/.local/state/bro/logs"
+  : >"$log"
+}
+update_env=(env MOCK_GIT_MODE=sync MOCK_GIT_AHEAD=0 GIT_PAGER=cat MOCK_GUM_MARK=1)
+update_plain_env=(env MOCK_GIT_MODE=sync MOCK_GIT_AHEAD=0 GIT_PAGER=cat)
+
+# Asserts the checkout is exactly as the sync left it: the fixture's commit,
+# nothing changed, and no generated file left behind.
+expect_untouched_checkout() {
+  [ "$(git -C "$update_checkout" rev-parse HEAD)" = "$update_head" ] \
+    && [ -z "$(git -C "$update_checkout" status --porcelain --untracked-files=all)" ] || {
+    echo "bro test: $1 left the checkout changed: $(git -C "$update_checkout" status --porcelain)" >&2; exit 1; }
+}
+
+# The one gum choose header asking what to do with the moved pins.
+review_question='[--header=What should happen to these changes?]'
+
+# Styled: the selected updaters run as boxes, the summary is a box, and Show
+# diff shows every change, the new lockfile included, then asks again. Discard
+# then leaves the checkout as the sync left it.
+new_update_checkout
+raw=$(run_styled "$update_home" $'pick Update\npick Pi  |Playwright\npick Show diff\npick Discard\nesc' "${update_env[@]}" 2>&1)
+screen=$(plain_screen <<<"$raw")
+for step in 'update Pi' 'update Playwright'; do
+  grep -Eq "^╭─ . $step ─+ 0:0[0-9] ─╮\$" <<<"$screen" || {
+    echo "bro test: styled Update did not run $step in a box" >&2; exit 1; }
+done
+expected=$(printf '%s\n' '<gum choose>' ' ✓ fetch  Ns' ' ✓ already up to date with origin/main' \
+  ' ✓ build  Ns' ' ✓ activate  Ns' '<gum choose>' ' ✓ update Pi  Ns' ' ✓ update Playwright  Ns' \
+  '╭─ Proposed version updates' '<gum choose>' '<gum choose>' 'nix-config: update discarded' \
+  ' ✓ Update finished in Ns' "   log: ~/.local/state/bro/logs/$(action_log_name "$update_home" update)" '<gum choose>')
+[ "$(step_lines <<<"$raw")" = "$expected" ] || {
+  printf 'bro test: styled Update did not run its steps, summary and choice in order:\n%s\n' "$(step_lines <<<"$raw")" >&2; exit 1; }
+summary_box=$(grep -A 3 '^╭─ Proposed version updates' <<<"$screen")
+grep -Eq '^│ Pi +1\.0\.0 → 1\.1\.0 +│$' <<<"$summary_box" \
+  && grep -Eq '^│ Playwright +0\.1\.0 → 0\.2\.0 +│$' <<<"$summary_box" \
+  && grep -Eq '^╰─+╯$' <<<"$summary_box" || {
+  printf 'bro test: the styled summary box did not show old → new for each pin:\n%s\n' "$summary_box" >&2; exit 1; }
+# Every box character and arrow is one column; sed swaps them byte for byte in any locale.
+sed -e 's/─/./g' -e 's/│/./g' -e 's/╭/./g' -e 's/╮/./g' -e 's/╰/./g' -e 's/╯/./g' -e 's/→/./g' <<<"$summary_box" \
+  | awk 'length($0) != 60 { bad = 1 } END { exit bad }' || {
+  printf 'bro test: the styled summary box is not 60 columns wide:\n%s\n' "$summary_box" >&2; exit 1; }
+diff_shown=$(sed -n '/^<gum choose>$/,$p' <<<"$screen" | sed -n '/^+  version = "1.1.0";$/,/^<gum choose>$/p')
+grep -Fxq '+  version = "0.2.0";' <<<"$diff_shown" && grep -Fxq '+updated playwright lock' <<<"$diff_shown" \
+  && grep -Fxq '+generated pi lock' <<<"$diff_shown" || {
+  printf 'bro test: Show diff did not show the complete diff, new lockfile included:\n%s\n' "$screen" >&2; exit 1; }
+[ "$(grep -cF "$review_question" "$gum_log")" = 2 ] || {
+  echo 'bro test: Show diff did not return to the same choice' >&2; exit 1; }
+grep -Eq '\[Apply +.*activate them' "$gum_log" || {
+  echo 'bro test: the review choice did not offer Apply' >&2; exit 1; }
+expect_untouched_checkout 'a styled Discard'
+[ "$(grep -c '^activation$' "$log")" = 1 ] && ! grep -Eq '^git .* (add|commit|push)( |$)' "$log" || {
+  echo 'bro test: a styled Discard applied or committed the pins' >&2; exit 1; }
+
+# Plain: the same flow with the toggle loop and numbered prompts.
+new_update_checkout
+output=$(run_menu "$update_home" "3\n2\n4\n5\n2\n3\n${quit}\n" "${update_plain_env[@]}" 2>&1)
+output=$(tr -d '\r' <<<"$output" | plain_screen)
+for expected in 'nix-config: updating the Pi pin' 'nix-config: updating the playwright-cli pin' \
+  'Proposed version updates:' '  Pi:       1.0.0 -> 1.1.0' '  Playwright:0.1.0 -> 0.2.0' \
+  '+generated pi lock' 'nix-config: update discarded'; do
+  grep -Fq -- "$expected" <<<"$output" || {
+    echo "bro test: plain Update did not show: $expected" >&2; exit 1; }
+done
+grep -Eq '4\) \[x\] Playwright +the playwright-cli package' <<<"$output" || {
+  echo 'bro test: plain Update did not tick through the toggle loop' >&2; exit 1; }
+[ "$(grep -Ec '^  1\) Apply +activate them' <<<"$output")" = 2 ] \
+  && grep -Eq '^  3\) Discard +put every pin back' <<<"$output" || {
+  echo 'bro test: plain Show diff did not return to the same choice' >&2; exit 1; }
+! grep -Fq -e 'Show the complete generated diff?' -e 'Apply these changes on this machine?' <<<"$output" || {
+  echo 'bro test: plain Update still asked the old yes/no questions' >&2; exit 1; }
+expect_untouched_checkout 'a plain Discard'
+
+# Apply, then Commit, then Push runs the same git commands as before: every
+# pin file that exists is added, committed with the same message, and pushed.
+expected_git=$(printf "git -C $update_checkout %s\n" 'add flake.lock' 'add home/modules/pi.nix' \
+  'add home/modules/pi-package-lock.json' 'add home/modules/playwright-cli.nix' \
+  'add home/modules/playwright-cli-package-lock.json' 'commit -m Update managed package pins' push)
+expect_committed_update() {
+  [ "$(grep -E '^git .* (add|commit|push)( |$)' "$log")" = "$expected_git" ] || {
+    printf 'bro test: %s did not run the same git commands as before:\n%s\n' "$1" "$(grep '^git ' "$log")" >&2; exit 1; }
+  [ "$(git -C "$update_checkout" log -1 --format=%s)" = 'Update managed package pins' ] \
+    && [ "$(git -C "$update_checkout" show HEAD:home/modules/pi-package-lock.json)" = 'generated pi lock' ] \
+    && [ -z "$(git -C "$update_checkout" status --porcelain)" ] || {
+    echo "bro test: $1 did not commit every moved pin" >&2; exit 1; }
+}
+new_update_checkout
+raw=$(run_styled "$update_home" $'pick Update\npick Pi  |Playwright\npick Apply\nyes\nyes\nesc' "${update_env[@]}" 2>&1)
+expected=$(printf '%s\n' '╭─ Proposed version updates' '<gum choose>' ' ✓ build  Ns' ' ✓ activate  Ns' \
+  '<gum confirm>' '<gum confirm>' ' ✓ Update finished in Ns')
+[ "$(step_lines <<<"$raw" | sed -n '/^╭─ Proposed/,/ finished in /p')" = "$expected" ] || {
+  printf 'bro test: styled Apply did not activate in boxed steps before asking to commit and push:\n%s\n' "$(step_lines <<<"$raw")" >&2; exit 1; }
+for question in 'Commit these version-pin changes?' 'Push the commit so other machines can sync it?'; do
+  grep -Fq "[--default=false] [--no-show-help] [--prompt.foreground=6] [--selected.foreground=0] [--selected.background=6] [--unselected.foreground=7] [--unselected.background=8] [--] [$question]" "$gum_log" || {
+    echo "bro test: styled Update did not ask \"$question\" defaulting to No" >&2; exit 1; }
+done
+[ "$(grep -c '^activation$' "$log")" = 2 ] || { echo 'bro test: styled Apply did not activate the pins' >&2; exit 1; }
+expect_committed_update 'styled Apply, Commit, Push'
+
+new_update_checkout
+run_menu "$update_home" "3\n2\n4\n5\n1\ny\ny\n${quit}\n" "${update_plain_env[@]}" >/dev/null 2>&1
+expect_committed_update 'plain Apply, Commit, Push'
+
+# Declining the commit leaves the applied pins uncommitted, as before.
+new_update_checkout
+output=$(run_menu "$update_home" "3\n2\n5\n1\n\n${quit}\n" "${update_plain_env[@]}" 2>&1)
+grep -Fq 'nix-config: changes applied locally but left uncommitted' <<<"$output" \
+  && [ "$(git -C "$update_checkout" rev-parse HEAD)" = "$update_head" ] \
+  && ! grep -Eq '^git .* (commit|push)( |$)' "$log" || {
+  echo 'bro test: declining the commit still committed or pushed' >&2; exit 1; }
+
+# Leaving the choice keeps nothing, as declining to apply always has.
+new_update_checkout
+output=$(run_styled "$update_home" $'pick Update\npick Pi  \nesc\nesc' "${update_env[@]}" 2>&1)
+grep -Fq 'nix-config: update discarded' <<<"$output" || {
+  echo 'bro test: Esc at the review choice did not discard' >&2; exit 1; }
+expect_untouched_checkout 'Esc at the review choice'
+
+# Pins that are already current say so, and there is nothing to review.
+new_update_checkout
+raw=$(run_styled "$update_home" $'pick Update\npick Pi  |Playwright\nesc' "${update_env[@]}" MOCK_PINS_CURRENT=1 2>&1)
+step_lines <<<"$raw" | grep -Fxq ' ✓ all selected pins are already current' || {
+  echo 'bro test: styled Update did not say the pins are already current' >&2; exit 1; }
+[ "$(gum_calls)" = 3 ] && ! grep -Fq "$review_question" "$gum_log" || {
+  echo 'bro test: already-current pins still offered the review choice' >&2; exit 1; }
+output=$(run_menu "$update_home" "3\n2\n5\n${quit}\n" "${update_plain_env[@]}" MOCK_PINS_CURRENT=1 2>&1)
+grep -Fq 'nix-config: all selected pins are already current' <<<"$output" \
+  && ! grep -Fq 'What should happen to these changes?' <<<"$output" || {
+  echo 'bro test: plain Update with current pins offered the review choice' >&2; exit 1; }
+expect_untouched_checkout 'already-current pins'
+
+# Ticking nothing, or Esc, cancels: no updater runs and nothing changes.
+for answers in $'pick Update\npick\nesc' $'pick Update\nesc\nesc'; do
+  new_update_checkout
+  output=$(run_styled "$update_home" "$answers" "${update_env[@]}" 2>&1)
+  grep -Fq 'nix-config: update cancelled' <<<"$output" && ! grep -Eq '^update-|^pi update' "$log" || {
+    echo "bro test: a styled Update with nothing chosen was not cancelled: $answers" >&2; exit 1; }
+  expect_untouched_checkout 'a cancelled styled Update'
+done
+new_update_checkout
+output=$(run_menu "$update_home" "3\n5\n${quit}\n" "${update_plain_env[@]}" 2>&1)
+grep -Fq 'nix-config: update cancelled' <<<"$output" && ! grep -Eq '^update-|^pi update' "$log" || {
+  echo 'bro test: a plain Update with nothing ticked was not cancelled' >&2; exit 1; }
+expect_untouched_checkout 'a cancelled plain Update'
+
+# Pi extensions update after the pins are settled, in a box of their own.
+new_update_checkout
+raw=$(run_styled "$update_home" $'pick Update\npick Pi  |Pi extensions\npick Discard\nesc' "${update_env[@]}" 2>&1)
+step_lines <<<"$raw" | grep -A 1 -Fx 'nix-config: update discarded' | grep -Eqx ' ✓ update Pi extensions  Ns' || {
+  printf 'bro test: Pi extensions did not update after the pins as a boxed step:\n%s\n' "$(step_lines <<<"$raw")" >&2; exit 1; }
+grep -Fq 'pi update --extensions (skip=1)' "$log" || {
+  echo 'bro test: the boxed extension update did not reach Pi' >&2; exit 1; }
+
+# A dirty checkout is still refused before anything is fetched.
+new_update_checkout
+printf 'dirty\n' >"$update_checkout/dirty"
+output=$(run_menu "$update_home" "3\n${quit}\n" 2>&1)
+grep -Fq 'Update needs a clean checkout' <<<"$output" && ! grep -Eq '^git .* fetch' "$log" || {
+  echo 'bro test: a dirty Update was not refused before fetching' >&2; exit 1; }
+
+echo 'bro test: PASSED (menu-only entry, apply identity, DNS retry, sync push boundary, accounts wrapper, Pi extensions, Pi + ext, Playwright, Jobs, styled prompts, Health, log box, Accounts table, Sync and Update steps)'
