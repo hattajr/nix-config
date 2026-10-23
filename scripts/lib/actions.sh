@@ -58,14 +58,35 @@ apply() {
   fi
 }
 
+# A box cannot be answered, so a fetch inside one fails at once rather than
+# wait on a prompt hidden behind it: Git asks for no credentials and ssh runs
+# in batch mode. A user's own ssh command, from GIT_SSH_COMMAND or
+# core.sshCommand, is kept and only extended. A GIT_SSH program may not be ssh
+# and may take no ssh options, so it is left as it is.
+fetch_without_prompts() {
+  local repo=$1 ssh_command
+  ssh_command=${GIT_SSH_COMMAND:-$(run_git -C "$repo" config --get core.sshCommand || true)}
+  [ -n "$ssh_command" ] || [ -n "${GIT_SSH:-}" ] || ssh_command=ssh
+  (
+    export GIT_TERMINAL_PROMPT=0
+    [ -z "$ssh_command" ] || export GIT_SSH_COMMAND="$ssh_command -o BatchMode=yes"
+    run_git -C "$repo" fetch --prune
+  )
+}
+
 # Fetching and fast-forwarding are steps of their own, boxed like Apply's.
-# The push question comes only after every step has finished.
+# The push question comes only after every step has finished. Unboxed, the
+# fetch may still ask for a passphrase or a password, as it always could.
 sync() {
   local repo=$1 target=$2 upstream ahead behind
   require_clean_tree "$repo" Sync || return 1
   upstream=$(run_git -C "$repo" rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null) \
     || fail 'this branch has no upstream, so there is nothing to sync from'
-  run_logged fetch run_git -C "$repo" fetch --prune || fail 'could not reach the remote'
+  if step_boxes; then
+    run_logged fetch fetch_without_prompts "$repo" || fail 'could not reach the remote'
+  else
+    run_logged fetch run_git -C "$repo" fetch --prune || fail 'could not reach the remote'
+  fi
   ahead=$(run_git -C "$repo" rev-list --count "$upstream..HEAD")
   behind=$(run_git -C "$repo" rev-list --count "HEAD..$upstream")
   [ "$ahead" = 0 ] || [ "$behind" = 0 ] \
