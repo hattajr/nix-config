@@ -355,8 +355,8 @@ report_action() {
 }
 
 # Steps are boxed only inside an action, which owns the log, and only in
-# styled mode. Elsewhere, as in Sync until it runs steps of its own, a step
-# runs exactly as it did before steps were logged.
+# styled mode. Elsewhere, as in Apply run from Jobs, a step runs exactly as it
+# did before steps were logged.
 step_boxes() {
   [ -n "$ACTION_LOG" ] && styled_prompts
 }

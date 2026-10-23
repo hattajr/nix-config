@@ -58,18 +58,24 @@ apply() {
   fi
 }
 
+# Fetching and fast-forwarding are steps of their own, boxed like Apply's.
+# The push question comes only after every step has finished.
 sync() {
   local repo=$1 target=$2 upstream ahead behind
   require_clean_tree "$repo" Sync || return 1
   upstream=$(run_git -C "$repo" rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null) \
     || fail 'this branch has no upstream, so there is nothing to sync from'
-  run_git -C "$repo" fetch --prune || fail 'could not reach the remote'
+  run_logged fetch run_git -C "$repo" fetch --prune || fail 'could not reach the remote'
   ahead=$(run_git -C "$repo" rev-list --count "$upstream..HEAD")
   behind=$(run_git -C "$repo" rev-list --count "HEAD..$upstream")
   [ "$ahead" = 0 ] || [ "$behind" = 0 ] \
     || fail "this branch is $ahead ahead and $behind behind $upstream; merge or rebase it yourself first"
   if [ "$behind" != 0 ]; then
-    run_git -C "$repo" merge --ff-only "$upstream" || fail 'fast-forward failed'
+    run_logged fast-forward run_git -C "$repo" merge --ff-only "$upstream" || fail 'fast-forward failed'
+  elif step_boxes; then
+    # A step with nothing to do is still a step done. Plain Sync has never
+    # said so, and still does not.
+    log_step "already up to date with $upstream"
   fi
   apply "$repo" "$target"
   if [ "$ahead" != 0 ] && confirm 'Push your local commits so other machines receive them?' no; then

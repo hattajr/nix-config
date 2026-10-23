@@ -26,10 +26,10 @@ command cat >"$mockbin/git" <<EOF
 printf 'git %s\\n' "\$*" >>"$log"
 if [ "\${MOCK_GIT_MODE:-}" = sync ]; then
   case "\${3:-}" in
-    status|fetch|push) exit 0 ;;
+    status|fetch|push|merge) exit 0 ;;
     rev-parse) printf '%s\\n' origin/main; exit 0 ;;
     rev-list)
-      case "\${5:-}" in *..HEAD) printf '%s\\n' "\${MOCK_GIT_AHEAD:-1}" ;; *) printf '%s\\n' 0 ;; esac
+      case "\${5:-}" in *..HEAD) printf '%s\\n' "\${MOCK_GIT_AHEAD:-1}" ;; *) printf '%s\\n' "\${MOCK_GIT_BEHIND:-0}" ;; esac
       exit 0
       ;;
   esac
@@ -427,6 +427,9 @@ call=$(( $(cat "$MOCK_GUM_STATE" 2>/dev/null || printf 0) + 1 ))
 printf '%s\n' "$call" >"$MOCK_GUM_STATE"
 answer=$(sed -n "${call}p" <<<"$MOCK_GUM_ANSWERS")
 command=$1 && shift
+# Marks on the terminal where a prompt was asked, so a case can assert what
+# was on screen before it.
+[ -z "${MOCK_GUM_MARK:-}" ] || printf '<gum %s>\n' "$command" >&2
 rows=() ticked=() default=true many=no delimiter=''
 
 # Splits a flag value on commas the way gum's flag parser does: "\," is a
@@ -1137,4 +1140,92 @@ done
 ! grep -q 'log:' <<<"$screen" || { echo 'bro test: Apply without a log named a log' >&2; exit 1; }
 [ ! -e "$box_logs" ] || { echo 'bro test: Apply wrote a log it reported it could not' >&2; exit 1; }
 
-echo 'bro test: PASSED (menu-only entry, apply identity, DNS retry, sync push boundary, accounts wrapper, Pi extensions, Pi + ext, Playwright, Jobs, styled prompts, Health, log box)'
+# --- Sync steps ---------------------------------------------------------------
+
+# What the terminal showed, cut down to finished steps, prompts (marked by the
+# mock gum), bro's own messages, and the top of a summary box, with durations
+# made constant.
+step_lines() {
+  plain_screen | grep -E '^ (✓|✗) |^   log: |^<gum |^nix-config: |^╭─ Proposed' \
+    | sed -E -e 's/ [0-9]+s$/ Ns/' -e 's/ finished in [0-9]+s$/ finished in Ns/' -e 's/ ─+╮$//'
+}
+
+# The one log an action left in a home's log directory.
+action_log_name() {
+  local logs=("$1"/.local/state/bro/logs/"$2"-*.log)
+  [ "${#logs[@]}" = 1 ] && [ -f "${logs[0]}" ] || {
+    echo "bro test: expected exactly one $2 log in $1" >&2; exit 1; }
+  printf '%s\n' "${logs[0]##*/}"
+}
+
+# Styled Sync behind upstream: fetch and fast-forward run in boxes that shrink
+# to ✓ lines, followed by Apply's steps. Nothing is ahead, so nothing is asked.
+new_box_home
+: >"$log"
+raw=$(run_styled "$box_home" $'pick Sync\nesc' \
+  env MOCK_GIT_MODE=sync MOCK_GIT_AHEAD=0 MOCK_GIT_BEHIND=2 MOCK_GUM_MARK=1 2>&1)
+screen=$(plain_screen <<<"$raw")
+for step in fetch fast-forward; do
+  grep -Eq "^╭─ . $step ─+ 0:0[0-9] ─╮\$" <<<"$screen" || {
+    echo "bro test: styled Sync did not run $step in a box" >&2; exit 1; }
+done
+expected=$(printf '%s\n' '<gum choose>' ' ✓ fetch  Ns' ' ✓ fast-forward  Ns' ' ✓ build  Ns' \
+  ' ✓ activate  Ns' ' ✓ reloaded active tmux configuration' ' ✓ Sync finished in Ns' \
+  "   log: ~/.local/state/bro/logs/$(action_log_name "$box_home" sync)" '<gum choose>')
+[ "$(step_lines <<<"$raw")" = "$expected" ] || {
+  printf 'bro test: styled Sync did not show its boxed steps:\n%s\n' "$(step_lines <<<"$raw")" >&2; exit 1; }
+grep -Eq '^git .* fetch --prune$' "$log" && grep -Eq '^git .* merge --ff-only origin/main$' "$log" \
+  && grep -q '^activation$' "$log" || {
+  echo 'bro test: styled Sync did not fetch, fast-forward and activate' >&2; exit 1; }
+
+# Up to date with commits ahead: nothing to fast-forward is a ✓ line of its
+# own, and the push question comes only after every step has finished.
+new_box_home
+: >"$log"
+raw=$(run_styled "$box_home" $'pick Sync\nno\nesc' env MOCK_GIT_MODE=sync MOCK_GIT_AHEAD=1 MOCK_GUM_MARK=1 2>&1)
+expected=$(printf '%s\n' '<gum choose>' ' ✓ fetch  Ns' ' ✓ already up to date with origin/main' ' ✓ build  Ns' \
+  ' ✓ activate  Ns' ' ✓ reloaded active tmux configuration' '<gum confirm>' ' ✓ Sync finished in Ns' \
+  "   log: ~/.local/state/bro/logs/$(action_log_name "$box_home" sync)" '<gum choose>')
+[ "$(step_lines <<<"$raw")" = "$expected" ] || {
+  printf 'bro test: an up-to-date styled Sync did not show its steps, then the push question:\n%s\n' "$(step_lines <<<"$raw")" >&2; exit 1; }
+grep -Fq '[Push your local commits so other machines receive them?]' "$gum_log" || {
+  echo 'bro test: styled Sync did not ask to push' >&2; exit 1; }
+! grep -Fq 'fast-forward' <<<"$(plain_screen <<<"$raw")" && ! grep -Eq '^git .* merge' "$log" || {
+  echo 'bro test: an up-to-date styled Sync still fast-forwarded' >&2; exit 1; }
+! grep -Eq '^git .* push($| )' "$log" || { echo 'bro test: declining the styled push still pushed' >&2; exit 1; }
+
+# Plain Sync prints what it always has: no step lines, and no word about
+# being up to date.
+for behind in 0 2; do
+  new_box_home
+  : >"$log"
+  output=$(run_menu "$box_home" "2\n${quit}\n" env MOCK_GIT_MODE=sync MOCK_GIT_AHEAD=0 MOCK_GIT_BEHIND="$behind" 2>&1)
+  expected_output=$(printf 'nix-config: %s %s\n' building "$platform_name" activating "$platform_name"
+    printf '%s\n' 'nix-config: reloaded active tmux configuration')
+  [ "$(plain_apply_output "$output")" = "$expected_output" ] || {
+    printf 'bro test: plain Sync %s behind printed something new:\n%s\n' "$behind" "$(plain_apply_output "$output")" >&2; exit 1; }
+done
+grep -Eq '^git .* merge --ff-only origin/main$' "$log" || {
+  echo 'bro test: plain Sync behind upstream did not fast-forward' >&2; exit 1; }
+
+# A branch both ahead and behind is refused with today's message, before
+# anything is merged or built, in either mode.
+new_box_home
+: >"$log"
+raw=$(run_styled "$box_home" $'pick Sync\nesc' env MOCK_GIT_MODE=sync MOCK_GIT_AHEAD=1 MOCK_GIT_BEHIND=1 MOCK_GUM_MARK=1 2>&1)
+expected=$(printf '%s\n' '<gum choose>' ' ✓ fetch  Ns' \
+  'nix-config: ERROR: this branch is 1 ahead and 1 behind origin/main; merge or rebase it yourself first' \
+  ' ✗ Sync failed' "   log: ~/.local/state/bro/logs/$(action_log_name "$box_home" sync)" \
+  'nix-config: returning to the menu' '<gum choose>')
+[ "$(step_lines <<<"$raw")" = "$expected" ] || {
+  printf 'bro test: a diverged styled Sync was not refused as before:\n%s\n' "$(step_lines <<<"$raw")" >&2; exit 1; }
+output=$(run_menu "$box_home" "2\n${quit}\n" env MOCK_GIT_MODE=sync MOCK_GIT_AHEAD=1 MOCK_GIT_BEHIND=1 2>&1)
+expected_output=$(printf '%s\n' \
+  'nix-config: ERROR: this branch is 1 ahead and 1 behind origin/main; merge or rebase it yourself first' \
+  'nix-config: returning to the menu')
+[ "$(plain_apply_output "$output")" = "$expected_output" ] || {
+  printf 'bro test: a diverged plain Sync was not refused as before:\n%s\n' "$(plain_apply_output "$output")" >&2; exit 1; }
+! grep -Eq '^git .* merge|^nix |^activation$' "$log" || {
+  echo 'bro test: a diverged Sync merged or built' >&2; exit 1; }
+
+echo 'bro test: PASSED (menu-only entry, apply identity, DNS retry, sync push boundary, accounts wrapper, Pi extensions, Pi + ext, Playwright, Jobs, styled prompts, Health, log box, Sync steps)'
