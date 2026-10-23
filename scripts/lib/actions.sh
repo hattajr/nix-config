@@ -144,9 +144,13 @@ update_summary_rows() {
 }
 
 # Styled, the summary is a box of its own; plain, it reads as it always has.
+# Fields are split by hand: read with a tab IFS would merge the two tabs
+# around an empty old version and shift the new one into its place.
 print_update_summary() {
   local repo=$1 row label old new rows=()
-  while IFS=$'\t' read -r label old new; do
+  while IFS= read -r row; do
+    label=${row%%$'\t'*} row=${row#*$'\t'}
+    old=${row%%$'\t'*} new=${row#*$'\t'}
     if styled_prompts; then
       printf -v row '%-11s%s → %s' "$label" "$old" "$new"
     else
