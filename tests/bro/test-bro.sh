@@ -504,12 +504,14 @@ chmod +x "$gumbin/gum"
 
 # Styled mode needs no test switch, a terminal, and gum on PATH. Esc after the
 # scripted answers ends the menu, and plain-prompt end-of-file marks stop a
-# wrong fallback to the numbered menu from hanging the suite.
+# wrong fallback to the numbered menu from hanging the suite. The keys typed
+# first answer the pause after each action, which reads a single key and never
+# sees an end-of-file mark.
 run_styled() {
   local target_home=$1 answers=$2 && shift 2
   : >"$gum_log"
   rm -f "$gum_state"
-  printf '\004\004\004' | "$pty_run" env -u XDG_STATE_HOME -u NIX_CONFIG_TEST_PLAIN \
+  printf 'kkkk\004\004\004' | "$pty_run" env -u XDG_STATE_HOME -u NIX_CONFIG_TEST_PLAIN \
     HOME="$target_home" USER=apply-user PATH="$gumbin:$mockbin:$PATH" \
     MOCK_GUM_LOG="$gum_log" MOCK_GUM_STATE="$gum_state" MOCK_GUM_ANSWERS="$answers" \
     "$@" "$bro"
@@ -1023,7 +1025,11 @@ for clock in 0:00 0:01 0:02; do
   grep -Eq "^╭─ . build ─+ $clock ─╮\$" <<<"$screen" || {
     echo "bro test: the timer never showed $clock while the step was silent" >&2; exit 1; }
 done
-grep -Eq '^╰─+╯$' <<<"$screen" || { echo 'bro test: an empty box did not close cleanly' >&2; exit 1; }
+# The status card has a bottom border too, so only the box's own rows count.
+# They are held in a variable: grep -q stopping early would fail a pipeline.
+box_frames=$(grep -A "$((6 + 1))" -E '^╭─ . build ' <<<"$screen")
+grep -Eq '^╰─+╯$' <<<"$box_frames" || {
+  echo 'bro test: an empty box did not close cleanly' >&2; exit 1; }
 
 # A failing build shows its last 30 lines and why, Apply fails with today's
 # message, and the menu is offered again.
@@ -1097,7 +1103,10 @@ expected_summary=$(printf '%s\n' ' ✓ build  Ns' ' ✗ activate failed' \
   "   log: ~/.local/state/bro/logs/$(basename "$(box_log_file)")" 'nix-config: returning to the menu')
 [ "$summary" = "$expected_summary" ] || {
   printf 'bro test: a failed styled activation did not fail Apply:\n%s\n' "$summary" >&2; exit 1; }
-grep -Fxq 'activation broke' <<<"${screen##*╯}" || {
+# The status card drawn after Apply ends in a border too, so only what came
+# after the activation box and before the report counts.
+before_report=${screen%%' ✗ Apply failed'*}
+grep -Fxq 'activation broke' <<<"${before_report##*╯}" || {
   echo 'bro test: a failed styled activation did not show its last lines' >&2; exit 1; }
 ! grep -q '^tmux ' "$log" || { echo 'bro test: Apply reloaded tmux after a failed activation' >&2; exit 1; }
 [ "$(gum_calls)" = 2 ] || { echo 'bro test: the menu did not return after a failed activation' >&2; exit 1; }
@@ -1139,7 +1148,8 @@ for expected in "nix-config: could not create the log directory $box_logs" 'nix-
   grep -Fq -- "$expected" <<<"$screen" || {
     echo "bro test: Apply without a log did not report: $expected" >&2; exit 1; }
 done
-! grep -q '^╭─' <<<"$screen" || { echo 'bro test: Apply without a log was boxed' >&2; exit 1; }
+# A box's top border names its step, unlike the status card's.
+! grep -q '^╭─ ' <<<"$screen" || { echo 'bro test: Apply without a log was boxed' >&2; exit 1; }
 ! grep -q 'log:' <<<"$screen" || { echo 'bro test: Apply without a log named a log' >&2; exit 1; }
 [ ! -e "$box_logs" ] || { echo 'bro test: Apply wrote a log it reported it could not' >&2; exit 1; }
 
@@ -1640,4 +1650,301 @@ output=$(run_menu "$update_home" "3\n${quit}\n" 2>&1)
 grep -Fq 'Update needs a clean checkout' <<<"$output" && ! grep -Eq '^git .* fetch' "$log" || {
   echo 'bro test: a dirty Update was not refused before fetching' >&2; exit 1; }
 
-echo 'bro test: PASSED (menu-only entry, apply identity, DNS retry, sync push boundary, accounts wrapper, Pi extensions, Pi + ext, Playwright, Jobs, styled prompts, Health, log box, Accounts table, Sync and Update steps)'
+# --- status card --------------------------------------------------------------
+
+# Fixture checkouts clone a bare upstream. The developer's own Git configuration
+# is kept out, so no signing key, hook, or default branch name leaks in.
+fixture_git() {
+  GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
+    git -c init.defaultBranch=main -c user.name=bro -c user.email=bro@example.com "$@"
+}
+
+# Sets a file's modification time SECONDS into the past, the same way on GNU
+# and BSD hosts.
+age_file() {
+  python3 -c 'import os, sys, time; t = time.time() - int(sys.argv[2]); os.utime(sys.argv[1], (t, t))' "$1" "$2"
+}
+
+card_upstream="$work/card-upstream.git"
+card_seed="$work/card-seed"
+fixture_git init -q --bare "$card_upstream"
+fixture_git init -q "$card_seed"
+printf 'one\n' >"$card_seed/file"
+fixture_git -C "$card_seed" add file
+fixture_git -C "$card_seed" commit -q -m one
+fixture_git -C "$card_seed" push -q "$card_upstream" main
+
+# A clean clone of upstream main, last fetched three hours ago.
+card_clone() {
+  local clone="$work/card-$1"
+  fixture_git clone -q "$card_upstream" "$clone"
+  fixture_git -C "$clone" fetch -q
+  age_file "$clone/.git/FETCH_HEAD" 10800
+  printf '%s\n' "$clone"
+}
+
+# Anything that could reach the network only records that it was started.
+card_bin="$work/card-bin"
+mkdir -p "$card_bin"
+for tool in curl wget ssh; do
+  printf '#!/bin/sh\nprintf "started %s %%s\\n" "$*" >>"$MOCK_LOG"\n' "$tool" >"$card_bin/$tool"
+  chmod +x "$card_bin/$tool"
+done
+
+# The card for REPO as a terminal COLUMNS wide shows it, colours and carriage
+# returns taken out, with the saved Health run from STATE_HOME. It is drawn on
+# its own, outside the menu, with the mock Git and Nix recording every call. A
+# card that could not be drawn shows its error where the card was expected.
+draw_card() {
+  local repo=$1 state_home=$2 columns=${3:-} && shift 3
+  { printf '' | "$pty_run" env -u NIX_CONFIG_TEST_PLAIN HOME="$work/card-home" XDG_STATE_HOME="$state_home" \
+    PATH="$card_bin:$mockbin:$PATH" "$@" bash -c '
+      set -euo pipefail
+      [ -z "$3" ] || stty cols "$3" </dev/tty
+      . "$1/scripts/lib/core.sh"
+      . "$1/scripts/lib/nix.sh"
+      . "$1/scripts/lib/actions.sh"
+      . "$1/scripts/lib/menu.sh"
+      status_card "$2" x86_64-linux
+    ' _ "$repo_root" "$repo" "$columns" || true; } | plain_screen
+}
+
+# Card row N (1 to 3) without its borders and padding.
+card_line() {
+  sed -n "$(($1 + 1))p" <<<"$2" | sed -e 's/^│ //' -e 's/ *│$//'
+}
+
+expect_card_line() {
+  local row=$1 card=$2 expected=$3 what=$4 actual
+  actual=$(card_line "$row" "$card")
+  [ "$actual" = "$expected" ] || {
+    printf "bro test: the card showed %s as '%s', not '%s'\n" "$what" "$actual" "$expected" >&2; exit 1; }
+}
+
+# Every line of the card, borders included, is exactly WIDTH columns. Box and
+# card glyphs are one column each; sed swaps them byte for byte in any locale.
+expect_card_width() {
+  local card=$1 width=$2 what=$3 glyph swaps=()
+  for glyph in ╭ ╮ ╰ ╯ │ ─ ✓ ✗ · … →; do
+    swaps+=(-e "s/$glyph/./g")
+  done
+  [ "$(grep -c '' <<<"$card")" = 5 ] || {
+    printf 'bro test: the card for %s is not five lines:\n%s\n' "$what" "$card" >&2; exit 1; }
+  sed "${swaps[@]}" <<<"$card" | awk -v width="$width" 'length($0) != width { wrong = 1 } END { exit wrong }' || {
+    printf 'bro test: the card for %s is not %s columns wide:\n%s\n' "$what" "$width" "$card" >&2; exit 1; }
+}
+
+no_state="$work/card-state-none"
+
+# Line 1 names bro, the checkout, and the platform; line 2 is the Git state.
+clone=$(card_clone clean)
+card=$(draw_card "$clone" "$no_state" '')
+expect_card_line 1 "$card" 'bro · nix-config                            x86_64-linux' 'the title'
+expect_card_line 2 "$card" 'main ✓ clean · up to date (fetched 3h ago)' 'a clean checkout'
+expect_card_width "$card" 60 'a clean checkout'
+[ "$(head -n 1 <<<"$card")" = "╭$(printf '─%.0s' $(seq 1 58))╮" ] \
+  && [ "$(tail -n 1 <<<"$card")" = "╰$(printf '─%.0s' $(seq 1 58))╯" ] || {
+  printf 'bro test: the card is not framed by a rounded border:\n%s\n' "$card" >&2; exit 1; }
+
+printf 'two\n' >"$clone/file"
+printf 'new\n' >"$clone/untracked"
+expect_card_line 2 "$(draw_card "$clone" "$no_state" '')" 'main 2 changes · up to date (fetched 3h ago)' 'a dirty checkout'
+rm "$clone/untracked"
+expect_card_line 2 "$(draw_card "$clone" "$no_state" '')" 'main 1 change · up to date (fetched 3h ago)' 'one change'
+fixture_git -C "$clone" commit -q -am two
+expect_card_line 2 "$(draw_card "$clone" "$no_state" '')" 'main ✓ clean · 1 ahead (fetched 3h ago)' 'a checkout ahead'
+
+clone=$(card_clone behind)
+printf 'upstream\n' >"$card_seed/file"
+fixture_git -C "$card_seed" commit -q -am upstream
+fixture_git -C "$card_seed" push -q "$card_upstream" main
+fixture_git -C "$clone" fetch -q
+age_file "$clone/.git/FETCH_HEAD" 300
+expect_card_line 2 "$(draw_card "$clone" "$no_state" '')" 'main ✓ clean · 1 behind (fetched 5m ago)' 'a checkout behind'
+printf 'local\n' >"$clone/other"
+fixture_git -C "$clone" add other
+fixture_git -C "$clone" commit -q -m local
+expect_card_line 2 "$(draw_card "$clone" "$no_state" '')" 'main ✓ clean · 1 ahead, 1 behind (fetched 5m ago)' 'a diverged checkout'
+
+clone=$(card_clone topic)
+fixture_git -C "$clone" checkout -q -b topic
+expect_card_line 2 "$(draw_card "$clone" "$no_state" '')" 'topic ✓ clean · no upstream (fetched 3h ago)' 'a branch with no upstream'
+fixture_git -C "$clone" checkout -q --detach
+commit=$(fixture_git -C "$clone" rev-parse --short HEAD)
+age_file "$clone/.git/FETCH_HEAD" 259200
+expect_card_line 2 "$(draw_card "$clone" "$no_state" '')" "$commit ✓ clean · no upstream (fetched 3d ago)" 'a detached checkout'
+
+clone=$(card_clone never)
+rm "$clone/.git/FETCH_HEAD"
+expect_card_line 2 "$(draw_card "$clone" "$no_state" '')" 'main ✓ clean · up to date (never fetched)' 'a checkout never fetched'
+
+# A long branch name gives way, so the counts and the fetch age stay whole.
+fixture_git -C "$clone" checkout -q -b feature/a-branch-name-long-enough-to-overflow-the-card
+card=$(draw_card "$clone" "$no_state" '')
+expect_card_line 2 "$card" 'feature/a-branch-… ✓ clean · no upstream (never fetched)' 'a long branch name'
+expect_card_width "$card" 60 'a long branch name'
+
+# Line 3 is the saved Health run: the first failure, else the first warning
+# and how many more, else all passed, then when it ran.
+clone=$(card_clone health)
+health_state="$work/card-state"
+write_health() {
+  mkdir -p "$health_state/bro"
+  rm -rf "$health_state/bro/health"
+  printf '%s\n' "$@" >"$health_state/bro/health"
+}
+checked=$'checked\t'"$(($(date +%s) - 7200))"
+
+write_health "$checked" $'ok\tcore\tcheckout metadata' $'warn\tcore\tLC_ALL is set' \
+  $'fail\tcore\tmanaged zsh startup' $'fail\taccounts\tconfigured account setup has errors; choose Accounts from the menu'
+expect_card_line 3 "$(draw_card "$clone" "$health_state" '')" 'health ✗ Core: managed zsh startup · checked 2h ago' 'a failed Health run'
+
+# Results are open-ended: Accounts may report a row per account.
+rows=()
+for account in 1 2 3 4 5 6 7 8 9 10 11 12; do
+  rows+=("warn"$'\t'"accounts"$'\t'"account $account needs a login")
+done
+write_health "$checked" $'ok\tcore\tcheckout metadata' $'warn\tcore\tLC_ALL is set' \
+  $'optional\taccounts\taccount setup is not installed yet' "${rows[@]}"
+expect_card_line 3 "$(draw_card "$clone" "$health_state" '')" 'health ! Core: LC_ALL is set (+12 more) · checked 2h ago' 'warnings'
+
+write_health "$checked" $'warn\tpath\tunmanaged binaries shadow the Nix profile; choose Clean up from the menu'
+card=$(draw_card "$clone" "$health_state" '')
+expect_card_line 3 "$card" 'health ! PATH: unmanaged binaries shad… · checked 2h ago' 'a long warning'
+expect_card_width "$card" 60 'a long warning'
+
+# A fix points at its menu item, as on the Health screen, and the arrow is one
+# column even where bash counts bytes.
+write_health "$checked" $'fail\taccounts\tbad; choose Accounts from the menu'
+card=$(draw_card "$clone" "$health_state" '' env LC_ALL=C)
+expect_card_line 3 "$card" 'health ✗ Accounts: bad → Accounts · checked 2h ago' 'a failure with a fix'
+expect_card_width "$card" 60 'a failure with a fix in a C locale'
+
+write_health "$checked" $'ok\tcore\tcheckout metadata' $'optional\taccounts\taccount setup is not installed yet'
+expect_card_line 3 "$(draw_card "$clone" "$health_state" '')" 'health ✓ all checks passed · checked 2h ago' 'a passing Health run'
+
+expect_card_line 3 "$(draw_card "$clone" "$no_state" '')" 'health not checked yet' 'no saved Health run'
+
+for corrupt in 'garbage' $'checked\tsoon' "$checked"$'\nwarn\tcore' "$checked"$'\nbad\tcore\tmessage' \
+  "$checked"$'\nwarn\t\tmessage'; do
+  write_health "$corrupt"
+  expect_card_line 3 "$(draw_card "$clone" "$health_state" '')" 'health unreadable' "a corrupt Health file ($corrupt)"
+done
+: >"$health_state/bro/health"
+expect_card_line 3 "$(draw_card "$clone" "$health_state" '')" 'health unreadable' 'an empty Health file'
+rm "$health_state/bro/health"
+mkdir "$health_state/bro/health"
+expect_card_line 3 "$(draw_card "$clone" "$health_state" '')" 'health unreadable' 'a Health path that is a directory'
+
+# A terminal narrower than 60 columns gets a card exactly as wide, cut to fit.
+write_health "$checked" $'warn\tpath\tunmanaged binaries shadow the Nix profile; choose Clean up from the menu'
+for columns in 40 30 20; do
+  card=$(draw_card "$clone" "$health_state" "$columns")
+  expect_card_width "$card" "$columns" "a $columns-column terminal"
+done
+card=$(draw_card "$clone" "$health_state" 30)
+expect_card_line 1 "$card" 'bro · nix-config x86_64-l…' 'the title at 30 columns'
+expect_card_line 2 "$card" 'main ✓ clean · up to date…' 'the Git state at 30 columns'
+expect_card_line 3 "$card" 'health ! PATH: unmanaged …' 'the Health state at 30 columns'
+
+# Drawing the card reads local state only: Git is asked nothing that reaches a
+# remote, and neither Nix, the network, nor gum is started.
+: >"$log"
+draw_card "$clone" "$health_state" '' >/dev/null
+! grep -Eq '^(nix|started) ' "$log" || {
+  printf 'bro test: drawing the card started Nix or a network tool:\n%s\n' "$(cat "$log")" >&2; exit 1; }
+other_git=$(grep -v -E "^git --no-optional-locks -C $clone (symbolic-ref|rev-parse|status|rev-list) " "$log" || true)
+grep -q '^git ' "$log" && [ -z "$other_git" ] || {
+  printf 'bro test: drawing the card ran Git beyond reading local state:\n%s\n' "$(cat "$log")" >&2; exit 1; }
+
+# In the styled menu, each time the menu appears the screen is cleared and the
+# card drawn above it, without Nix or a fetch, and Esc leaves without a pause.
+: >"$log"
+output=$(run_styled "$apply_home" esc env PATH="$card_bin:$gumbin:$mockbin:$PATH" 2>&1)
+screen=$(plain_screen <<<"${output#*$'\e[H\e[2J'}")
+[ "$output" != "${output#*$'\e[H\e[2J'}" ] && grep -Eq '^│ bro · nix-config +[a-z0-9_]+-(linux|darwin) │$' <<<"$screen" || {
+  printf 'bro test: the styled menu was not drawn on a cleared screen under the card:\n%s\n' "$output" >&2; exit 1; }
+! grep -Eq '^(nix|started) ' "$log" && ! grep -Eq '^git .*(fetch|pull|push|ls-remote)' "$log" || {
+  printf 'bro test: the styled menu reached Nix or the network:\n%s\n' "$(cat "$log")" >&2; exit 1; }
+! grep -Fq 'press any key' <<<"$output" || { echo 'bro test: Esc at the menu paused' >&2; exit 1; }
+
+# After an action, the styled menu waits for a key before it clears the
+# screen; choosing Quit does not.
+output=$(run_styled "$apply_home" $'pick Apply\nesc' 2>&1)
+after_apply=${output#*'Apply finished in'}
+[ "$after_apply" != "$output" ] && grep -Fq 'press any key to return' <<<"${after_apply%%$'\e[H\e[2J'*}" \
+  && [ "${after_apply%%$'\e[H\e[2J'*}" != "$after_apply" ] || {
+  printf 'bro test: styled Apply did not ask for a key before the menu came back:\n%s\n' "$output" >&2; exit 1; }
+output=$(run_styled "$apply_home" 'pick Quit' 2>&1)
+! grep -Fq 'press any key' <<<"$output" || { echo 'bro test: Quit paused' >&2; exit 1; }
+
+# The pause really waits: a second after it appears, the menu has not come
+# back, and one key brings it back.
+: >"$gum_log"
+rm -f "$gum_state"
+pause=$(python3 - "$gum_log" env -u XDG_STATE_HOME -u NIX_CONFIG_TEST_PLAIN \
+  HOME="$apply_home" USER=apply-user PATH="$gumbin:$mockbin:$PATH" \
+  MOCK_GUM_LOG="$gum_log" MOCK_GUM_STATE="$gum_state" MOCK_GUM_ANSWERS=$'pick Apply\nesc' "$bro" <<'PY'
+import os, pty, select, sys, time
+
+gum_log = sys.argv[1]
+pid, terminal = pty.fork()
+if pid == 0:
+    os.execvp(sys.argv[2], sys.argv[2:])
+output = bytearray()
+
+def read_for(seconds, until=None):
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        if until is not None and until in output:
+            return True
+        ready, _, _ = select.select([terminal], [], [], 0.05)
+        if not ready:
+            continue
+        try:
+            chunk = os.read(terminal, 4096)
+        except OSError:
+            return False
+        if not chunk:
+            return False
+        output.extend(chunk)
+    return until is None or until in output
+
+def menus():
+    with open(gum_log) as log:
+        return sum(1 for line in log if line.startswith("gum "))
+
+paused = read_for(60, b"press any key to return")
+read_for(1)
+waiting = menus()
+try:
+    os.write(terminal, b"k")
+except OSError:
+    pass
+read_for(30, b"\x00never")
+# A bro still running here is stuck, so it is stopped rather than awaited.
+finished, raw_status = os.waitpid(pid, os.WNOHANG)
+if finished == 0:
+    os.kill(pid, 9)
+    os.waitpid(pid, 0)
+    status = "stuck"
+else:
+    status = os.waitstatus_to_exitcode(raw_status)
+print(f"paused={paused} menus-while-paused={waiting} menus-after-key={menus()} status={status}")
+PY
+)
+[ "$pause" = 'paused=True menus-while-paused=1 menus-after-key=2 status=0' ] || {
+  echo "bro test: the styled pause did not wait for exactly one key: $pause" >&2; exit 1; }
+
+# The card follows a narrow terminal.
+output=$(run_styled "$apply_home" esc bash -c 'stty cols 40 </dev/tty && exec "$0"' 2>&1)
+expect_card_width "$(plain_screen <<<"${output#*$'\e[H\e[2J'}" | grep -E '^[╭│╰]')" 40 'the styled menu at 40 columns'
+
+# Plain mode draws no card, clears nothing, and waits for nothing: Apply's
+# output runs straight on into the next menu.
+output=$(run_menu "$apply_home" "1\n${quit}\n" 2>&1)
+! grep -Fq -e $'\e[' -e '╭' -e 'press any key' -e 'Enter a number' <<<"$output" \
+  && [ "$(grep -c 'choose \[1-' <<<"$output")" = 2 ] || {
+  printf 'bro test: plain mode drew a card, cleared the screen, or paused:\n%s\n' "$output" >&2; exit 1; }
+
+echo 'bro test: PASSED (menu-only entry, apply identity, DNS retry, sync push boundary, accounts wrapper, Pi extensions, Pi + ext, Playwright, Jobs, styled prompts, Health, log box, Accounts table, Sync and Update steps, status card)'

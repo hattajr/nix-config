@@ -10,6 +10,8 @@ LIB_DIR=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")/lib" && pwd -P)
 . "$LIB_DIR/nix.sh"
 # shellcheck source=lib/actions.sh
 . "$LIB_DIR/actions.sh"
+# shellcheck source=lib/menu.sh
+. "$LIB_DIR/menu.sh"
 
 run_step() {
   # A failed step returns to the menu: an unusable network or a dirty tree is
@@ -61,6 +63,7 @@ main() {
   items+=($'Quit\tleave the menu')
 
   while true; do
+    ! styled_prompts || show_status_card "$repo" "$target"
     choose "nix-config  ($target)" "${items[@]}" || return 0
     # Dispatch on the label, because which items appear depends on the platform.
     case "${items[CHOICE_INDEX - 1]%%$'\t'*}" in
@@ -79,6 +82,7 @@ main() {
       Jobs) run_step background_jobs "$repo" "$target" ;;
       Quit) return 0 ;;
     esac
+    ! styled_prompts || wait_for_key
   done
 }
 
