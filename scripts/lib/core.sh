@@ -549,15 +549,25 @@ draw_box_frame() {
 
 # A result to read before the next prompt, such as Update's summary, in a box
 # of its own: the title on the top border, then each row cut with … to fit.
-# An arrow is one column wide, so it is measured and cut as a one-byte
-# stand-in, which counts as one column in any locale.
+# The title is cut too, keeping at least one column of border after it. An
+# arrow is one column wide, so it is measured and cut as a one-byte stand-in,
+# which counts as one column in any locale.
 draw_text_box() {
   local title=$1 && shift
   local accent=$'\e[3'"$STYLE_ACCENT"'m' unaccent=$'\e[39m' arrow=$'\032'
-  local width room text columns padding frame_text
+  local width room title_room title_columns=${#title} text columns padding frame_text
   width=$(styled_width)
   room=$((width - 4))
-  box_rule "$((width - 5 - ${#title}))"
+  title_room=$((width - 6))
+  if [ "$title_columns" -gt "$title_room" ]; then
+    if [ "$title_room" -ge 1 ]; then
+      title="${title:0:title_room-1}…"
+      title_columns=$title_room
+    else
+      title='' title_columns=0
+    fi
+  fi
+  box_rule "$((width - 5 - title_columns))"
   frame_text="$STYLE_DIM╭─$STYLE_UNDIM $accent$title$unaccent $STYLE_DIM$BOX_RULE╮$STYLE_UNDIM"$'\n'
   for text in "$@"; do
     text=${text//→/$arrow}
