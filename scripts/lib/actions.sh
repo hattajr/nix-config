@@ -298,7 +298,7 @@ update() {
     $'Playwright\tthe playwright-cli package and its agent skill' \
     || [ "${#CHOSEN_INDEXES[@]}" = 0 ]; then
     log 'update cancelled'
-    return 0
+    return "$BACKED_OUT"
   fi
   for index in "${CHOSEN_INDEXES[@]}"; do
     case "$index" in
@@ -360,8 +360,8 @@ auth() {
     fi
     choose 'Run the setup wizard now?' \
       $'Run setup\tconnect Proton Pass, logins and API keys' \
-      $'Back\treturn to the menu' || return 0
-    [ "$CHOICE_INDEX" = 1 ] || return 0
+      $'Back\treturn to the menu' || return "$BACKED_OUT"
+    [ "$CHOICE_INDEX" = 1 ] || return "$BACKED_OUT"
   fi
   run_account_setup
 }
@@ -400,7 +400,7 @@ background_jobs() {
     options+=("$label")
     ! grep -Fxq "$job" <<<"$saved" || CHOSEN_INDEXES+=("$((index + 1))")
   done
-  choose_many "Background jobs on $host" 'apply and return' "${options[@]}" || return 0
+  choose_many "Background jobs on $host" 'apply and return' "${options[@]}" || return "$BACKED_OUT"
 
   for index in "${CHOSEN_INDEXES[@]+"${CHOSEN_INDEXES[@]}"}"; do
     enabled+=("${BACKGROUND_JOBS[index - 1]}")

@@ -13,25 +13,47 @@ LIB_DIR=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")/lib" && pwd -P)
 # shellcheck source=lib/menu.sh
 . "$LIB_DIR/menu.sh"
 
+# How the last menu item ended: ran, failed, or backed-out when the user left
+# it before anything ran. Actions run in a subshell, so this is read from
+# their status here rather than set by the action itself.
+ITEM_OUTCOME=ran
+
 run_step() {
+  local status=0
   # A failed step returns to the menu: an unusable network or a dirty tree is
   # something to correct and retry, not a reason to drop the session. The
   # subshell matters, because actions report problems with fail, which exits.
-  ( "$@" ) || warn 'returning to the menu'
+  ( "$@" ) || status=$?
+  case "$status" in
+    0) ITEM_OUTCOME=ran ;;
+    "$BACKED_OUT") ITEM_OUTCOME=backed-out ;;
+    *)
+      ITEM_OUTCOME=failed
+      warn 'returning to the menu'
+      ;;
+  esac
 }
 
 # An action is a step whose commands are logged: it gets a fresh log, and in
 # styled mode ends on a line saying how it went and where that log is. The log
 # is best effort: without one the action still runs, unboxed as in plain mode.
 run_action() {
-  local name=$1 started=$SECONDS && shift
+  local name=$1 started=$SECONDS status=0 && shift
   open_action_log "$name" || warn "$name runs without a log"
-  if ( "$@" ); then
-    report_action ok "$name" "$((SECONDS - started))"
-  else
-    report_action fail "$name" "$((SECONDS - started))"
-    warn 'returning to the menu'
-  fi
+  ( "$@" ) || status=$?
+  case "$status" in
+    0)
+      ITEM_OUTCOME=ran
+      report_action ok "$name" "$((SECONDS - started))"
+      ;;
+    # The menu comes straight back, so there is nothing to report.
+    "$BACKED_OUT") ITEM_OUTCOME=backed-out ;;
+    *)
+      ITEM_OUTCOME=failed
+      report_action fail "$name" "$((SECONDS - started))"
+      warn 'returning to the menu'
+      ;;
+  esac
   ACTION_LOG=''
 }
 
@@ -82,7 +104,10 @@ main() {
       Jobs) run_step background_jobs "$repo" "$target" ;;
       Quit) return 0 ;;
     esac
-    ! styled_prompts || wait_for_key
+    # Backing out leaves nothing on screen worth keeping.
+    if styled_prompts && [ "$ITEM_OUTCOME" != backed-out ]; then
+      wait_for_key
+    fi
   done
 }
 
