@@ -87,7 +87,7 @@ main() {
   log 'Bootstrap complete'
 
   if [ -x "$ACCOUNT_SETUP" ] && confirm 'Configure accounts and API keys now?' yes; then
-    auth || warn 'account setup did not finish; choose Accounts from the bro menu later'
+    run_account_setup || warn 'account setup did not finish; choose Accounts from the bro menu later'
   fi
   if shadowed_binaries_present \
     && confirm 'Review binaries that shadow the Nix profile?' yes; then

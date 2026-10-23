@@ -302,9 +302,51 @@ grep -Eq '^managed-tty=/dev/.+ stdin-mode=read-write$' "$shell_log" || {
 ! grep -F 'command not found' "$bootstrap_output" >&2 || {
   printf '%s\n' 'bootstrap test: bootstrap needed a command the isolated PATH lacks' >&2; exit 1; }
 
+# With gum on PATH, a yes to configuring accounts goes straight to the wizard,
+# inside the keyring session on Linux, without the menu's own second question.
+# This gum answers yes to every question but entering the managed shell, and
+# leaves any choice unanswered.
+gum_bin="$workdir/gum-bin"
+gum_log="$workdir/gum.log"
+mkdir -p "$gum_bin" "$home/.local/bin"
+for command_name in fold stty tr wc head; do
+  command_path=$(command -v "$command_name" 2>/dev/null || true)
+  [ -z "$command_path" ] || ln -sf "$command_path" "$gum_bin/$command_name"
+done
+command cat >"$gum_bin/gum" <<'EOF_GUM'
+#!/usr/bin/env bash
+{ printf 'gum'; printf ' [%s]' "$@"; printf '\n'; } >>"$MOCK_GUM_LOG"
+for question; do :; done
+case "$1:$question" in
+  'confirm:Enter the managed zsh login shell now?') exit 1 ;;
+  confirm:*) exit 0 ;;
+  *) exit 1 ;;
+esac
+EOF_GUM
+command cat >"$home/.local/bin/nix-config-setup" <<'EOF_SETUP'
+#!/usr/bin/env bash
+printf 'setup %s\n' "$*" >>"$MOCK_LOG"
+[ "${1:-}" != --status ] || printf 'ok\tProton Pass\tready\n'
+EOF_SETUP
+command cat >"$home/.local/bin/proton-pass-session" <<'EOF_SESSION'
+#!/usr/bin/env bash
+printf 'proton %s\n' "$*" >>"$MOCK_LOG"
+EOF_SESSION
+chmod +x "$gum_bin/gum" "$home/.local/bin/nix-config-setup" "$home/.local/bin/proton-pass-session"
+: >"$logfile"
+: >"$gum_log"
+printf '' | "$pty_run" env PATH="$gum_bin:$mockbin" MOCK_GUM_LOG="$gum_log" "$bootstrap" "$repo_root" >/dev/null
+[ "$(grep -c '\[Configure accounts and API keys now?\]' "$gum_log")" = 1 ] || {
+  printf 'bootstrap test: styled bootstrap did not ask once to configure accounts:\n%s\n' "$(cat "$gum_log")" >&2; exit 1; }
+! grep -Fq -e '[choose]' -e 'Run the setup wizard now?' "$gum_log" || {
+  printf 'bootstrap test: styled bootstrap asked again before the account wizard:\n%s\n' "$(cat "$gum_log")" >&2; exit 1; }
+grep -Fxq "proton $home/.local/bin/nix-config-setup" "$logfile" || {
+  printf 'bootstrap test: styled bootstrap did not start the wizard in the keyring session:\n%s\n' "$(cat "$logfile")" >&2; exit 1; }
+rm -f "$home/.local/bin/nix-config-setup" "$home/.local/bin/proton-pass-session"
+
 # Both entry points refuse to run unattended rather than guessing an answer.
 status=0
 env PATH="$mockbin" NIX_CONFIG_TEST_NO_TTY=1 "$bootstrap" "$repo_root" >/dev/null 2>&1 </dev/null || status=$?
 [ "$status" -ne 0 ] || { printf '%s\n' 'bootstrap test: headless bootstrap did not fail closed' >&2; exit 1; }
 
-printf '%s\n' 'bootstrap test: PASSED (guided install, verified installer, platform detection, activation, managed shell, fail-closed)'
+printf '%s\n' 'bootstrap test: PASSED (guided install, verified installer, platform detection, activation, managed shell, styled account setup, fail-closed)'

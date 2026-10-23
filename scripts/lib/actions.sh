@@ -363,6 +363,13 @@ auth() {
       $'Back\treturn to the menu' || return 0
     [ "$CHOICE_INDEX" = 1 ] || return 0
   fi
+  run_account_setup
+}
+
+# The wizard itself, which bootstrap starts once it has been asked. On Linux
+# it runs inside the keyring session, so Proton Pass can be unlocked.
+run_account_setup() {
+  [ -x "$ACCOUNT_SETUP" ] || fail 'account setup is unavailable; apply the configuration first'
   if [ "$(uname -s)" = Linux ] && [ -x "$PROTON_PASS_SESSION" ]; then
     "$PROTON_PASS_SESSION" "$ACCOUNT_SETUP"
   else
