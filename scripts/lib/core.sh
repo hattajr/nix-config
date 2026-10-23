@@ -359,8 +359,18 @@ report_action() {
 # The menu then comes straight back, with no pause, since there is nothing on
 # screen worth keeping. Update's cancel comes after its sync has run, so it is
 # not one of these.
-# shellcheck disable=SC2034 # read by actions.sh and bro
 readonly BACKED_OUT=117
+
+# Runs a program whose exit status an item passes on to the menu. A program
+# that happens to exit with BACKED_OUT has failed, not backed out, so that
+# status becomes 1. Only for a program: a shell function run this way would
+# run without set -e.
+pass_on_status() {
+  local status=0
+  "$@" || status=$?
+  [ "$status" != "$BACKED_OUT" ] || status=1
+  return "$status"
+}
 
 # Steps are boxed only inside an action, which owns the log, and only in
 # styled mode. Elsewhere, as in Apply run from Jobs, a step runs exactly as it

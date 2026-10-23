@@ -2040,6 +2040,24 @@ done
 expect_pause "$(run_styled "$accounts_home" $'pick Accounts\npick Run setup\nesc' env MOCK_UNAME_S=Linux 2>&1)" \
   'Run setup at Accounts'
 
+# A wizard that happens to exit with the back-out status has still failed: the
+# step says so and the failure stays on screen, in either mode.
+mv "$accounts_home/.local/bin/nix-config-setup" "$work/accounts-setup"
+command cat >"$accounts_home/.local/bin/nix-config-setup" <<'EOF'
+#!/bin/sh
+[ "${1:-}" != --status ] || { printf 'ok\tProton Pass\tready\n'; exit 0; }
+exit 117
+EOF
+chmod +x "$accounts_home/.local/bin/nix-config-setup"
+output=$(run_styled "$accounts_home" $'pick Accounts\npick Run setup\nesc' "${accounts_env[@]}" 2>&1)
+grep -Fq 'nix-config: returning to the menu' <<<"$output" || {
+  printf 'bro test: a styled wizard exiting 117 was taken for backing out:\n%s\n' "$output" >&2; exit 1; }
+expect_pause "$output" 'a styled wizard exiting 117'
+output=$(run_menu "$accounts_home" '4\n7\n' "${accounts_env[@]}" 2>&1)
+grep -Fq 'nix-config: returning to the menu' <<<"$output" || {
+  printf 'bro test: a plain wizard exiting 117 was taken for backing out:\n%s\n' "$output" >&2; exit 1; }
+mv "$work/accounts-setup" "$accounts_home/.local/bin/nix-config-setup"
+
 rm -f "$jobs_file"
 expect_no_pause "$(run_styled "$jobs_home" $'pick Jobs\nesc' "${linux[@]}" 2>&1)" 'Esc at Jobs'
 expect_pause "$(run_styled "$jobs_home" $'pick Jobs\npick Board sync' "${linux[@]}" 2>&1)" 'saving Jobs'

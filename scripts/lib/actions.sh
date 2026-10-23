@@ -314,8 +314,9 @@ update() {
   if [ "$update_nixpkgs" = yes ] || [ "$update_pi" = yes ] || [ "$update_playwright" = yes ]; then
     update_pins "$repo" "$target" "$update_nixpkgs" "$update_pi" "$update_playwright" || return 1
   fi
+  # Pi's own status is no answer to the menu: any failure is just a failure.
   if [ "$update_extensions" = yes ]; then
-    update_pi_extensions
+    update_pi_extensions || return 1
   fi
 }
 
@@ -373,9 +374,9 @@ auth() {
 run_account_setup() {
   [ -x "$ACCOUNT_SETUP" ] || fail 'account setup is unavailable; apply the configuration first'
   if [ "$(uname -s)" = Linux ] && [ -x "$PROTON_PASS_SESSION" ]; then
-    "$PROTON_PASS_SESSION" "$ACCOUNT_SETUP"
+    pass_on_status "$PROTON_PASS_SESSION" "$ACCOUNT_SETUP"
   else
-    "$ACCOUNT_SETUP"
+    pass_on_status "$ACCOUNT_SETUP"
   fi
 }
 
@@ -421,7 +422,7 @@ shadowed_binaries_present() {
 
 shadow_review() {
   [ -x "$SHADOW_SCANNER" ] || fail 'the shadow scanner is unavailable; apply the configuration first'
-  "$SHADOW_SCANNER"
+  pass_on_status "$SHADOW_SCANNER"
 }
 
 readonly BOARD_SYNC_UNIT=gh-board-sync.service
