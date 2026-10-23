@@ -1131,7 +1131,7 @@ raw=$(run_box_apply "$box_home" MOCK_BOX_COLOUR=1 MOCK_BOX_SILENCE=1 ${utf8_loca
 screen=$(plain_screen <<<"$raw")
 grep -Eq '^│ warning: coloured line 3 +│$' <<<"$screen" || {
   echo "bro test: a coloured line did not reach the box as plain text under ${utf8_locale:-the default locale}" >&2; exit 1; }
-! grep -E '^│' <<<"$screen" | grep -Eq '\[[0-9;]*m' || {
+! grep -Eq '\[[0-9;]*m' <<<"$(grep -E '^│' <<<"$screen")" || {
   echo "bro test: colour codes were left in the box under ${utf8_locale:-the default locale}" >&2; exit 1; }
 
 # Logging is best effort: with nowhere to write a log, Apply still runs, as it
@@ -1268,7 +1268,7 @@ chmod +x "$work/old-setup"
 mv "$accounts_home/.local/bin/nix-config-setup" "$work/accounts-setup"
 cp "$work/old-setup" "$accounts_home/.local/bin/nix-config-setup"
 output=$(run_styled "$accounts_home" $'pick Health\nesc' "${accounts_env[@]}" 2>&1)
-health_screen "$output" | grep -Fxq '  ✗ configured account setup has errors → Accounts' || {
+grep -Fxq '  ✗ configured account setup has errors → Accounts' <<<"$(health_screen "$output")" || {
   echo "bro test: styled Health did not fall back to --check for an older setup tool: $output" >&2; exit 1; }
 ! grep -Fq 'some table' <<<"$output" || {
   echo 'bro test: the fallback to --check printed its table on the styled screen' >&2; exit 1; }
@@ -1616,7 +1616,7 @@ expect_untouched_checkout 'Esc at the review choice'
 # Pins that are already current say so, and there is nothing to review.
 new_update_checkout
 raw=$(run_styled "$update_home" $'pick Update\npick Pi  |Playwright\nesc' "${update_env[@]}" MOCK_PINS_CURRENT=1 2>&1)
-step_lines <<<"$raw" | grep -Fxq ' ✓ all selected pins are already current' || {
+grep -Fxq ' ✓ all selected pins are already current' <<<"$(step_lines <<<"$raw")" || {
   echo 'bro test: styled Update did not say the pins are already current' >&2; exit 1; }
 [ "$(gum_calls)" = 3 ] && ! grep -Fq "$review_question" "$gum_log" || {
   echo 'bro test: already-current pins still offered the review choice' >&2; exit 1; }
@@ -1643,7 +1643,7 @@ expect_untouched_checkout 'a cancelled plain Update'
 # Pi extensions update after the pins are settled, in a box of their own.
 new_update_checkout
 raw=$(run_styled "$update_home" $'pick Update\npick Pi  |Pi extensions\npick Discard\nesc' "${update_env[@]}" 2>&1)
-step_lines <<<"$raw" | grep -A 1 -Fx 'nix-config: update discarded' | grep -Eqx ' ✓ update Pi extensions  Ns' || {
+grep -Eqx ' ✓ update Pi extensions  Ns' <<<"$(step_lines <<<"$raw" | grep -A 1 -Fx 'nix-config: update discarded')" || {
   printf 'bro test: Pi extensions did not update after the pins as a boxed step:\n%s\n' "$(step_lines <<<"$raw")" >&2; exit 1; }
 grep -Fq 'pi update --extensions (skip=1)' "$log" || {
   echo 'bro test: the boxed extension update did not reach Pi' >&2; exit 1; }
