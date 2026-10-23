@@ -358,6 +358,7 @@ report_action() {
 # before anything ran returns BACKED_OUT. The menu then comes straight back,
 # with no pause, since there is nothing on screen worth keeping. No step here
 # exits with this status.
+# shellcheck disable=SC2034 # read by actions.sh and bro
 readonly BACKED_OUT=117
 
 # Steps are boxed only inside an action, which owns the log, and only in
