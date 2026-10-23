@@ -1952,4 +1952,150 @@ output=$(run_menu "$apply_home" "1\n${quit}\n" 2>&1)
   && [ "$(grep -c 'choose \[1-' <<<"$output")" = 2 ] || {
   printf 'bro test: plain mode drew a card, cleared the screen, or paused:\n%s\n' "$output" >&2; exit 1; }
 
-echo 'bro test: PASSED (menu-only entry, apply identity, DNS retry, sync push boundary, accounts wrapper, Pi extensions, Pi + ext, Playwright, Jobs, styled prompts, Health, log box, Accounts table, Sync and Update steps, status card)'
+# --- boxed fetch and backing out ----------------------------------------------
+
+# A checkout whose origin is reached over ssh, with an ssh that records how it
+# was started and is refused, as it would be without a usable key. bro's Git
+# reads no developer configuration, which could rewrite the URL or set its own
+# ssh command, and inherits no Git or ssh variables from the suite.
+ssh_checkout="$work/ssh-checkout"
+ssh_home="$work/ssh-home"
+ssh_bin="$work/ssh-bin"
+ssh_log="$work/ssh-log"
+fixture_git clone -q "$card_upstream" "$ssh_checkout"
+fixture_git -C "$ssh_checkout" remote set-url origin git@github.com:hattajr/nix-config.git
+mkdir -p "$ssh_home/.local/state/bro" "$ssh_bin"
+printf '%s\n' "$ssh_checkout" >"$ssh_home/.local/state/bro/checkout"
+command cat >"$ssh_bin/ssh" <<'EOF'
+#!/bin/sh
+printf 'ssh %s (GIT_TERMINAL_PROMPT=%s)\n' "$*" "${GIT_TERMINAL_PROMPT-unset}" >>"$MOCK_SSH_LOG"
+printf 'git@github.com: Permission denied (publickey).\n' >&2
+exit 255
+EOF
+chmod +x "$ssh_bin/ssh"
+ssh_env=(env -u GIT_TERMINAL_PROMPT -u GIT_SSH_COMMAND -u GIT_SSH PATH="$ssh_bin:$gumbin:$mockbin:$PATH"
+  GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 MOCK_SSH_LOG="$ssh_log")
+
+# Asserts ssh was started once, its arguments beginning with OPTIONS and
+# reaching git@github.com, with Git's own credential prompt set as given.
+expect_ssh_call() {
+  local options=$1 prompt=$2 what=$3
+  [ "$(grep -c '' "$ssh_log")" = 1 ] \
+    && grep -Eq "^ssh ${options:+$options }.*git@github\.com .*\(GIT_TERMINAL_PROMPT=$prompt\)\$" "$ssh_log" || {
+    printf 'bro test: %s did not start ssh with "%s" and GIT_TERMINAL_PROMPT=%s:\n%s\n' \
+      "$what" "$options" "$prompt" "$(cat "$ssh_log")" >&2; exit 1; }
+}
+
+# A boxed fetch asks for nothing: ssh runs in batch mode and Git's credential
+# prompt is off, so a missing key fails at once, the box shows Git's error,
+# and the failure stays on screen until a key is pressed.
+: >"$ssh_log"
+raw=$(run_styled "$ssh_home" $'pick Sync\nesc' "${ssh_env[@]}" 2>&1)
+screen=$(plain_screen <<<"$raw")
+expect_ssh_call '-o BatchMode=yes' 0 'a boxed fetch'
+for expected in 'git@github.com: Permission denied (publickey).' 'Could not read from remote repository' \
+  ' ✗ fetch failed' 'nix-config: ERROR: could not reach the remote' ' ✗ Sync failed' 'press any key to return'; do
+  grep -Fq -- "$expected" <<<"$screen" || {
+    printf 'bro test: a refused boxed fetch did not show: %s\n%s\n' "$expected" "$screen" >&2; exit 1; }
+done
+
+# The user's own ssh command is extended, never replaced, whichever way it is set.
+: >"$ssh_log"
+run_styled "$ssh_home" $'pick Sync\nesc' "${ssh_env[@]}" GIT_SSH_COMMAND='ssh -i /keys/mine' >/dev/null 2>&1
+expect_ssh_call '-i /keys/mine -o BatchMode=yes' 0 'a boxed fetch with GIT_SSH_COMMAND'
+git -C "$ssh_checkout" config core.sshCommand 'ssh -F /config/mine'
+: >"$ssh_log"
+run_styled "$ssh_home" $'pick Sync\nesc' "${ssh_env[@]}" >/dev/null 2>&1
+expect_ssh_call '-F /config/mine -o BatchMode=yes' 0 'a boxed fetch with core.sshCommand'
+git -C "$ssh_checkout" config --unset core.sshCommand
+# A GIT_SSH program need not take ssh options, so it is started as it is.
+: >"$ssh_log"
+run_styled "$ssh_home" $'pick Sync\nesc' "${ssh_env[@]}" GIT_SSH="$ssh_bin/ssh" >/dev/null 2>&1
+grep -Fq '(GIT_TERMINAL_PROMPT=0)' "$ssh_log" && ! grep -Fq 'BatchMode' "$ssh_log" || {
+  printf 'bro test: a boxed fetch changed how a GIT_SSH program is started:\n%s\n' "$(cat "$ssh_log")" >&2; exit 1; }
+
+# Plain Sync is unboxed and fetches exactly as before, free to ask.
+: >"$ssh_log"
+output=$(run_menu "$ssh_home" "2\n${quit}\n" "${ssh_env[@]}" 2>&1)
+expect_ssh_call '' unset 'a plain fetch'
+! grep -Fq 'BatchMode' "$ssh_log" && grep -Fq 'could not reach the remote' <<<"$output" || {
+  printf 'bro test: a plain fetch was changed:\n%s\n' "$(cat "$ssh_log")" >&2; exit 1; }
+
+# Backing out, with Back or Esc before anything ran, brings the menu straight
+# back on a fresh screen, with no pause and no failure.
+expect_no_pause() {
+  local output=$1 what=$2
+  ! grep -Fq -e 'press any key' -e 'returning to the menu' -e ' failed' <<<"$output" \
+    && [ "$(grep -o $'\e\\[H\e\\[2J' <<<"$output" | wc -l | tr -d ' ')" = 2 ] || {
+    printf 'bro test: %s paused or failed instead of going straight back to the menu:\n%s\n' "$what" "$output" >&2; exit 1; }
+}
+expect_pause() {
+  grep -Fq 'press any key to return' <<<"$1" || {
+    printf 'bro test: %s did not wait for a key:\n%s\n' "$2" "$1" >&2; exit 1; }
+}
+for answer in 'pick Back' esc; do
+  output=$(run_styled "$accounts_home" "pick Accounts"$'\n'"$answer"$'\nesc' env MOCK_UNAME_S=Linux 2>&1)
+  expect_no_pause "$output" "$answer at Accounts"
+done
+expect_pause "$(run_styled "$accounts_home" $'pick Accounts\npick Run setup\nesc' env MOCK_UNAME_S=Linux 2>&1)" \
+  'Run setup at Accounts'
+
+rm -f "$jobs_file"
+expect_no_pause "$(run_styled "$jobs_home" $'pick Jobs\nesc' "${linux[@]}" 2>&1)" 'Esc at Jobs'
+expect_pause "$(run_styled "$jobs_home" $'pick Jobs\npick Board sync' "${linux[@]}" 2>&1)" 'saving Jobs'
+rm -f "$jobs_file"
+
+for answers in $'pick Update\npick\nesc' $'pick Update\nesc\nesc'; do
+  new_update_checkout
+  output=$(run_styled "$update_home" "$answers" "${update_env[@]}" 2>&1)
+  grep -Fq 'nix-config: update cancelled' <<<"$output" || {
+    echo "bro test: the cancelled styled Update did not say so: $answers" >&2; exit 1; }
+  expect_no_pause "$output" "a cancelled styled Update ($answers)"
+done
+new_update_checkout
+expect_pause "$(run_styled "$update_home" $'pick Update\npick Pi  \npick Discard\nesc' "${update_env[@]}" 2>&1)" \
+  'Discard at the Update summary'
+# Plain mode never pauses, and a cancelled Update is no failure there either.
+new_update_checkout
+output=$(run_menu "$update_home" "3\n5\n${quit}\n" "${update_plain_env[@]}" 2>&1)
+grep -Fq 'nix-config: update cancelled' <<<"$output" && ! grep -Fq -e 'returning to the menu' -e 'press any key' <<<"$output" || {
+  printf 'bro test: a cancelled plain Update failed or paused:\n%s\n' "$output" >&2; exit 1; }
+
+# A pin with no version before keeps its empty old column, in both modes.
+new_update_checkout
+printf '{ }\n' >"$update_checkout/home/modules/pi.nix"
+git -C "$update_checkout" commit -qam 'Pi without a version'
+update_head=$(git -C "$update_checkout" rev-parse HEAD)
+output=$(run_menu "$update_home" "3\n2\n5\n3\n${quit}\n" "${update_plain_env[@]}" 2>&1)
+grep -Fxq "$(printf '  %-10s%s -> %s' 'Pi:' '' '1.1.0')" <<<"$(tr -d '\r' <<<"$output")" || {
+  printf 'bro test: a plain summary row with no old version shifted its columns:\n%s\n' "$output" >&2; exit 1; }
+raw=$(run_styled "$update_home" $'pick Update\npick Pi  \npick Discard\nesc' "${update_env[@]}" 2>&1)
+grep -Eq '^│ Pi {10}→ 1\.1\.0 +│$' <<<"$(plain_screen <<<"$raw")" || {
+  printf 'bro test: a styled summary row with no old version shifted its columns:\n%s\n' "$(plain_screen <<<"$raw")" >&2; exit 1; }
+expect_untouched_checkout 'a summary with no old version'
+
+# A saved run time with a leading zero is still decimal, and no error leaks.
+write_health "checked"$'\t'"0$(($(date +%s) - 7200))" $'ok\tcore\tcheckout metadata'
+card=$(draw_card "$clone" "$health_state" '')
+expect_card_line 3 "$card" 'health ✓ all checks passed · checked 2h ago' 'a run time with a leading zero'
+write_health "checked"$'\t'"0999" $'ok\tcore\tcheckout metadata'
+card=$(draw_card "$clone" "$health_state" '')
+! grep -Fq -e 'value too great' -e 'checked  ago' <<<"$card" && grep -Eq '· checked [0-9]+d ago' <<<"$card" || {
+  printf 'bro test: a run time of 0999 was not read as decimal:\n%s\n' "$card" >&2; exit 1; }
+
+# A text box fits a narrow terminal, its title cut with … like its rows.
+for columns in 60 24; do
+  box=$(printf '' | "$pty_run" bash -c '
+      set -euo pipefail
+      stty cols "$2" </dev/tty
+      . "$1/scripts/lib/core.sh"
+      draw_text_box "Proposed version updates" "Pi         1.0.0 → 1.1.0" "Playwright 0.1.0 → 0.2.0"
+    ' _ "$repo_root" "$columns" | plain_screen)
+  sed -e 's/─/./g' -e 's/│/./g' -e 's/╭/./g' -e 's/╮/./g' -e 's/╰/./g' -e 's/╯/./g' -e 's/→/./g' -e 's/…/./g' <<<"$box" \
+    | awk -v width="$columns" 'length($0) != width { bad = 1 } END { exit bad || NR != 4 }' || {
+    printf 'bro test: a text box is not %s columns wide:\n%s\n' "$columns" "$box" >&2; exit 1; }
+done
+[ "$(head -n 1 <<<"$box")" = '╭─ Proposed version … ─╮' ] || {
+  printf 'bro test: a narrow text box did not cut its title with …:\n%s\n' "$box" >&2; exit 1; }
+
+echo 'bro test: PASSED (menu-only entry, apply identity, DNS retry, sync push boundary, accounts wrapper, Pi extensions, Pi + ext, Playwright, Jobs, styled prompts, Health, log box, Accounts table, Sync and Update steps, status card, boxed fetch and backing out)'
