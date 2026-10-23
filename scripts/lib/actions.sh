@@ -58,18 +58,45 @@ apply() {
   fi
 }
 
+# A box cannot be answered, so a fetch inside one fails at once rather than
+# wait on a prompt hidden behind it: Git asks for no credentials and ssh runs
+# in batch mode. A user's own ssh command, from GIT_SSH_COMMAND or
+# core.sshCommand, is kept and only extended. A GIT_SSH program may not be ssh
+# and may take no ssh options, so it is left as it is.
+fetch_without_prompts() {
+  local repo=$1 ssh_command
+  ssh_command=${GIT_SSH_COMMAND:-$(run_git -C "$repo" config --get core.sshCommand || true)}
+  [ -n "$ssh_command" ] || [ -n "${GIT_SSH:-}" ] || ssh_command=ssh
+  (
+    export GIT_TERMINAL_PROMPT=0
+    [ -z "$ssh_command" ] || export GIT_SSH_COMMAND="$ssh_command -o BatchMode=yes"
+    run_git -C "$repo" fetch --prune
+  )
+}
+
+# Fetching and fast-forwarding are steps of their own, boxed like Apply's.
+# The push question comes only after every step has finished. Unboxed, the
+# fetch may still ask for a passphrase or a password, as it always could.
 sync() {
   local repo=$1 target=$2 upstream ahead behind
   require_clean_tree "$repo" Sync || return 1
   upstream=$(run_git -C "$repo" rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null) \
     || fail 'this branch has no upstream, so there is nothing to sync from'
-  run_git -C "$repo" fetch --prune || fail 'could not reach the remote'
+  if step_boxes; then
+    run_logged fetch fetch_without_prompts "$repo" || fail 'could not reach the remote'
+  else
+    run_logged fetch run_git -C "$repo" fetch --prune || fail 'could not reach the remote'
+  fi
   ahead=$(run_git -C "$repo" rev-list --count "$upstream..HEAD")
   behind=$(run_git -C "$repo" rev-list --count "HEAD..$upstream")
   [ "$ahead" = 0 ] || [ "$behind" = 0 ] \
     || fail "this branch is $ahead ahead and $behind behind $upstream; merge or rebase it yourself first"
   if [ "$behind" != 0 ]; then
-    run_git -C "$repo" merge --ff-only "$upstream" || fail 'fast-forward failed'
+    run_logged fast-forward run_git -C "$repo" merge --ff-only "$upstream" || fail 'fast-forward failed'
+  elif step_boxes; then
+    # A step with nothing to do is still a step done. Plain Sync has never
+    # said so, and still does not.
+    log_step "already up to date with $upstream"
   fi
   apply "$repo" "$target"
   if [ "$ahead" != 0 ] && confirm 'Push your local commits so other machines receive them?' no; then
@@ -95,23 +122,48 @@ pinned_version() {
   sed -n 's/^[[:space:]]*version = "\([^"]*\)";.*/\1/p' | head -n 1
 }
 
-print_module_update() {
+# One "label<TAB>old<TAB>new" row for a module whose pin moved.
+module_update_row() {
   local repo=$1 module=$2 label=$3
   run_git -C "$repo" diff --quiet -- "$module" && return 0
-  printf '  %-10s%s -> %s\n' "$label:" \
+  printf '%s\t%s\t%s\n' "$label" \
     "$(run_git -C "$repo" show "HEAD:$module" | pinned_version)" \
     "$(pinned_version <"$repo/$module")"
 }
 
-print_update_summary() {
+# One "label<TAB>old<TAB>new" row per pin the update moved.
+update_summary_rows() {
   local repo=$1 old_nixpkgs new_nixpkgs
-  printf '\nProposed version updates:\n'
-  print_module_update "$repo" home/modules/pi.nix Pi
-  print_module_update "$repo" home/modules/playwright-cli.nix Playwright
+  module_update_row "$repo" home/modules/pi.nix Pi
+  module_update_row "$repo" home/modules/playwright-cli.nix Playwright
   if ! run_git -C "$repo" diff --quiet -- flake.lock; then
     old_nixpkgs=$(run_git -C "$repo" show HEAD:flake.lock | jq -r '.nodes.nixpkgs.locked.rev // "unknown"')
     new_nixpkgs=$(jq -r '.nodes.nixpkgs.locked.rev // "unknown"' "$repo/flake.lock")
-    printf '  Nixpkgs:  %s -> %s\n' "${old_nixpkgs:0:12}" "${new_nixpkgs:0:12}"
+    printf 'Nixpkgs\t%s\t%s\n' "${old_nixpkgs:0:12}" "${new_nixpkgs:0:12}"
+  fi
+}
+
+# Styled, the summary is a box of its own; plain, it reads as it always has.
+# Fields are split by hand: read with a tab IFS would merge the two tabs
+# around an empty old version and shift the new one into its place.
+print_update_summary() {
+  local repo=$1 row label old new rows=()
+  while IFS= read -r row; do
+    label=${row%%$'\t'*} row=${row#*$'\t'}
+    old=${row%%$'\t'*} new=${row#*$'\t'}
+    if styled_prompts; then
+      printf -v row '%-11s%s → %s' "$label" "$old" "$new"
+    else
+      printf -v row '  %-10s%s -> %s' "$label:" "$old" "$new"
+    fi
+    rows+=("$row")
+  done < <(update_summary_rows "$repo")
+  if styled_prompts; then
+    printf '\n'
+    draw_text_box 'Proposed version updates' "${rows[@]+"${rows[@]}"}"
+  else
+    printf '\nProposed version updates:\n'
+    [ "${#rows[@]}" = 0 ] || printf '%s\n' "${rows[@]}"
   fi
 }
 
@@ -124,67 +176,65 @@ update_pi_extensions() {
     warn 'Pi is not installed for this account yet; apply the configuration first'
     return 1
   }
-  log 'updating Pi extensions'
-  PI_SKIP_PROTON_PASS=1 "$PI_WRAPPER" update --extensions
+  step_boxes || log 'updating Pi extensions'
+  run_logged 'update Pi extensions' env PI_SKIP_PROTON_PASS=1 "$PI_WRAPPER" update --extensions
 }
 
-# The pins live in tracked files and go through review, apply, and commit. Pi's
-# extensions are runtime state, so they are updated separately and afterwards,
-# against whichever Pi this machine ends up running.
-update_pins() {
-  local repo=$1 target=$2 update_nixpkgs=$3 update_pi=$4 update_playwright=${5:-no} file
-
+# Each selected updater is a step of its own. A failed one stops the update
+# there, so nothing is reviewed and no extension updates against a Pi that did
+# not move.
+run_pin_updaters() {
+  local repo=$1 update_nixpkgs=$2 update_pi=$3 update_playwright=$4
   if [ "$update_nixpkgs" = yes ]; then
-    log 'updating the nixpkgs pin'
-    run_nix_with_dns_retry nix flake update nixpkgs || {
+    step_boxes || log 'updating the nixpkgs pin'
+    run_logged 'update Nixpkgs' run_nix_with_dns_retry nix flake update nixpkgs || {
       warn 'nixpkgs pin update failed'
       return 1
     }
   fi
   if [ "$update_pi" = yes ]; then
-    log 'updating the Pi pin'
-    "$repo/scripts/update-pi" "$repo" || {
+    step_boxes || log 'updating the Pi pin'
+    run_logged 'update Pi' "$repo/scripts/update-pi" "$repo" || {
       warn 'Pi pin update failed'
       return 1
     }
   fi
   if [ "$update_playwright" = yes ]; then
-    log 'updating the playwright-cli pin'
-    "$repo/scripts/update-playwright-cli" "$repo" || {
+    step_boxes || log 'updating the playwright-cli pin'
+    run_logged 'update Playwright' "$repo/scripts/update-playwright-cli" "$repo" || {
       warn 'playwright-cli pin update failed'
       return 1
     }
   fi
+}
 
-  if run_git -C "$repo" diff --quiet; then
-    log 'all selected pins are already current'
-    return 0
-  fi
-  run_git -C "$repo" diff --check || fail 'update produced invalid whitespace'
-  print_update_summary "$repo"
+show_pin_diff() {
+  local repo=$1 file
+  run_git -C "$repo" diff
+  # A newly generated lockfile is not tracked until the user approves commit.
+  for file in "${PIN_FILES[@]}"; do
+    [ -f "$repo/$file" ] && ! is_tracked "$repo" "$file" || continue
+    run_git -C "$repo" diff --no-index -- /dev/null "$repo/$file" || {
+      [ "$?" -eq 1 ] || fail "could not show the generated $file diff"
+    }
+  done
+}
 
-  if confirm 'Show the complete generated diff?' no; then
-    run_git -C "$repo" diff
-    # A newly generated lockfile is not tracked until the user approves commit.
-    for file in "${PIN_FILES[@]}"; do
-      [ -f "$repo/$file" ] && ! is_tracked "$repo" "$file" || continue
-      run_git -C "$repo" diff --no-index -- /dev/null "$repo/$file" || {
-        [ "$?" -eq 1 ] || fail "could not show the generated $file diff"
-      }
-    done
-  fi
-  if ! confirm 'Apply these changes on this machine?' no; then
-    for file in "${PIN_FILES[@]}"; do
-      if is_tracked "$repo" "$file"; then
-        run_git -C "$repo" restore --source=HEAD -- "$file"
-      else
-        rm -f "$repo/$file"
-      fi
-    done
-    log 'update discarded'
-    return 0
-  fi
+# Puts the checkout back exactly as the sync left it.
+discard_pin_updates() {
+  local repo=$1 file
+  for file in "${PIN_FILES[@]}"; do
+    if is_tracked "$repo" "$file"; then
+      run_git -C "$repo" restore --source=HEAD -- "$file"
+    else
+      rm -f "$repo/$file"
+    fi
+  done
+  log 'update discarded'
+}
 
+apply_pin_updates() {
+  local repo=$1 target=$2 file
   apply "$repo" "$target"
   if ! confirm 'Commit these version-pin changes?' no; then
     log 'changes applied locally but left uncommitted'
@@ -199,45 +249,134 @@ update_pins() {
   fi
 }
 
+# One choice decides what happens to the moved pins. Seeing the diff comes
+# back to the same choice; leaving the choice keeps nothing, as declining to
+# apply always has.
+review_pin_updates() {
+  local repo=$1 target=$2
+  while choose 'What should happen to these changes?' \
+    $'Apply\tactivate them, then offer to commit and push' \
+    $'Show diff\tthe complete generated diff' \
+    $'Discard\tput every pin back as it was'; do
+    case "$CHOICE_INDEX" in
+      1) apply_pin_updates "$repo" "$target"; return ;;
+      2) show_pin_diff "$repo" ;;
+      3) break ;;
+    esac
+  done
+  discard_pin_updates "$repo"
+}
+
+# The pins live in tracked files and go through review, apply, and commit. Pi's
+# extensions are runtime state, so they are updated separately and afterwards,
+# against whichever Pi this machine ends up running.
+update_pins() {
+  local repo=$1 target=$2 update_nixpkgs=$3 update_pi=$4 update_playwright=${5:-no}
+  run_pin_updaters "$repo" "$update_nixpkgs" "$update_pi" "$update_playwright" || return 1
+  if run_git -C "$repo" diff --quiet; then
+    log_step 'all selected pins are already current'
+    return 0
+  fi
+  run_git -C "$repo" diff --check || fail 'update produced invalid whitespace'
+  print_update_summary "$repo"
+  review_pin_updates "$repo" "$target"
+}
+
 update() {
-  local repo=$1 target=$2 update_nixpkgs=no update_pi=no update_extensions=no update_playwright=no
+  local repo=$1 target=$2 index update_nixpkgs=no update_pi=no update_extensions=no update_playwright=no
   require_clean_tree "$repo" Update || return 1
 
   # Start from the shared configuration before calculating new upstream pins.
   sync "$repo" "$target"
 
-  choose 'What should be updated?' \
+  # Nothing starts ticked, so Done straight away is a cancel, like Esc. The
+  # sync has already run by then, so a cancel still finishes as an action
+  # that ran, and its steps stay on screen until a key is pressed.
+  CHOSEN_INDEXES=()
+  if ! choose_many 'What should be updated?' 'update the ticked items' \
     $'Nixpkgs\tnormal Nix-managed apps' \
     $'Pi\tthe custom Nix package' \
-    $'Extensions\tPi\'s own npm packages, not a repository pin' \
-    $'Pi + ext\tthe Pi package, then its extensions' \
+    $'Pi extensions\tPi\'s own npm packages, not a repository pin' \
     $'Playwright\tthe playwright-cli package and its agent skill' \
-    $'Everything\tNixpkgs, Pi, Pi extensions, and playwright-cli' \
-    $'Cancel\tleave every version as it is' || return 0
-  case "$CHOICE_INDEX" in
-    1) update_nixpkgs=yes ;;
-    2) update_pi=yes ;;
-    3) update_extensions=yes ;;
-    4) update_pi=yes; update_extensions=yes ;;
-    5) update_playwright=yes ;;
-    6) update_nixpkgs=yes; update_pi=yes; update_extensions=yes; update_playwright=yes ;;
-    7) log 'update cancelled'; return 0 ;;
-  esac
+    || [ "${#CHOSEN_INDEXES[@]}" = 0 ]; then
+    log 'update cancelled'
+    return 0
+  fi
+  for index in "${CHOSEN_INDEXES[@]}"; do
+    case "$index" in
+      1) update_nixpkgs=yes ;;
+      2) update_pi=yes ;;
+      3) update_extensions=yes ;;
+      4) update_playwright=yes ;;
+    esac
+  done
 
   if [ "$update_nixpkgs" = yes ] || [ "$update_pi" = yes ] || [ "$update_playwright" = yes ]; then
     update_pins "$repo" "$target" "$update_nixpkgs" "$update_pi" "$update_playwright" || return 1
   fi
+  # Pi's own status is no answer to the menu: any failure is just a failure.
   if [ "$update_extensions" = yes ]; then
-    update_pi_extensions
+    update_pi_extensions || return 1
   fi
 }
 
+# The setup tool's status rows, "level<TAB>item<TAB>detail" with level ok,
+# optional or fail, in the order and words of its --check table. A setup tool
+# from before the status mode prints none and fails, so callers fall back to
+# --check. Its stderr would only be that tool's usage text.
+ACCOUNT_ROWS=''
+ACCOUNT_ROWS_STATUS=0
+read_account_rows() {
+  ACCOUNT_ROWS_STATUS=0
+  ACCOUNT_ROWS=$("$ACCOUNT_SETUP" --status 2>/dev/null) || ACCOUNT_ROWS_STATUS=$?
+}
+
+# The table the Accounts screen shows before offering the wizard. A long
+# detail wraps under its own column.
+account_table() {
+  local level item detail width=0 room line indent
+  while IFS=$'\t' read -r level item detail; do
+    [ "${#item}" -le "$width" ] || width=${#item}
+  done <<<"$ACCOUNT_ROWS"
+  room=$(($(styled_width) - width - 6))
+  [ "$room" -gt 0 ] || room=1
+  printf '\n\e[3%sm%s\e[39m\n' "$STYLE_ACCENT" Accounts
+  while IFS=$'\t' read -r level item detail; do
+    indent=$(printf '  %s %-*s  ' "$(styled_mark "$level")" "$width" "$item")
+    while IFS= read -r line; do
+      printf '%s%s\n' "$indent" "${line%"${line##*[! ]}"}"
+      indent=$(printf '%*s' "$((width + 6))" '')
+    done < <(printf '%s\n' "$detail" | fold -s -w "$room")
+  done <<<"$ACCOUNT_ROWS"
+}
+
+# Styled mode shows where every account stands before anything changes, and
+# the wizard runs only when asked. Plain mode goes straight to the wizard.
 auth() {
   [ -x "$ACCOUNT_SETUP" ] || fail 'account setup is unavailable; apply the configuration first'
+  if styled_prompts; then
+    read_account_rows
+    if [ -n "$ACCOUNT_ROWS" ]; then
+      account_table
+    else
+      "$ACCOUNT_SETUP" --check || true
+    fi
+    choose 'Run the setup wizard now?' \
+      $'Run setup\tconnect Proton Pass, logins and API keys' \
+      $'Back\treturn to the menu' || return "$BACKED_OUT"
+    [ "$CHOICE_INDEX" = 1 ] || return "$BACKED_OUT"
+  fi
+  run_account_setup
+}
+
+# The wizard itself, which bootstrap starts once it has been asked. On Linux
+# it runs inside the keyring session, so Proton Pass can be unlocked.
+run_account_setup() {
+  [ -x "$ACCOUNT_SETUP" ] || fail 'account setup is unavailable; apply the configuration first'
   if [ "$(uname -s)" = Linux ] && [ -x "$PROTON_PASS_SESSION" ]; then
-    "$PROTON_PASS_SESSION" "$ACCOUNT_SETUP"
+    pass_on_status "$PROTON_PASS_SESSION" "$ACCOUNT_SETUP"
   else
-    "$ACCOUNT_SETUP"
+    pass_on_status "$ACCOUNT_SETUP"
   fi
 }
 
@@ -264,7 +403,7 @@ background_jobs() {
     options+=("$label")
     ! grep -Fxq "$job" <<<"$saved" || CHOSEN_INDEXES+=("$((index + 1))")
   done
-  choose_many "Background jobs on $host" 'apply and return' "${options[@]}" || return 0
+  choose_many "Background jobs on $host" 'apply and return' "${options[@]}" || return "$BACKED_OUT"
 
   for index in "${CHOSEN_INDEXES[@]+"${CHOSEN_INDEXES[@]}"}"; do
     enabled+=("${BACKGROUND_JOBS[index - 1]}")
@@ -283,7 +422,7 @@ shadowed_binaries_present() {
 
 shadow_review() {
   [ -x "$SHADOW_SCANNER" ] || fail 'the shadow scanner is unavailable; apply the configuration first'
-  "$SHADOW_SCANNER"
+  pass_on_status "$SHADOW_SCANNER"
 }
 
 readonly BOARD_SYNC_UNIT=gh-board-sync.service
@@ -430,6 +569,32 @@ health_screen() {
   done
 }
 
+# Styled Health gives every account row a result of its own, in place of
+# --check's table and single summary. A failing row is exactly what fails
+# --check, so Health still fails exactly when it does; should the rows and the
+# exit status ever disagree, the summary failure keeps Health failing. Without
+# rows, from a setup tool that predates them, --check answers quietly.
+account_rows_health() {
+  local level item detail failed=no
+  read_account_rows
+  if [ -z "$ACCOUNT_ROWS" ]; then
+    ACCOUNT_ROWS_STATUS=0
+    "$ACCOUNT_SETUP" --check >/dev/null 2>&1 || ACCOUNT_ROWS_STATUS=$?
+    [ "$ACCOUNT_ROWS_STATUS" != 0 ] || health_result ok accounts 'optional account setup check'
+  fi
+  while IFS=$'\t' read -r level item detail; do
+    case "$level" in
+      ok | optional) health_result "$level" accounts "$item: $detail" ;;
+      fail)
+        failed=yes
+        health_result fail accounts "$item: $detail; choose Accounts from the menu"
+        ;;
+    esac
+  done <<<"$ACCOUNT_ROWS"
+  [ "$ACCOUNT_ROWS_STATUS" = 0 ] || [ "$failed" = yes ] \
+    || health_result fail accounts 'configured account setup has errors; choose Accounts from the menu'
+}
+
 # Only a core or accounts failure fails Health. A shadowed binary or a Board
 # sync problem is a warning, so a first install on a machine with a
 # hand-installed tool still succeeds.
@@ -496,7 +661,9 @@ health() {
     health_result fail core 'managed tmux or configuration is unavailable'
   fi
 
-  if [ -x "$ACCOUNT_SETUP" ]; then
+  if [ -x "$ACCOUNT_SETUP" ] && styled_prompts; then
+    account_rows_health
+  elif [ -x "$ACCOUNT_SETUP" ]; then
     if "$ACCOUNT_SETUP" --check; then
       health_result ok accounts 'optional account setup check'
     else

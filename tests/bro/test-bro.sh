@@ -26,10 +26,10 @@ command cat >"$mockbin/git" <<EOF
 printf 'git %s\\n' "\$*" >>"$log"
 if [ "\${MOCK_GIT_MODE:-}" = sync ]; then
   case "\${3:-}" in
-    status|fetch|push) exit 0 ;;
+    status|fetch|push|merge) exit 0 ;;
     rev-parse) printf '%s\\n' origin/main; exit 0 ;;
     rev-list)
-      case "\${5:-}" in *..HEAD) printf '%s\\n' "\${MOCK_GIT_AHEAD:-1}" ;; *) printf '%s\\n' 0 ;; esac
+      case "\${5:-}" in *..HEAD) printf '%s\\n' "\${MOCK_GIT_AHEAD:-1}" ;; *) printf '%s\\n' "\${MOCK_GIT_BEHIND:-0}" ;; esac
       exit 0
       ;;
   esac
@@ -253,8 +253,9 @@ grep -q '^setup ' "$log" || { echo 'bro test: Accounts fallback did not run setu
 
 # --- Update: Pi extensions --------------------------------------------------
 
-# Extensions are Pi's own npm packages, so choosing them must reach Pi and must
-# not touch the pinned files or their review, apply, and commit flow.
+# Extensions are Pi's own npm packages, so ticking them must reach Pi and must
+# not touch the pinned files or their review, apply, and commit flow. Update's
+# multi-select toggles items by number and commits the ticks with Done, 5.
 extensions_home="$work/extensions-home"
 mkdir -p "$extensions_home/.local/bin"
 record_checkout "$extensions_home"
@@ -265,7 +266,7 @@ EOF
 chmod +x "$extensions_home/.local/bin/pi"
 
 : >"$log"
-run_menu "$extensions_home" "3\n3\n${quit}\n" env MOCK_GIT_MODE=sync MOCK_GIT_AHEAD=0 >/dev/null
+run_menu "$extensions_home" "3\n3\n5\n${quit}\n" env MOCK_GIT_MODE=sync MOCK_GIT_AHEAD=0 >/dev/null
 grep -Fq 'pi update --extensions (skip=1)' "$log" || {
   echo 'bro test: Update did not offer a working Pi extension update' >&2; exit 1; }
 ! grep -Eq '^git .* (add|commit)($| )' "$log" || {
@@ -273,7 +274,7 @@ grep -Fq 'pi update --extensions (skip=1)' "$log" || {
 ! grep -Fq 'nix flake update' "$log" || {
   echo 'bro test: updating Pi extensions also moved the nixpkgs pin' >&2; exit 1; }
 
-# Pi + ext moves the Pi pin first, then updates extensions against it, and
+# Pi with its extensions moves the Pi pin first, then updates extensions against it, and
 # leaves the nixpkgs pin alone.
 command cat >"$checkout/scripts/update-pi" <<'EOF'
 #!/bin/sh
@@ -282,7 +283,7 @@ printf 'update-pi %s\n' "$*" >>"$MOCK_LOG"
 EOF
 chmod +x "$checkout/scripts/update-pi"
 : >"$log"
-run_menu "$extensions_home" "3\n4\n${quit}\n" env MOCK_GIT_MODE=sync MOCK_GIT_AHEAD=0 >/dev/null
+run_menu "$extensions_home" "3\n2\n3\n5\n${quit}\n" env MOCK_GIT_MODE=sync MOCK_GIT_AHEAD=0 >/dev/null
 grep -Fq "update-pi $checkout" "$log" || {
   echo 'bro test: Pi + ext did not update the Pi pin' >&2; exit 1; }
 grep -Fq 'pi update --extensions (skip=1)' "$log" || {
@@ -299,7 +300,7 @@ printf 'update-playwright-cli %s\n' "$*" >>"$MOCK_LOG"
 EOF
 chmod +x "$checkout/scripts/update-playwright-cli"
 : >"$log"
-run_menu "$extensions_home" "3\n5\n${quit}\n" env MOCK_GIT_MODE=sync MOCK_GIT_AHEAD=0 >/dev/null
+run_menu "$extensions_home" "3\n4\n5\n${quit}\n" env MOCK_GIT_MODE=sync MOCK_GIT_AHEAD=0 >/dev/null
 grep -Fq "update-playwright-cli $checkout" "$log" || {
   echo 'bro test: Playwright did not update the playwright-cli pin' >&2; exit 1; }
 ! grep -Eq '^(update-pi|pi update) ' "$log" || {
@@ -310,7 +311,7 @@ grep -Fq "update-playwright-cli $checkout" "$log" || {
 # A failed pin update is reported as a failure, never as already current, and
 # stops before extensions update against a Pi that did not move.
 : >"$log"
-output=$(run_menu "$extensions_home" "3\n4\n${quit}\n" env MOCK_GIT_MODE=sync MOCK_GIT_AHEAD=0 MOCK_UPDATE_PI_FAIL=1 2>&1)
+output=$(run_menu "$extensions_home" "3\n2\n3\n5\n${quit}\n" env MOCK_GIT_MODE=sync MOCK_GIT_AHEAD=0 MOCK_UPDATE_PI_FAIL=1 2>&1)
 grep -Fq 'Pi pin update failed' <<<"$output" || {
   echo 'bro test: a failed Pi pin update was not reported' >&2; exit 1; }
 ! grep -Fq 'already current' <<<"$output" || {
@@ -321,7 +322,7 @@ grep -Fq 'Pi pin update failed' <<<"$output" || {
 # Without Pi installed the step explains itself rather than failing silently.
 rm "$extensions_home/.local/bin/pi"
 : >"$log"
-output=$(run_menu "$extensions_home" "3\n3\n${quit}\n" env MOCK_GIT_MODE=sync MOCK_GIT_AHEAD=0 2>&1)
+output=$(run_menu "$extensions_home" "3\n3\n5\n${quit}\n" env MOCK_GIT_MODE=sync MOCK_GIT_AHEAD=0 2>&1)
 grep -Fq 'Pi is not installed for this account yet' <<<"$output" || {
   echo 'bro test: a missing Pi did not explain the extension update failure' >&2; exit 1; }
 
@@ -427,6 +428,9 @@ call=$(( $(cat "$MOCK_GUM_STATE" 2>/dev/null || printf 0) + 1 ))
 printf '%s\n' "$call" >"$MOCK_GUM_STATE"
 answer=$(sed -n "${call}p" <<<"$MOCK_GUM_ANSWERS")
 command=$1 && shift
+# Marks on the terminal where a prompt was asked, so a case can assert what
+# was on screen before it.
+[ -z "${MOCK_GUM_MARK:-}" ] || printf '<gum %s>\n' "$command" >&2
 rows=() ticked=() default=true many=no delimiter=''
 
 # Splits a flag value on commas the way gum's flag parser does: "\," is a
@@ -500,12 +504,14 @@ chmod +x "$gumbin/gum"
 
 # Styled mode needs no test switch, a terminal, and gum on PATH. Esc after the
 # scripted answers ends the menu, and plain-prompt end-of-file marks stop a
-# wrong fallback to the numbered menu from hanging the suite.
+# wrong fallback to the numbered menu from hanging the suite. The keys typed
+# first answer the pause after each action, which reads a single key and never
+# sees an end-of-file mark.
 run_styled() {
   local target_home=$1 answers=$2 && shift 2
   : >"$gum_log"
   rm -f "$gum_state"
-  printf '\004\004\004' | "$pty_run" env -u XDG_STATE_HOME -u NIX_CONFIG_TEST_PLAIN \
+  printf 'kkkk\004\004\004' | "$pty_run" env -u XDG_STATE_HOME -u NIX_CONFIG_TEST_PLAIN \
     HOME="$target_home" USER=apply-user PATH="$gumbin:$mockbin:$PATH" \
     MOCK_GUM_LOG="$gum_log" MOCK_GUM_STATE="$gum_state" MOCK_GUM_ANSWERS="$answers" \
     "$@" "$bro"
@@ -584,16 +590,18 @@ printf 'pi %s (skip=%s)\n' "$*" "${PI_SKIP_PROTON_PASS:-}" >>"$MOCK_LOG"
 EOF
 chmod +x "$extensions_home/.local/bin/pi"
 : >"$log"
-run_styled "$extensions_home" $'pick Update\npick Extensions\nesc' env MOCK_GIT_MODE=sync MOCK_GIT_AHEAD=0 >/dev/null 2>&1
-grep -Fq '[--header=What should be updated?]' "$gum_log" || {
-  echo 'bro test: the Update submenu did not go through gum' >&2; exit 1; }
+run_styled "$extensions_home" $'pick Update\npick Pi extensions\nesc' env MOCK_GIT_MODE=sync MOCK_GIT_AHEAD=0 >/dev/null 2>&1
+grep -Fq '[--header=What should be updated?' "$gum_log" && grep -Fq '[--no-limit]' "$gum_log" || {
+  echo 'bro test: the Update submenu was not a gum multi-select' >&2; exit 1; }
 grep -Fq 'pi update --extensions (skip=1)' "$log" || {
   echo 'bro test: the Update choice made through gum did not run' >&2; exit 1; }
 : >"$log"
-run_styled "$extensions_home" $'pick Update\nesc\nesc' env MOCK_GIT_MODE=sync MOCK_GIT_AHEAD=0 >/dev/null 2>&1
+output=$(run_styled "$extensions_home" $'pick Update\nesc\nesc' env MOCK_GIT_MODE=sync MOCK_GIT_AHEAD=0 2>&1)
 ! grep -Eq '^(pi update|update-pi|update-playwright-cli) ' "$log" && ! grep -Fq 'nix flake update' "$log" || {
   echo 'bro test: Esc in the Update submenu still updated something' >&2; exit 1; }
 [ "$(gum_calls)" = 3 ] || { echo 'bro test: Esc in a submenu did not return to the main menu' >&2; exit 1; }
+grep -Fq 'nix-config: update cancelled' <<<"$output" || {
+  echo 'bro test: Esc in the Update submenu did not say the update was cancelled' >&2; exit 1; }
 
 # confirm goes through gum with today's default, and Esc there is a cancel.
 : >"$log"
@@ -1017,7 +1025,11 @@ for clock in 0:00 0:01 0:02; do
   grep -Eq "^╭─ . build ─+ $clock ─╮\$" <<<"$screen" || {
     echo "bro test: the timer never showed $clock while the step was silent" >&2; exit 1; }
 done
-grep -Eq '^╰─+╯$' <<<"$screen" || { echo 'bro test: an empty box did not close cleanly' >&2; exit 1; }
+# The status card has a bottom border too, so only the box's own rows count.
+# They are held in a variable: grep -q stopping early would fail a pipeline.
+box_frames=$(grep -A "$((6 + 1))" -E '^╭─ . build ' <<<"$screen")
+grep -Eq '^╰─+╯$' <<<"$box_frames" || {
+  echo 'bro test: an empty box did not close cleanly' >&2; exit 1; }
 
 # A failing build shows its last 30 lines and why, Apply fails with today's
 # message, and the menu is offered again.
@@ -1091,7 +1103,10 @@ expected_summary=$(printf '%s\n' ' ✓ build  Ns' ' ✗ activate failed' \
   "   log: ~/.local/state/bro/logs/$(basename "$(box_log_file)")" 'nix-config: returning to the menu')
 [ "$summary" = "$expected_summary" ] || {
   printf 'bro test: a failed styled activation did not fail Apply:\n%s\n' "$summary" >&2; exit 1; }
-grep -Fxq 'activation broke' <<<"${screen##*╯}" || {
+# The status card drawn after Apply ends in a border too, so only what came
+# after the activation box and before the report counts.
+before_report=${screen%%' ✗ Apply failed'*}
+grep -Fxq 'activation broke' <<<"${before_report##*╯}" || {
   echo 'bro test: a failed styled activation did not show its last lines' >&2; exit 1; }
 ! grep -q '^tmux ' "$log" || { echo 'bro test: Apply reloaded tmux after a failed activation' >&2; exit 1; }
 [ "$(gum_calls)" = 2 ] || { echo 'bro test: the menu did not return after a failed activation' >&2; exit 1; }
@@ -1116,7 +1131,7 @@ raw=$(run_box_apply "$box_home" MOCK_BOX_COLOUR=1 MOCK_BOX_SILENCE=1 ${utf8_loca
 screen=$(plain_screen <<<"$raw")
 grep -Eq '^│ warning: coloured line 3 +│$' <<<"$screen" || {
   echo "bro test: a coloured line did not reach the box as plain text under ${utf8_locale:-the default locale}" >&2; exit 1; }
-! grep -E '^│' <<<"$screen" | grep -Eq '\[[0-9;]*m' || {
+! grep -Eq '\[[0-9;]*m' <<<"$(grep -E '^│' <<<"$screen")" || {
   echo "bro test: colour codes were left in the box under ${utf8_locale:-the default locale}" >&2; exit 1; }
 
 # Logging is best effort: with nowhere to write a log, Apply still runs, as it
@@ -1133,8 +1148,979 @@ for expected in "nix-config: could not create the log directory $box_logs" 'nix-
   grep -Fq -- "$expected" <<<"$screen" || {
     echo "bro test: Apply without a log did not report: $expected" >&2; exit 1; }
 done
-! grep -q '^╭─' <<<"$screen" || { echo 'bro test: Apply without a log was boxed' >&2; exit 1; }
+# A box's top border names its step, unlike the status card's.
+! grep -q '^╭─ ' <<<"$screen" || { echo 'bro test: Apply without a log was boxed' >&2; exit 1; }
 ! grep -q 'log:' <<<"$screen" || { echo 'bro test: Apply without a log named a log' >&2; exit 1; }
 [ ! -e "$box_logs" ] || { echo 'bro test: Apply wrote a log it reported it could not' >&2; exit 1; }
 
-echo 'bro test: PASSED (menu-only entry, apply identity, DNS retry, sync push boundary, accounts wrapper, Pi extensions, Pi + ext, Playwright, Jobs, styled prompts, Health, log box)'
+# --- Accounts table -------------------------------------------------------------
+
+# A setup tool that knows its status mode: --status prints its rows, --check
+# prints the same rows as its human table, and both fail on the Gemini row
+# unless MOCK_ACCOUNTS_READY is set. The wizard itself only records the call.
+accounts_home="$work/accounts-home"
+mkdir -p "$accounts_home/.nix-profile/bin" "$accounts_home/.config/tmux" "$accounts_home/.local/bin"
+record_checkout "$accounts_home"
+: >"$accounts_home/.config/tmux/tmux.conf"
+for stub in zsh tmux; do
+  printf '#!/bin/sh\nexit 0\n' >"$accounts_home/.nix-profile/bin/$stub"
+done
+command cat >"$accounts_home/.local/bin/nix-config-setup" <<'EOF'
+#!/usr/bin/env bash
+printf 'setup %s\n' "$*" >>"$MOCK_LOG"
+rows() {
+  printf '%s\t%s\t%s\n' ok 'Proton Pass' ready optional 'DeepSeek API key' 'not configured (optional)'
+  [ -n "${MOCK_ACCOUNTS_READY:-}" ] || printf '%s\t%s\t%s\n' fail 'Gemini API key' 'does not resolve'
+  printf '%s\t%s\t%s\n' optional 'GitHub CLI' 'unavailable; GitHub CLI is not installed' \
+    ok 'Git identity' 'Test User <test@example.com>'
+}
+case "${1:-}" in
+  --status) rows ;;
+  --check)
+    printf '\n== Current setup status ==\n'
+    rows | while IFS=$'\t' read -r _ item detail; do printf '  %-22s %s\n' "$item" "$detail"; done
+    ;;
+  *) exit 0 ;;
+esac
+[ -n "${MOCK_ACCOUNTS_READY:-}" ]
+EOF
+command cat >"$accounts_home/.local/bin/proton-pass-session" <<'EOF'
+#!/bin/sh
+printf 'proton %s\n' "$*" >>"$MOCK_LOG"
+EOF
+chmod +x "$accounts_home/.nix-profile/bin/zsh" "$accounts_home/.nix-profile/bin/tmux" \
+  "$accounts_home/.local/bin/nix-config-setup" "$accounts_home/.local/bin/proton-pass-session"
+accounts_env=(env -u LC_ALL LANG=C MOCK_UNAME_S=Darwin MOCK_UNAME_M=arm64)
+
+# What reached the setup tool and the keyring session, in order; resolving the
+# checkout also logs its Git calls.
+account_calls() {
+  grep -E '^(setup|proton) ' "$log" || true
+}
+accounts_check_table=$(printf '%s\n' '== Current setup status ==' \
+  '  Proton Pass            ready' \
+  '  DeepSeek API key       not configured (optional)' \
+  '  Gemini API key         does not resolve' \
+  '  GitHub CLI             unavailable; GitHub CLI is not installed' \
+  '  Git identity           Test User <test@example.com>')
+
+# Styled Health lists every account row under Accounts with its marker, points
+# the failing row at Accounts, and no longer prints --check's own table above
+# the screen. The failing row still fails the step, as --check does.
+: >"$log"
+health_started=$(date +%s)
+output=$(run_styled "$accounts_home" $'pick Health\nesc' "${accounts_env[@]}" 2>&1)
+expected=$(printf '%s\n' \
+  'Health · checked HH:MM' \
+  'Core' \
+  '  ✓ checkout metadata' \
+  '  ✓ aarch64-darwin flake output' \
+  '  ✓ managed zsh startup' \
+  '  ✓ managed tmux server' \
+  'Accounts' \
+  '  ✓ Proton Pass: ready' \
+  '  · DeepSeek API key: not configured (optional)' \
+  '  ✗ Gemini API key: does not resolve → Accounts' \
+  '  · GitHub CLI: unavailable; GitHub CLI is not installed' \
+  '  ✓ Git identity: Test User <test@example.com>')
+[ "$(health_screen "$output")" = "$expected" ] || {
+  echo "bro test: styled Health did not list the account rows: $output" >&2; exit 1; }
+for marked in $'\e[32m✓\e[39m Proton Pass: ready' $'\e[2m·\e[22m DeepSeek API key' \
+  $'\e[31m✗\e[39m Gemini API key'; do
+  grep -Fq "$marked" <<<"$output" || {
+    echo "bro test: styled Health did not mark an account row: $(cat -v <<<"$marked")" >&2; exit 1; }
+done
+! grep -Fq 'Current setup status' <<<"$output" || {
+  echo 'bro test: styled Health still printed the --check table' >&2; exit 1; }
+grep -Fq 'returning to the menu' <<<"$output" || {
+  echo 'bro test: a failing account row did not fail styled Health' >&2; exit 1; }
+expect_saved_health "$accounts_home/.local/state/bro/health" "$health_started" \
+  $'ok\tcore\tcheckout metadata' \
+  $'ok\tcore\taarch64-darwin flake output' \
+  $'ok\tcore\tmanaged zsh startup' \
+  $'ok\tcore\tmanaged tmux server' \
+  $'ok\taccounts\tProton Pass: ready' \
+  $'optional\taccounts\tDeepSeek API key: not configured (optional)' \
+  $'fail\taccounts\tGemini API key: does not resolve; choose Accounts from the menu' \
+  $'optional\taccounts\tGitHub CLI: unavailable; GitHub CLI is not installed' \
+  $'ok\taccounts\tGit identity: Test User <test@example.com>'
+output=$(run_styled "$accounts_home" $'pick Health\nesc' "${accounts_env[@]}" MOCK_ACCOUNTS_READY=1 2>&1)
+! grep -Fq 'returning to the menu' <<<"$output" || {
+  echo 'bro test: styled Health failed without a failing account row' >&2; exit 1; }
+# The status card drawn before Health still shows the previous, failing run,
+# so only the Health screen counts here; the card drawn after it shows the new
+# run passing.
+! grep -Fq '✗' <<<"$(health_screen "$output")" || {
+  echo 'bro test: styled Health marked a failure without a failing account row' >&2; exit 1; }
+grep -Eq '^│ health ✓ all checks passed · checked [0-9]+s ago +│$' <<<"$(plain_screen <<<"$output")" || {
+  echo "bro test: the status card did not show the passing Health run: $output" >&2; exit 1; }
+
+# A setup tool from before the status mode rejects it with its usage text and
+# prints no rows; styled Health then reports --check's single result, quietly,
+# and still fails with it, and styled Accounts shows --check's own table.
+command cat >"$work/old-setup" <<'EOF'
+#!/bin/sh
+[ "$1" != --status ] || { printf 'Usage: nix-config-setup [--check]\n' >&2; exit 2; }
+printf '  some table\n'
+exit 1
+EOF
+chmod +x "$work/old-setup"
+mv "$accounts_home/.local/bin/nix-config-setup" "$work/accounts-setup"
+cp "$work/old-setup" "$accounts_home/.local/bin/nix-config-setup"
+output=$(run_styled "$accounts_home" $'pick Health\nesc' "${accounts_env[@]}" 2>&1)
+grep -Fxq '  ✗ configured account setup has errors → Accounts' <<<"$(health_screen "$output")" || {
+  echo "bro test: styled Health did not fall back to --check for an older setup tool: $output" >&2; exit 1; }
+! grep -Fq 'some table' <<<"$output" || {
+  echo 'bro test: the fallback to --check printed its table on the styled screen' >&2; exit 1; }
+grep -Fq 'returning to the menu' <<<"$output" || {
+  echo 'bro test: the fallback to --check did not fail styled Health' >&2; exit 1; }
+output=$(run_styled "$accounts_home" $'pick Accounts\npick Back\nesc' "${accounts_env[@]}" 2>&1)
+grep -Fq 'some table' <<<"$output" || {
+  echo "bro test: styled Accounts did not show --check for an older setup tool: $output" >&2; exit 1; }
+! grep -Fq 'Usage:' <<<"$output" || {
+  echo 'bro test: styled Accounts showed the older setup tool rejecting --status' >&2; exit 1; }
+mv "$work/accounts-setup" "$accounts_home/.local/bin/nix-config-setup"
+
+# Plain Health prints exactly what it printed before: --check's own table and
+# the single account line, and never asks for the rows.
+: >"$log"
+output=$(run_menu "$accounts_home" '5\n7\n' "${accounts_env[@]}" 2>&1)
+expected=$(printf '%s\n' \
+  'nix-config: OK: checkout metadata' \
+  'nix-config: OK: aarch64-darwin flake output' \
+  'nix-config: OK: managed zsh startup' \
+  'nix-config: OK: managed tmux server' \
+  'nix-config: AUTH FAIL: configured account setup has errors; choose Accounts from the menu' \
+  'nix-config: returning to the menu')
+[ "$(tr -d '\r' <<<"$output" | grep -o 'nix-config: .*')" = "$expected" ] || {
+  echo "bro test: plain Health with account rows changed: $output" >&2; exit 1; }
+[ "$(tr -d '\r' <<<"$output" | grep -A 5 -Fx '== Current setup status ==')" = "$accounts_check_table" ] || {
+  echo "bro test: plain Health no longer showed the --check table: $output" >&2; exit 1; }
+[ "$(account_calls)" = 'setup --check' ] || {
+  echo "bro test: plain Health asked the setup tool for more than --check: $(account_calls)" >&2; exit 1; }
+
+# The styled Accounts screen as the terminal shows it, colours taken out.
+accounts_screen() {
+  tr -d '\r' <<<"$1" | sed -e $'s/\e\\[[0-9;]*m//g' \
+    | awk '/^Accounts$/ { on = 1; print; next } on && /^  / { print; next } on { exit }'
+}
+expected_accounts_screen=$(printf '%s\n' \
+  'Accounts' \
+  '  ✓ Proton Pass       ready' \
+  '  · DeepSeek API key  not configured (optional)' \
+  '  ✗ Gemini API key    does not resolve' \
+  '  · GitHub CLI        unavailable; GitHub CLI is not' \
+  '                      installed' \
+  '  ✓ Git identity      Test User <test@example.com>')
+
+# Styled Accounts shows the table first, then offers Run setup or Back. Run
+# setup hands the terminal to the wizard, on Linux inside the keyring session.
+: >"$log"
+output=$(run_styled "$accounts_home" $'pick Accounts\npick Run setup\nesc' env MOCK_UNAME_S=Linux 2>&1)
+[ "$(accounts_screen "$output")" = "$expected_accounts_screen" ] || {
+  echo "bro test: styled Accounts did not show the account table: $output" >&2; exit 1; }
+accounts_screen "$output" | sed -e 's/✓/./g' -e 's/✗/./g' -e 's/·/./g' \
+  | awk 'length($0) > 60 { wide = 1 } END { exit wide }' || {
+  echo "bro test: a styled Accounts line is wider than 60 columns: $output" >&2; exit 1; }
+grep -Fq $'\e[31m✗\e[39m Gemini API key' <<<"$output" || {
+  echo 'bro test: styled Accounts did not mark the failing row' >&2; exit 1; }
+grep -Eq '\[Run setup +.*\]' "$gum_log" || {
+  echo 'bro test: styled Accounts did not offer Run setup' >&2; exit 1; }
+grep -Eq '\[Back +.*\]' "$gum_log" || {
+  echo 'bro test: styled Accounts did not offer Back' >&2; exit 1; }
+[ "$(account_calls)" = "$(printf '%s\n' 'setup --status' "proton $accounts_home/.local/bin/nix-config-setup")" ] || {
+  echo "bro test: Run setup did not start the wizard in the keyring session: $(account_calls)" >&2; exit 1; }
+! grep -Fq 'returning to the menu' <<<"$output" || {
+  echo 'bro test: a failing account row failed the Accounts step before setup' >&2; exit 1; }
+: >"$log"
+run_styled "$accounts_home" $'pick Accounts\npick Run setup\nesc' env MOCK_UNAME_S=Darwin MOCK_UNAME_M=arm64 >/dev/null 2>&1
+[ "$(account_calls)" = "$(printf '%s\n' 'setup --status' 'setup ')" ] || {
+  echo "bro test: styled Run setup on macOS did not run the wizard directly: $(account_calls)" >&2; exit 1; }
+
+# Back, or Esc, returns to the menu without starting the wizard.
+for answer in 'pick Back' esc; do
+  : >"$log"
+  run_styled "$accounts_home" "pick Accounts"$'\n'"$answer"$'\nesc' env MOCK_UNAME_S=Linux >/dev/null 2>&1
+  [ "$(account_calls)" = 'setup --status' ] || {
+    echo "bro test: $answer at Accounts started the wizard: $(account_calls)" >&2; exit 1; }
+  [ "$(gum_calls)" = 3 ] && [ "$(grep -c '\[--header=nix-config  (' "$gum_log")" = 2 ] || {
+    echo "bro test: $answer at Accounts did not return to the menu" >&2; exit 1; }
+done
+
+# Plain Accounts goes straight to the wizard, as before.
+: >"$log"
+run_menu "$accounts_home" '4\n8\n' env MOCK_UNAME_S=Linux >/dev/null
+[ "$(account_calls)" = "proton $accounts_home/.local/bin/nix-config-setup" ] || {
+  echo "bro test: plain Accounts did something besides starting the wizard: $(account_calls)" >&2; exit 1; }
+
+# A missing setup tool still says to apply the configuration first, in both modes.
+for mode in styled plain; do
+  if [ "$mode" = styled ]; then
+    output=$(run_styled "$apply_home" $'pick Accounts\nesc' 2>&1)
+    [ "$(gum_calls)" = 2 ] || { echo 'bro test: styled Accounts without the setup tool still asked' >&2; exit 1; }
+  else
+    output=$(run_menu "$apply_home" "4\n${quit}\n" 2>&1)
+  fi
+  grep -Fq 'nix-config: ERROR: account setup is unavailable; apply the configuration first' <<<"$output" || {
+    echo "bro test: $mode Accounts without the setup tool did not say to apply first: $output" >&2; exit 1; }
+done
+
+# --- Sync and Update steps ----------------------------------------------------
+
+# What the terminal showed, cut down to finished steps, prompts (marked by the
+# mock gum), bro's own messages, and the top of a summary box, with durations
+# made constant.
+step_lines() {
+  plain_screen | grep -E '^ (✓|✗) |^   log: |^<gum |^nix-config: |^╭─ Proposed' \
+    | sed -E -e 's/ [0-9]+s$/ Ns/' -e 's/ finished in [0-9]+s$/ finished in Ns/' -e 's/ ─+╮$//'
+}
+
+# The one log an action left in a home's log directory.
+action_log_name() {
+  local logs=("$1"/.local/state/bro/logs/"$2"-*.log)
+  [ "${#logs[@]}" = 1 ] && [ -f "${logs[0]}" ] || {
+    echo "bro test: expected exactly one $2 log in $1" >&2; exit 1; }
+  printf '%s\n' "${logs[0]##*/}"
+}
+
+# Styled Sync behind upstream: fetch and fast-forward run in boxes that shrink
+# to ✓ lines, followed by Apply's steps. Nothing is ahead, so nothing is asked.
+new_box_home
+: >"$log"
+raw=$(run_styled "$box_home" $'pick Sync\nesc' \
+  env MOCK_GIT_MODE=sync MOCK_GIT_AHEAD=0 MOCK_GIT_BEHIND=2 MOCK_GUM_MARK=1 2>&1)
+screen=$(plain_screen <<<"$raw")
+for step in fetch fast-forward; do
+  grep -Eq "^╭─ . $step ─+ 0:0[0-9] ─╮\$" <<<"$screen" || {
+    echo "bro test: styled Sync did not run $step in a box" >&2; exit 1; }
+done
+expected=$(printf '%s\n' '<gum choose>' ' ✓ fetch  Ns' ' ✓ fast-forward  Ns' ' ✓ build  Ns' \
+  ' ✓ activate  Ns' ' ✓ reloaded active tmux configuration' ' ✓ Sync finished in Ns' \
+  "   log: ~/.local/state/bro/logs/$(action_log_name "$box_home" sync)" '<gum choose>')
+[ "$(step_lines <<<"$raw")" = "$expected" ] || {
+  printf 'bro test: styled Sync did not show its boxed steps:\n%s\n' "$(step_lines <<<"$raw")" >&2; exit 1; }
+grep -Eq '^git .* fetch --prune$' "$log" && grep -Eq '^git .* merge --ff-only origin/main$' "$log" \
+  && grep -q '^activation$' "$log" || {
+  echo 'bro test: styled Sync did not fetch, fast-forward and activate' >&2; exit 1; }
+
+# Up to date with commits ahead: nothing to fast-forward is a ✓ line of its
+# own, and the push question comes only after every step has finished.
+new_box_home
+: >"$log"
+raw=$(run_styled "$box_home" $'pick Sync\nno\nesc' env MOCK_GIT_MODE=sync MOCK_GIT_AHEAD=1 MOCK_GUM_MARK=1 2>&1)
+expected=$(printf '%s\n' '<gum choose>' ' ✓ fetch  Ns' ' ✓ already up to date with origin/main' ' ✓ build  Ns' \
+  ' ✓ activate  Ns' ' ✓ reloaded active tmux configuration' '<gum confirm>' ' ✓ Sync finished in Ns' \
+  "   log: ~/.local/state/bro/logs/$(action_log_name "$box_home" sync)" '<gum choose>')
+[ "$(step_lines <<<"$raw")" = "$expected" ] || {
+  printf 'bro test: an up-to-date styled Sync did not show its steps, then the push question:\n%s\n' "$(step_lines <<<"$raw")" >&2; exit 1; }
+grep -Fq '[Push your local commits so other machines receive them?]' "$gum_log" || {
+  echo 'bro test: styled Sync did not ask to push' >&2; exit 1; }
+! grep -Fq 'fast-forward' <<<"$(plain_screen <<<"$raw")" && ! grep -Eq '^git .* merge' "$log" || {
+  echo 'bro test: an up-to-date styled Sync still fast-forwarded' >&2; exit 1; }
+! grep -Eq '^git .* push($| )' "$log" || { echo 'bro test: declining the styled push still pushed' >&2; exit 1; }
+
+# Plain Sync prints what it always has: no step lines, and no word about
+# being up to date.
+for behind in 0 2; do
+  new_box_home
+  : >"$log"
+  output=$(run_menu "$box_home" "2\n${quit}\n" env MOCK_GIT_MODE=sync MOCK_GIT_AHEAD=0 MOCK_GIT_BEHIND="$behind" 2>&1)
+  expected_output=$(printf 'nix-config: %s %s\n' building "$platform_name" activating "$platform_name"
+    printf '%s\n' 'nix-config: reloaded active tmux configuration')
+  [ "$(plain_apply_output "$output")" = "$expected_output" ] || {
+    printf 'bro test: plain Sync %s behind printed something new:\n%s\n' "$behind" "$(plain_apply_output "$output")" >&2; exit 1; }
+done
+grep -Eq '^git .* merge --ff-only origin/main$' "$log" || {
+  echo 'bro test: plain Sync behind upstream did not fast-forward' >&2; exit 1; }
+
+# A branch both ahead and behind is refused with today's message, before
+# anything is merged or built, in either mode.
+new_box_home
+: >"$log"
+raw=$(run_styled "$box_home" $'pick Sync\nesc' env MOCK_GIT_MODE=sync MOCK_GIT_AHEAD=1 MOCK_GIT_BEHIND=1 MOCK_GUM_MARK=1 2>&1)
+expected=$(printf '%s\n' '<gum choose>' ' ✓ fetch  Ns' \
+  'nix-config: ERROR: this branch is 1 ahead and 1 behind origin/main; merge or rebase it yourself first' \
+  ' ✗ Sync failed' "   log: ~/.local/state/bro/logs/$(action_log_name "$box_home" sync)" \
+  'nix-config: returning to the menu' '<gum choose>')
+[ "$(step_lines <<<"$raw")" = "$expected" ] || {
+  printf 'bro test: a diverged styled Sync was not refused as before:\n%s\n' "$(step_lines <<<"$raw")" >&2; exit 1; }
+output=$(run_menu "$box_home" "2\n${quit}\n" env MOCK_GIT_MODE=sync MOCK_GIT_AHEAD=1 MOCK_GIT_BEHIND=1 2>&1)
+expected_output=$(printf '%s\n' \
+  'nix-config: ERROR: this branch is 1 ahead and 1 behind origin/main; merge or rebase it yourself first' \
+  'nix-config: returning to the menu')
+[ "$(plain_apply_output "$output")" = "$expected_output" ] || {
+  printf 'bro test: a diverged plain Sync was not refused as before:\n%s\n' "$(plain_apply_output "$output")" >&2; exit 1; }
+! grep -Eq '^git .* merge|^nix |^activation$' "$log" || {
+  echo 'bro test: a diverged Sync merged or built' >&2; exit 1; }
+
+# The mock gum picks rows by how their text starts, and the Pi row's label is
+# padded past the one space that "Pi extensions" has, so "Pi  " is Pi alone.
+# Update runs against a checkout of its own with real commits, so the summary,
+# diff, discard and commit act on real files. Its updaters move the Pi pin and
+# generate Pi's untracked lockfile, and move both playwright-cli files; with
+# MOCK_PINS_CURRENT set they change nothing. Only fetch, merge, and push are
+# faked, and the diff is not paged.
+update_checkout="$work/update-checkout"
+update_home="$work/update-home"
+mkdir -p "$update_home/.local/state/bro" "$update_home/.local/bin"
+printf '%s\n' "$update_checkout" >"$update_home/.local/state/bro/checkout"
+cp "$extensions_home/.local/bin/pi" "$update_home/.local/bin/pi"
+new_update_checkout() {
+  rm -rf "$update_checkout"
+  mkdir -p "$update_checkout/home/modules" "$update_checkout/scripts"
+  git init -q "$update_checkout"
+  git -C "$update_checkout" config user.name 'Update Test'
+  git -C "$update_checkout" config user.email 'update@example.invalid'
+  git -C "$update_checkout" remote add origin https://github.com/hattajr/nix-config.git
+  printf '{}\n' >"$update_checkout/flake.nix"
+  printf '{}\n' >"$update_checkout/flake.lock"
+  printf '  version = "1.0.0";\n' >"$update_checkout/home/modules/pi.nix"
+  printf '  version = "0.1.0";\n' >"$update_checkout/home/modules/playwright-cli.nix"
+  printf 'original playwright lock\n' >"$update_checkout/home/modules/playwright-cli-package-lock.json"
+  command cat >"$update_checkout/scripts/update-pi" <<'EOF'
+#!/bin/sh
+printf 'update-pi %s\n' "$*" >>"$MOCK_LOG"
+[ -z "${MOCK_PINS_CURRENT:-}" ] || exit 0
+printf '  version = "1.1.0";\n' >"$1/home/modules/pi.nix"
+printf 'generated pi lock\n' >"$1/home/modules/pi-package-lock.json"
+EOF
+  command cat >"$update_checkout/scripts/update-playwright-cli" <<'EOF'
+#!/bin/sh
+printf 'update-playwright-cli %s\n' "$*" >>"$MOCK_LOG"
+[ -z "${MOCK_PINS_CURRENT:-}" ] || exit 0
+printf '  version = "0.2.0";\n' >"$1/home/modules/playwright-cli.nix"
+printf 'updated playwright lock\n' >"$1/home/modules/playwright-cli-package-lock.json"
+EOF
+  chmod +x "$update_checkout/scripts/update-pi" "$update_checkout/scripts/update-playwright-cli"
+  git -C "$update_checkout" add .
+  git -C "$update_checkout" commit -qm 'Initial fixture'
+  update_head=$(git -C "$update_checkout" rev-parse HEAD)
+  rm -rf "$update_home/.local/state/bro/logs"
+  : >"$log"
+}
+update_env=(env MOCK_GIT_MODE=sync MOCK_GIT_AHEAD=0 GIT_PAGER=cat MOCK_GUM_MARK=1)
+update_plain_env=(env MOCK_GIT_MODE=sync MOCK_GIT_AHEAD=0 GIT_PAGER=cat)
+
+# Asserts the checkout is exactly as the sync left it: the fixture's commit,
+# nothing changed, and no generated file left behind.
+expect_untouched_checkout() {
+  [ "$(git -C "$update_checkout" rev-parse HEAD)" = "$update_head" ] \
+    && [ -z "$(git -C "$update_checkout" status --porcelain --untracked-files=all)" ] || {
+    echo "bro test: $1 left the checkout changed: $(git -C "$update_checkout" status --porcelain)" >&2; exit 1; }
+}
+
+# The one gum choose header asking what to do with the moved pins.
+review_question='[--header=What should happen to these changes?]'
+
+# Styled: the selected updaters run as boxes, the summary is a box, and Show
+# diff shows every change, the new lockfile included, then asks again. Discard
+# then leaves the checkout as the sync left it.
+new_update_checkout
+raw=$(run_styled "$update_home" $'pick Update\npick Pi  |Playwright\npick Show diff\npick Discard\nesc' "${update_env[@]}" 2>&1)
+screen=$(plain_screen <<<"$raw")
+for step in 'update Pi' 'update Playwright'; do
+  grep -Eq "^╭─ . $step ─+ 0:0[0-9] ─╮\$" <<<"$screen" || {
+    echo "bro test: styled Update did not run $step in a box" >&2; exit 1; }
+done
+expected=$(printf '%s\n' '<gum choose>' ' ✓ fetch  Ns' ' ✓ already up to date with origin/main' \
+  ' ✓ build  Ns' ' ✓ activate  Ns' '<gum choose>' ' ✓ update Pi  Ns' ' ✓ update Playwright  Ns' \
+  '╭─ Proposed version updates' '<gum choose>' '<gum choose>' 'nix-config: update discarded' \
+  ' ✓ Update finished in Ns' "   log: ~/.local/state/bro/logs/$(action_log_name "$update_home" update)" '<gum choose>')
+[ "$(step_lines <<<"$raw")" = "$expected" ] || {
+  printf 'bro test: styled Update did not run its steps, summary and choice in order:\n%s\n' "$(step_lines <<<"$raw")" >&2; exit 1; }
+summary_box=$(grep -A 3 '^╭─ Proposed version updates' <<<"$screen")
+grep -Eq '^│ Pi +1\.0\.0 → 1\.1\.0 +│$' <<<"$summary_box" \
+  && grep -Eq '^│ Playwright +0\.1\.0 → 0\.2\.0 +│$' <<<"$summary_box" \
+  && grep -Eq '^╰─+╯$' <<<"$summary_box" || {
+  printf 'bro test: the styled summary box did not show old → new for each pin:\n%s\n' "$summary_box" >&2; exit 1; }
+# Every box character and arrow is one column; sed swaps them byte for byte in any locale.
+sed -e 's/─/./g' -e 's/│/./g' -e 's/╭/./g' -e 's/╮/./g' -e 's/╰/./g' -e 's/╯/./g' -e 's/→/./g' <<<"$summary_box" \
+  | awk 'length($0) != 60 { bad = 1 } END { exit bad }' || {
+  printf 'bro test: the styled summary box is not 60 columns wide:\n%s\n' "$summary_box" >&2; exit 1; }
+diff_shown=$(sed -n '/^<gum choose>$/,$p' <<<"$screen" | sed -n '/^+  version = "1.1.0";$/,/^<gum choose>$/p')
+grep -Fxq '+  version = "0.2.0";' <<<"$diff_shown" && grep -Fxq '+updated playwright lock' <<<"$diff_shown" \
+  && grep -Fxq '+generated pi lock' <<<"$diff_shown" || {
+  printf 'bro test: Show diff did not show the complete diff, new lockfile included:\n%s\n' "$screen" >&2; exit 1; }
+[ "$(grep -cF "$review_question" "$gum_log")" = 2 ] || {
+  echo 'bro test: Show diff did not return to the same choice' >&2; exit 1; }
+grep -Eq '\[Apply +.*activate them' "$gum_log" || {
+  echo 'bro test: the review choice did not offer Apply' >&2; exit 1; }
+expect_untouched_checkout 'a styled Discard'
+[ "$(grep -c '^activation$' "$log")" = 1 ] && ! grep -Eq '^git .* (add|commit|push)( |$)' "$log" || {
+  echo 'bro test: a styled Discard applied or committed the pins' >&2; exit 1; }
+
+# Plain: the same flow with the toggle loop and numbered prompts.
+new_update_checkout
+output=$(run_menu "$update_home" "3\n2\n4\n5\n2\n3\n${quit}\n" "${update_plain_env[@]}" 2>&1)
+output=$(tr -d '\r' <<<"$output" | plain_screen)
+for expected in 'nix-config: updating the Pi pin' 'nix-config: updating the playwright-cli pin' \
+  'Proposed version updates:' '  Pi:       1.0.0 -> 1.1.0' '  Playwright:0.1.0 -> 0.2.0' \
+  '+generated pi lock' 'nix-config: update discarded'; do
+  grep -Fq -- "$expected" <<<"$output" || {
+    echo "bro test: plain Update did not show: $expected" >&2; exit 1; }
+done
+grep -Eq '4\) \[x\] Playwright +the playwright-cli package' <<<"$output" || {
+  echo 'bro test: plain Update did not tick through the toggle loop' >&2; exit 1; }
+[ "$(grep -Ec '^  1\) Apply +activate them' <<<"$output")" = 2 ] \
+  && grep -Eq '^  3\) Discard +put every pin back' <<<"$output" || {
+  echo 'bro test: plain Show diff did not return to the same choice' >&2; exit 1; }
+! grep -Fq -e 'Show the complete generated diff?' -e 'Apply these changes on this machine?' <<<"$output" || {
+  echo 'bro test: plain Update still asked the old yes/no questions' >&2; exit 1; }
+expect_untouched_checkout 'a plain Discard'
+
+# Apply, then Commit, then Push runs the same git commands as before: every
+# pin file that exists is added, committed with the same message, and pushed.
+expected_git=$(printf "git -C $update_checkout %s\n" 'add flake.lock' 'add home/modules/pi.nix' \
+  'add home/modules/pi-package-lock.json' 'add home/modules/playwright-cli.nix' \
+  'add home/modules/playwright-cli-package-lock.json' 'commit -m Update managed package pins' push)
+expect_committed_update() {
+  [ "$(grep -E '^git .* (add|commit|push)( |$)' "$log")" = "$expected_git" ] || {
+    printf 'bro test: %s did not run the same git commands as before:\n%s\n' "$1" "$(grep '^git ' "$log")" >&2; exit 1; }
+  [ "$(git -C "$update_checkout" log -1 --format=%s)" = 'Update managed package pins' ] \
+    && [ "$(git -C "$update_checkout" show HEAD:home/modules/pi-package-lock.json)" = 'generated pi lock' ] \
+    && [ -z "$(git -C "$update_checkout" status --porcelain)" ] || {
+    echo "bro test: $1 did not commit every moved pin" >&2; exit 1; }
+}
+new_update_checkout
+raw=$(run_styled "$update_home" $'pick Update\npick Pi  |Playwright\npick Apply\nyes\nyes\nesc' "${update_env[@]}" 2>&1)
+expected=$(printf '%s\n' '╭─ Proposed version updates' '<gum choose>' ' ✓ build  Ns' ' ✓ activate  Ns' \
+  '<gum confirm>' '<gum confirm>' ' ✓ Update finished in Ns')
+[ "$(step_lines <<<"$raw" | sed -n '/^╭─ Proposed/,/ finished in /p')" = "$expected" ] || {
+  printf 'bro test: styled Apply did not activate in boxed steps before asking to commit and push:\n%s\n' "$(step_lines <<<"$raw")" >&2; exit 1; }
+for question in 'Commit these version-pin changes?' 'Push the commit so other machines can sync it?'; do
+  grep -Fq "[--default=false] [--no-show-help] [--prompt.foreground=6] [--selected.foreground=0] [--selected.background=6] [--unselected.foreground=7] [--unselected.background=8] [--] [$question]" "$gum_log" || {
+    echo "bro test: styled Update did not ask \"$question\" defaulting to No" >&2; exit 1; }
+done
+[ "$(grep -c '^activation$' "$log")" = 2 ] || { echo 'bro test: styled Apply did not activate the pins' >&2; exit 1; }
+expect_committed_update 'styled Apply, Commit, Push'
+
+new_update_checkout
+run_menu "$update_home" "3\n2\n4\n5\n1\ny\ny\n${quit}\n" "${update_plain_env[@]}" >/dev/null 2>&1
+expect_committed_update 'plain Apply, Commit, Push'
+
+# Declining the commit leaves the applied pins uncommitted, as before.
+new_update_checkout
+output=$(run_menu "$update_home" "3\n2\n5\n1\n\n${quit}\n" "${update_plain_env[@]}" 2>&1)
+grep -Fq 'nix-config: changes applied locally but left uncommitted' <<<"$output" \
+  && [ "$(git -C "$update_checkout" rev-parse HEAD)" = "$update_head" ] \
+  && ! grep -Eq '^git .* (commit|push)( |$)' "$log" || {
+  echo 'bro test: declining the commit still committed or pushed' >&2; exit 1; }
+
+# Leaving the choice keeps nothing, as declining to apply always has.
+new_update_checkout
+output=$(run_styled "$update_home" $'pick Update\npick Pi  \nesc\nesc' "${update_env[@]}" 2>&1)
+grep -Fq 'nix-config: update discarded' <<<"$output" || {
+  echo 'bro test: Esc at the review choice did not discard' >&2; exit 1; }
+expect_untouched_checkout 'Esc at the review choice'
+
+# Pins that are already current say so, and there is nothing to review.
+new_update_checkout
+raw=$(run_styled "$update_home" $'pick Update\npick Pi  |Playwright\nesc' "${update_env[@]}" MOCK_PINS_CURRENT=1 2>&1)
+grep -Fxq ' ✓ all selected pins are already current' <<<"$(step_lines <<<"$raw")" || {
+  echo 'bro test: styled Update did not say the pins are already current' >&2; exit 1; }
+[ "$(gum_calls)" = 3 ] && ! grep -Fq "$review_question" "$gum_log" || {
+  echo 'bro test: already-current pins still offered the review choice' >&2; exit 1; }
+output=$(run_menu "$update_home" "3\n2\n5\n${quit}\n" "${update_plain_env[@]}" MOCK_PINS_CURRENT=1 2>&1)
+grep -Fq 'nix-config: all selected pins are already current' <<<"$output" \
+  && ! grep -Fq 'What should happen to these changes?' <<<"$output" || {
+  echo 'bro test: plain Update with current pins offered the review choice' >&2; exit 1; }
+expect_untouched_checkout 'already-current pins'
+
+# Ticking nothing, or Esc, cancels: no updater runs and nothing changes.
+for answers in $'pick Update\npick\nesc' $'pick Update\nesc\nesc'; do
+  new_update_checkout
+  output=$(run_styled "$update_home" "$answers" "${update_env[@]}" 2>&1)
+  grep -Fq 'nix-config: update cancelled' <<<"$output" && ! grep -Eq '^update-|^pi update' "$log" || {
+    echo "bro test: a styled Update with nothing chosen was not cancelled: $answers" >&2; exit 1; }
+  expect_untouched_checkout 'a cancelled styled Update'
+done
+new_update_checkout
+output=$(run_menu "$update_home" "3\n5\n${quit}\n" "${update_plain_env[@]}" 2>&1)
+grep -Fq 'nix-config: update cancelled' <<<"$output" && ! grep -Eq '^update-|^pi update' "$log" || {
+  echo 'bro test: a plain Update with nothing ticked was not cancelled' >&2; exit 1; }
+expect_untouched_checkout 'a cancelled plain Update'
+
+# Pi extensions update after the pins are settled, in a box of their own.
+new_update_checkout
+raw=$(run_styled "$update_home" $'pick Update\npick Pi  |Pi extensions\npick Discard\nesc' "${update_env[@]}" 2>&1)
+grep -Eqx ' ✓ update Pi extensions  Ns' <<<"$(step_lines <<<"$raw" | grep -A 1 -Fx 'nix-config: update discarded')" || {
+  printf 'bro test: Pi extensions did not update after the pins as a boxed step:\n%s\n' "$(step_lines <<<"$raw")" >&2; exit 1; }
+grep -Fq 'pi update --extensions (skip=1)' "$log" || {
+  echo 'bro test: the boxed extension update did not reach Pi' >&2; exit 1; }
+
+# A dirty checkout is still refused before anything is fetched.
+new_update_checkout
+printf 'dirty\n' >"$update_checkout/dirty"
+output=$(run_menu "$update_home" "3\n${quit}\n" 2>&1)
+grep -Fq 'Update needs a clean checkout' <<<"$output" && ! grep -Eq '^git .* fetch' "$log" || {
+  echo 'bro test: a dirty Update was not refused before fetching' >&2; exit 1; }
+
+# --- status card --------------------------------------------------------------
+
+# Fixture checkouts clone a bare upstream. The developer's own Git configuration
+# is kept out, so no signing key, hook, or default branch name leaks in.
+fixture_git() {
+  GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
+    git -c init.defaultBranch=main -c user.name=bro -c user.email=bro@example.com "$@"
+}
+
+# Sets a file's modification time SECONDS into the past, the same way on GNU
+# and BSD hosts.
+age_file() {
+  python3 -c 'import os, sys, time; t = time.time() - int(sys.argv[2]); os.utime(sys.argv[1], (t, t))' "$1" "$2"
+}
+
+card_upstream="$work/card-upstream.git"
+card_seed="$work/card-seed"
+fixture_git init -q --bare "$card_upstream"
+fixture_git init -q "$card_seed"
+printf 'one\n' >"$card_seed/file"
+fixture_git -C "$card_seed" add file
+fixture_git -C "$card_seed" commit -q -m one
+fixture_git -C "$card_seed" push -q "$card_upstream" main
+
+# A clean clone of upstream main, last fetched three hours ago.
+card_clone() {
+  local clone="$work/card-$1"
+  fixture_git clone -q "$card_upstream" "$clone"
+  fixture_git -C "$clone" fetch -q
+  age_file "$clone/.git/FETCH_HEAD" 10800
+  printf '%s\n' "$clone"
+}
+
+# Anything that could reach the network only records that it was started.
+card_bin="$work/card-bin"
+mkdir -p "$card_bin"
+for tool in curl wget ssh; do
+  printf '#!/bin/sh\nprintf "started %s %%s\\n" "$*" >>"$MOCK_LOG"\n' "$tool" >"$card_bin/$tool"
+  chmod +x "$card_bin/$tool"
+done
+
+# The card for REPO as a terminal COLUMNS wide shows it, colours and carriage
+# returns taken out, with the saved Health run from STATE_HOME. It is drawn on
+# its own, outside the menu, with the mock Git and Nix recording every call. A
+# card that could not be drawn shows its error where the card was expected.
+draw_card() {
+  local repo=$1 state_home=$2 columns=${3:-} && shift 3
+  { printf '' | "$pty_run" env -u NIX_CONFIG_TEST_PLAIN HOME="$work/card-home" XDG_STATE_HOME="$state_home" \
+    PATH="$card_bin:$mockbin:$PATH" "$@" bash -c '
+      set -euo pipefail
+      [ -z "$3" ] || stty cols "$3" </dev/tty
+      . "$1/scripts/lib/core.sh"
+      . "$1/scripts/lib/nix.sh"
+      . "$1/scripts/lib/actions.sh"
+      . "$1/scripts/lib/menu.sh"
+      status_card "$2" x86_64-linux
+    ' _ "$repo_root" "$repo" "$columns" || true; } | plain_screen
+}
+
+# Card row N (1 to 3) without its borders and padding.
+card_line() {
+  sed -n "$(($1 + 1))p" <<<"$2" | sed -e 's/^│ //' -e 's/ *│$//'
+}
+
+expect_card_line() {
+  local row=$1 card=$2 expected=$3 what=$4 actual
+  actual=$(card_line "$row" "$card")
+  [ "$actual" = "$expected" ] || {
+    printf "bro test: the card showed %s as '%s', not '%s'\n" "$what" "$actual" "$expected" >&2; exit 1; }
+}
+
+# Every line of the card, borders included, is exactly WIDTH columns. Box and
+# card glyphs are one column each; sed swaps them byte for byte in any locale.
+expect_card_width() {
+  local card=$1 width=$2 what=$3 glyph swaps=()
+  for glyph in ╭ ╮ ╰ ╯ │ ─ ✓ ✗ · … →; do
+    swaps+=(-e "s/$glyph/./g")
+  done
+  [ "$(grep -c '' <<<"$card")" = 5 ] || {
+    printf 'bro test: the card for %s is not five lines:\n%s\n' "$what" "$card" >&2; exit 1; }
+  sed "${swaps[@]}" <<<"$card" | awk -v width="$width" 'length($0) != width { wrong = 1 } END { exit wrong }' || {
+    printf 'bro test: the card for %s is not %s columns wide:\n%s\n' "$what" "$width" "$card" >&2; exit 1; }
+}
+
+no_state="$work/card-state-none"
+
+# Line 1 names bro, the checkout, and the platform; line 2 is the Git state.
+clone=$(card_clone clean)
+card=$(draw_card "$clone" "$no_state" '')
+expect_card_line 1 "$card" 'bro · nix-config                            x86_64-linux' 'the title'
+expect_card_line 2 "$card" 'main ✓ clean · up to date (fetched 3h ago)' 'a clean checkout'
+expect_card_width "$card" 60 'a clean checkout'
+[ "$(head -n 1 <<<"$card")" = "╭$(printf '─%.0s' $(seq 1 58))╮" ] \
+  && [ "$(tail -n 1 <<<"$card")" = "╰$(printf '─%.0s' $(seq 1 58))╯" ] || {
+  printf 'bro test: the card is not framed by a rounded border:\n%s\n' "$card" >&2; exit 1; }
+
+printf 'two\n' >"$clone/file"
+printf 'new\n' >"$clone/untracked"
+expect_card_line 2 "$(draw_card "$clone" "$no_state" '')" 'main 2 changes · up to date (fetched 3h ago)' 'a dirty checkout'
+rm "$clone/untracked"
+expect_card_line 2 "$(draw_card "$clone" "$no_state" '')" 'main 1 change · up to date (fetched 3h ago)' 'one change'
+fixture_git -C "$clone" commit -q -am two
+expect_card_line 2 "$(draw_card "$clone" "$no_state" '')" 'main ✓ clean · 1 ahead (fetched 3h ago)' 'a checkout ahead'
+
+clone=$(card_clone behind)
+printf 'upstream\n' >"$card_seed/file"
+fixture_git -C "$card_seed" commit -q -am upstream
+fixture_git -C "$card_seed" push -q "$card_upstream" main
+fixture_git -C "$clone" fetch -q
+age_file "$clone/.git/FETCH_HEAD" 300
+expect_card_line 2 "$(draw_card "$clone" "$no_state" '')" 'main ✓ clean · 1 behind (fetched 5m ago)' 'a checkout behind'
+printf 'local\n' >"$clone/other"
+fixture_git -C "$clone" add other
+fixture_git -C "$clone" commit -q -m local
+expect_card_line 2 "$(draw_card "$clone" "$no_state" '')" 'main ✓ clean · 1 ahead, 1 behind (fetched 5m ago)' 'a diverged checkout'
+
+clone=$(card_clone topic)
+fixture_git -C "$clone" checkout -q -b topic
+expect_card_line 2 "$(draw_card "$clone" "$no_state" '')" 'topic ✓ clean · no upstream (fetched 3h ago)' 'a branch with no upstream'
+fixture_git -C "$clone" checkout -q --detach
+commit=$(fixture_git -C "$clone" rev-parse --short HEAD)
+age_file "$clone/.git/FETCH_HEAD" 259200
+expect_card_line 2 "$(draw_card "$clone" "$no_state" '')" "$commit ✓ clean · no upstream (fetched 3d ago)" 'a detached checkout'
+
+clone=$(card_clone never)
+rm "$clone/.git/FETCH_HEAD"
+expect_card_line 2 "$(draw_card "$clone" "$no_state" '')" 'main ✓ clean · up to date (never fetched)' 'a checkout never fetched'
+
+# A long branch name gives way, so the counts and the fetch age stay whole.
+fixture_git -C "$clone" checkout -q -b feature/a-branch-name-long-enough-to-overflow-the-card
+card=$(draw_card "$clone" "$no_state" '')
+expect_card_line 2 "$card" 'feature/a-branch-… ✓ clean · no upstream (never fetched)' 'a long branch name'
+expect_card_width "$card" 60 'a long branch name'
+
+# Line 3 is the saved Health run: the first failure, else the first warning
+# and how many more, else all passed, then when it ran.
+clone=$(card_clone health)
+health_state="$work/card-state"
+write_health() {
+  mkdir -p "$health_state/bro"
+  rm -rf "$health_state/bro/health"
+  printf '%s\n' "$@" >"$health_state/bro/health"
+}
+checked=$'checked\t'"$(($(date +%s) - 7200))"
+
+write_health "$checked" $'ok\tcore\tcheckout metadata' $'warn\tcore\tLC_ALL is set' \
+  $'fail\tcore\tmanaged zsh startup' $'fail\taccounts\tconfigured account setup has errors; choose Accounts from the menu'
+expect_card_line 3 "$(draw_card "$clone" "$health_state" '')" 'health ✗ Core: managed zsh startup · checked 2h ago' 'a failed Health run'
+
+# Results are open-ended: Accounts may report a row per account.
+rows=()
+for account in 1 2 3 4 5 6 7 8 9 10 11 12; do
+  rows+=("warn"$'\t'"accounts"$'\t'"account $account needs a login")
+done
+write_health "$checked" $'ok\tcore\tcheckout metadata' $'warn\tcore\tLC_ALL is set' \
+  $'optional\taccounts\taccount setup is not installed yet' "${rows[@]}"
+expect_card_line 3 "$(draw_card "$clone" "$health_state" '')" 'health ! Core: LC_ALL is set (+12 more) · checked 2h ago' 'warnings'
+
+write_health "$checked" $'warn\tpath\tunmanaged binaries shadow the Nix profile; choose Clean up from the menu'
+card=$(draw_card "$clone" "$health_state" '')
+expect_card_line 3 "$card" 'health ! PATH: unmanaged binaries shad… · checked 2h ago' 'a long warning'
+expect_card_width "$card" 60 'a long warning'
+
+# A fix points at its menu item, as on the Health screen, and the arrow is one
+# column even where bash counts bytes.
+write_health "$checked" $'fail\taccounts\tbad; choose Accounts from the menu'
+card=$(draw_card "$clone" "$health_state" '' env LC_ALL=C)
+expect_card_line 3 "$card" 'health ✗ Accounts: bad → Accounts · checked 2h ago' 'a failure with a fix'
+expect_card_width "$card" 60 'a failure with a fix in a C locale'
+
+write_health "$checked" $'ok\tcore\tcheckout metadata' $'optional\taccounts\taccount setup is not installed yet'
+expect_card_line 3 "$(draw_card "$clone" "$health_state" '')" 'health ✓ all checks passed · checked 2h ago' 'a passing Health run'
+
+expect_card_line 3 "$(draw_card "$clone" "$no_state" '')" 'health not checked yet' 'no saved Health run'
+
+for corrupt in 'garbage' $'checked\tsoon' "$checked"$'\nwarn\tcore' "$checked"$'\nbad\tcore\tmessage' \
+  "$checked"$'\nwarn\t\tmessage'; do
+  write_health "$corrupt"
+  expect_card_line 3 "$(draw_card "$clone" "$health_state" '')" 'health unreadable' "a corrupt Health file ($corrupt)"
+done
+: >"$health_state/bro/health"
+expect_card_line 3 "$(draw_card "$clone" "$health_state" '')" 'health unreadable' 'an empty Health file'
+rm "$health_state/bro/health"
+mkdir "$health_state/bro/health"
+expect_card_line 3 "$(draw_card "$clone" "$health_state" '')" 'health unreadable' 'a Health path that is a directory'
+
+# A terminal narrower than 60 columns gets a card exactly as wide, cut to fit.
+write_health "$checked" $'warn\tpath\tunmanaged binaries shadow the Nix profile; choose Clean up from the menu'
+for columns in 40 30 20; do
+  card=$(draw_card "$clone" "$health_state" "$columns")
+  expect_card_width "$card" "$columns" "a $columns-column terminal"
+done
+card=$(draw_card "$clone" "$health_state" 30)
+expect_card_line 1 "$card" 'bro · nix-config x86_64-l…' 'the title at 30 columns'
+expect_card_line 2 "$card" 'main ✓ clean · up to date…' 'the Git state at 30 columns'
+expect_card_line 3 "$card" 'health ! PATH: unmanaged …' 'the Health state at 30 columns'
+
+# Drawing the card reads local state only: Git is asked nothing that reaches a
+# remote, and neither Nix, the network, nor gum is started.
+: >"$log"
+draw_card "$clone" "$health_state" '' >/dev/null
+! grep -Eq '^(nix|started) ' "$log" || {
+  printf 'bro test: drawing the card started Nix or a network tool:\n%s\n' "$(cat "$log")" >&2; exit 1; }
+other_git=$(grep -v -E "^git --no-optional-locks -C $clone (symbolic-ref|rev-parse|status|rev-list) " "$log" || true)
+grep -q '^git ' "$log" && [ -z "$other_git" ] || {
+  printf 'bro test: drawing the card ran Git beyond reading local state:\n%s\n' "$(cat "$log")" >&2; exit 1; }
+
+# In the styled menu, each time the menu appears the screen is cleared and the
+# card drawn above it, without Nix or a fetch, and Esc leaves without a pause.
+: >"$log"
+output=$(run_styled "$apply_home" esc env PATH="$card_bin:$gumbin:$mockbin:$PATH" 2>&1)
+screen=$(plain_screen <<<"${output#*$'\e[H\e[2J'}")
+[ "$output" != "${output#*$'\e[H\e[2J'}" ] && grep -Eq '^│ bro · nix-config +[a-z0-9_]+-(linux|darwin) │$' <<<"$screen" || {
+  printf 'bro test: the styled menu was not drawn on a cleared screen under the card:\n%s\n' "$output" >&2; exit 1; }
+! grep -Eq '^(nix|started) ' "$log" && ! grep -Eq '^git .*(fetch|pull|push|ls-remote)' "$log" || {
+  printf 'bro test: the styled menu reached Nix or the network:\n%s\n' "$(cat "$log")" >&2; exit 1; }
+! grep -Fq 'press any key' <<<"$output" || { echo 'bro test: Esc at the menu paused' >&2; exit 1; }
+
+# After an action, the styled menu waits for a key before it clears the
+# screen; choosing Quit does not.
+output=$(run_styled "$apply_home" $'pick Apply\nesc' 2>&1)
+after_apply=${output#*'Apply finished in'}
+[ "$after_apply" != "$output" ] && grep -Fq 'press any key to return' <<<"${after_apply%%$'\e[H\e[2J'*}" \
+  && [ "${after_apply%%$'\e[H\e[2J'*}" != "$after_apply" ] || {
+  printf 'bro test: styled Apply did not ask for a key before the menu came back:\n%s\n' "$output" >&2; exit 1; }
+output=$(run_styled "$apply_home" 'pick Quit' 2>&1)
+! grep -Fq 'press any key' <<<"$output" || { echo 'bro test: Quit paused' >&2; exit 1; }
+
+# The pause really waits: a second after it appears, the menu has not come
+# back, and one key brings it back.
+: >"$gum_log"
+rm -f "$gum_state"
+pause=$(python3 - "$gum_log" env -u XDG_STATE_HOME -u NIX_CONFIG_TEST_PLAIN \
+  HOME="$apply_home" USER=apply-user PATH="$gumbin:$mockbin:$PATH" \
+  MOCK_GUM_LOG="$gum_log" MOCK_GUM_STATE="$gum_state" MOCK_GUM_ANSWERS=$'pick Apply\nesc' "$bro" <<'PY'
+import os, pty, select, sys, time
+
+gum_log = sys.argv[1]
+pid, terminal = pty.fork()
+if pid == 0:
+    os.execvp(sys.argv[2], sys.argv[2:])
+output = bytearray()
+
+def read_for(seconds, until=None):
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        if until is not None and until in output:
+            return True
+        ready, _, _ = select.select([terminal], [], [], 0.05)
+        if not ready:
+            continue
+        try:
+            chunk = os.read(terminal, 4096)
+        except OSError:
+            return False
+        if not chunk:
+            return False
+        output.extend(chunk)
+    return until is None or until in output
+
+def menus():
+    with open(gum_log) as log:
+        return sum(1 for line in log if line.startswith("gum "))
+
+paused = read_for(60, b"press any key to return")
+read_for(1)
+waiting = menus()
+try:
+    os.write(terminal, b"k")
+except OSError:
+    pass
+read_for(30, b"\x00never")
+# A bro still running here is stuck, so it is stopped rather than awaited.
+finished, raw_status = os.waitpid(pid, os.WNOHANG)
+if finished == 0:
+    os.kill(pid, 9)
+    os.waitpid(pid, 0)
+    status = "stuck"
+else:
+    status = os.waitstatus_to_exitcode(raw_status)
+print(f"paused={paused} menus-while-paused={waiting} menus-after-key={menus()} status={status}")
+PY
+)
+[ "$pause" = 'paused=True menus-while-paused=1 menus-after-key=2 status=0' ] || {
+  echo "bro test: the styled pause did not wait for exactly one key: $pause" >&2; exit 1; }
+
+# The card follows a narrow terminal.
+output=$(run_styled "$apply_home" esc bash -c 'stty cols 40 </dev/tty && exec "$0"' 2>&1)
+expect_card_width "$(plain_screen <<<"${output#*$'\e[H\e[2J'}" | grep -E '^[╭│╰]')" 40 'the styled menu at 40 columns'
+
+# Plain mode draws no card, clears nothing, and waits for nothing: Apply's
+# output runs straight on into the next menu.
+output=$(run_menu "$apply_home" "1\n${quit}\n" 2>&1)
+! grep -Fq -e $'\e[' -e '╭' -e 'press any key' -e 'Enter a number' <<<"$output" \
+  && [ "$(grep -c 'choose \[1-' <<<"$output")" = 2 ] || {
+  printf 'bro test: plain mode drew a card, cleared the screen, or paused:\n%s\n' "$output" >&2; exit 1; }
+
+# --- boxed fetch and backing out ----------------------------------------------
+
+# A checkout whose origin is reached over ssh, with an ssh that records how it
+# was started and is refused, as it would be without a usable key. bro's Git
+# reads no developer configuration, which could rewrite the URL or set its own
+# ssh command, and inherits no Git or ssh variables from the suite.
+ssh_checkout="$work/ssh-checkout"
+ssh_home="$work/ssh-home"
+ssh_bin="$work/ssh-bin"
+ssh_log="$work/ssh-log"
+fixture_git clone -q "$card_upstream" "$ssh_checkout"
+fixture_git -C "$ssh_checkout" remote set-url origin git@github.com:hattajr/nix-config.git
+mkdir -p "$ssh_home/.local/state/bro" "$ssh_bin"
+printf '%s\n' "$ssh_checkout" >"$ssh_home/.local/state/bro/checkout"
+command cat >"$ssh_bin/ssh" <<'EOF'
+#!/bin/sh
+printf 'ssh %s (GIT_TERMINAL_PROMPT=%s)\n' "$*" "${GIT_TERMINAL_PROMPT-unset}" >>"$MOCK_SSH_LOG"
+printf 'git@github.com: Permission denied (publickey).\n' >&2
+exit 255
+EOF
+chmod +x "$ssh_bin/ssh"
+ssh_env=(env -u GIT_TERMINAL_PROMPT -u GIT_SSH_COMMAND -u GIT_SSH PATH="$ssh_bin:$gumbin:$mockbin:$PATH"
+  GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 MOCK_SSH_LOG="$ssh_log")
+
+# Asserts ssh was started once, its arguments beginning with OPTIONS and
+# reaching git@github.com, with Git's own credential prompt set as given.
+expect_ssh_call() {
+  local options=$1 prompt=$2 what=$3
+  [ "$(grep -c '' "$ssh_log")" = 1 ] \
+    && grep -Eq "^ssh ${options:+$options }.*git@github\.com .*\(GIT_TERMINAL_PROMPT=$prompt\)\$" "$ssh_log" || {
+    printf 'bro test: %s did not start ssh with "%s" and GIT_TERMINAL_PROMPT=%s:\n%s\n' \
+      "$what" "$options" "$prompt" "$(cat "$ssh_log")" >&2; exit 1; }
+}
+
+# A boxed fetch asks for nothing: ssh runs in batch mode and Git's credential
+# prompt is off, so a missing key fails at once, the box shows Git's error,
+# and the failure stays on screen until a key is pressed.
+: >"$ssh_log"
+raw=$(run_styled "$ssh_home" $'pick Sync\nesc' "${ssh_env[@]}" 2>&1)
+screen=$(plain_screen <<<"$raw")
+expect_ssh_call '-o BatchMode=yes' 0 'a boxed fetch'
+for expected in 'git@github.com: Permission denied (publickey).' 'Could not read from remote repository' \
+  ' ✗ fetch failed' 'nix-config: ERROR: could not reach the remote' ' ✗ Sync failed' 'press any key to return'; do
+  grep -Fq -- "$expected" <<<"$screen" || {
+    printf 'bro test: a refused boxed fetch did not show: %s\n%s\n' "$expected" "$screen" >&2; exit 1; }
+done
+
+# The user's own ssh command is extended, never replaced, whichever way it is set.
+: >"$ssh_log"
+run_styled "$ssh_home" $'pick Sync\nesc' "${ssh_env[@]}" GIT_SSH_COMMAND='ssh -i /keys/mine' >/dev/null 2>&1
+expect_ssh_call '-i /keys/mine -o BatchMode=yes' 0 'a boxed fetch with GIT_SSH_COMMAND'
+git -C "$ssh_checkout" config core.sshCommand 'ssh -F /config/mine'
+: >"$ssh_log"
+run_styled "$ssh_home" $'pick Sync\nesc' "${ssh_env[@]}" >/dev/null 2>&1
+expect_ssh_call '-F /config/mine -o BatchMode=yes' 0 'a boxed fetch with core.sshCommand'
+git -C "$ssh_checkout" config --unset core.sshCommand
+# A GIT_SSH program need not take ssh options, so it is started as it is.
+: >"$ssh_log"
+run_styled "$ssh_home" $'pick Sync\nesc' "${ssh_env[@]}" GIT_SSH="$ssh_bin/ssh" >/dev/null 2>&1
+grep -Fq '(GIT_TERMINAL_PROMPT=0)' "$ssh_log" && ! grep -Fq 'BatchMode' "$ssh_log" || {
+  printf 'bro test: a boxed fetch changed how a GIT_SSH program is started:\n%s\n' "$(cat "$ssh_log")" >&2; exit 1; }
+
+# Plain Sync is unboxed and fetches exactly as before, free to ask.
+: >"$ssh_log"
+output=$(run_menu "$ssh_home" "2\n${quit}\n" "${ssh_env[@]}" 2>&1)
+expect_ssh_call '' unset 'a plain fetch'
+! grep -Fq 'BatchMode' "$ssh_log" && grep -Fq 'could not reach the remote' <<<"$output" || {
+  printf 'bro test: a plain fetch was changed:\n%s\n' "$(cat "$ssh_log")" >&2; exit 1; }
+
+# Backing out, with Back or Esc before anything ran, brings the menu straight
+# back on a fresh screen, with no pause and no failure.
+expect_no_pause() {
+  local output=$1 what=$2
+  ! grep -Fq -e 'press any key' -e 'returning to the menu' -e ' failed' <<<"$output" \
+    && [ "$(grep -o $'\e\\[H\e\\[2J' <<<"$output" | wc -l | tr -d ' ')" = 2 ] || {
+    printf 'bro test: %s paused or failed instead of going straight back to the menu:\n%s\n' "$what" "$output" >&2; exit 1; }
+}
+expect_pause() {
+  grep -Fq 'press any key to return' <<<"$1" || {
+    printf 'bro test: %s did not wait for a key:\n%s\n' "$2" "$1" >&2; exit 1; }
+}
+for answer in 'pick Back' esc; do
+  output=$(run_styled "$accounts_home" "pick Accounts"$'\n'"$answer"$'\nesc' env MOCK_UNAME_S=Linux 2>&1)
+  expect_no_pause "$output" "$answer at Accounts"
+done
+expect_pause "$(run_styled "$accounts_home" $'pick Accounts\npick Run setup\nesc' env MOCK_UNAME_S=Linux 2>&1)" \
+  'Run setup at Accounts'
+
+# A wizard that happens to exit with the back-out status has still failed: the
+# step says so and the failure stays on screen, in either mode.
+mv "$accounts_home/.local/bin/nix-config-setup" "$work/accounts-setup"
+command cat >"$accounts_home/.local/bin/nix-config-setup" <<'EOF'
+#!/bin/sh
+[ "${1:-}" != --status ] || { printf 'ok\tProton Pass\tready\n'; exit 0; }
+exit 117
+EOF
+chmod +x "$accounts_home/.local/bin/nix-config-setup"
+output=$(run_styled "$accounts_home" $'pick Accounts\npick Run setup\nesc' "${accounts_env[@]}" 2>&1)
+grep -Fq 'nix-config: returning to the menu' <<<"$output" || {
+  printf 'bro test: a styled wizard exiting 117 was taken for backing out:\n%s\n' "$output" >&2; exit 1; }
+expect_pause "$output" 'a styled wizard exiting 117'
+output=$(run_menu "$accounts_home" '4\n7\n' "${accounts_env[@]}" 2>&1)
+grep -Fq 'nix-config: returning to the menu' <<<"$output" || {
+  printf 'bro test: a plain wizard exiting 117 was taken for backing out:\n%s\n' "$output" >&2; exit 1; }
+mv "$work/accounts-setup" "$accounts_home/.local/bin/nix-config-setup"
+
+rm -f "$jobs_file"
+expect_no_pause "$(run_styled "$jobs_home" $'pick Jobs\nesc' "${linux[@]}" 2>&1)" 'Esc at Jobs'
+expect_pause "$(run_styled "$jobs_home" $'pick Jobs\npick Board sync' "${linux[@]}" 2>&1)" 'saving Jobs'
+rm -f "$jobs_file"
+
+# Update's sync has run before its choice, so a cancel there still finishes,
+# reports its log, and waits for a key.
+for answers in $'pick Update\npick\nesc' $'pick Update\nesc\nesc'; do
+  new_update_checkout
+  output=$(run_styled "$update_home" "$answers" "${update_env[@]}" 2>&1)
+  screen=$(plain_screen <<<"$output")
+  for expected in 'nix-config: update cancelled' ' ✓ Update finished in ' '   log: ~/.local/state/bro/logs/update-'; do
+    grep -Fq -- "$expected" <<<"$screen" || {
+      printf 'bro test: a cancelled styled Update (%s) did not report: %s\n%s\n' "$answers" "$expected" "$screen" >&2; exit 1; }
+  done
+  ! grep -Fq 'returning to the menu' <<<"$screen" || {
+    echo "bro test: a cancelled styled Update failed: $answers" >&2; exit 1; }
+  expect_pause "$output" "a cancelled styled Update ($answers)"
+done
+new_update_checkout
+expect_pause "$(run_styled "$update_home" $'pick Update\npick Pi  \npick Discard\nesc' "${update_env[@]}" 2>&1)" \
+  'Discard at the Update summary'
+# Plain mode never pauses, and a cancelled Update is no failure there either.
+new_update_checkout
+output=$(run_menu "$update_home" "3\n5\n${quit}\n" "${update_plain_env[@]}" 2>&1)
+grep -Fq 'nix-config: update cancelled' <<<"$output" && ! grep -Fq -e 'returning to the menu' -e 'press any key' <<<"$output" || {
+  printf 'bro test: a cancelled plain Update failed or paused:\n%s\n' "$output" >&2; exit 1; }
+
+# A pin with no version before keeps its empty old column, in both modes.
+new_update_checkout
+printf '{ }\n' >"$update_checkout/home/modules/pi.nix"
+git -C "$update_checkout" commit -qam 'Pi without a version'
+update_head=$(git -C "$update_checkout" rev-parse HEAD)
+output=$(run_menu "$update_home" "3\n2\n5\n3\n${quit}\n" "${update_plain_env[@]}" 2>&1)
+grep -Fxq "$(printf '  %-10s%s -> %s' 'Pi:' '' '1.1.0')" <<<"$(tr -d '\r' <<<"$output")" || {
+  printf 'bro test: a plain summary row with no old version shifted its columns:\n%s\n' "$output" >&2; exit 1; }
+raw=$(run_styled "$update_home" $'pick Update\npick Pi  \npick Discard\nesc' "${update_env[@]}" 2>&1)
+grep -Eq '^│ Pi {10}→ 1\.1\.0 +│$' <<<"$(plain_screen <<<"$raw")" || {
+  printf 'bro test: a styled summary row with no old version shifted its columns:\n%s\n' "$(plain_screen <<<"$raw")" >&2; exit 1; }
+expect_untouched_checkout 'a summary with no old version'
+
+# A saved run time with a leading zero is still decimal, and no error leaks.
+write_health "checked"$'\t'"0$(($(date +%s) - 7200))" $'ok\tcore\tcheckout metadata'
+card=$(draw_card "$clone" "$health_state" '')
+expect_card_line 3 "$card" 'health ✓ all checks passed · checked 2h ago' 'a run time with a leading zero'
+write_health "checked"$'\t'"0999" $'ok\tcore\tcheckout metadata'
+card=$(draw_card "$clone" "$health_state" '')
+! grep -Fq -e 'value too great' -e 'checked  ago' <<<"$card" && grep -Eq '· checked [0-9]+d ago' <<<"$card" || {
+  printf 'bro test: a run time of 0999 was not read as decimal:\n%s\n' "$card" >&2; exit 1; }
+
+# A text box fits a narrow terminal, its title cut with … like its rows.
+for columns in 60 24; do
+  box=$(printf '' | "$pty_run" bash -c '
+      set -euo pipefail
+      stty cols "$2" </dev/tty
+      . "$1/scripts/lib/core.sh"
+      draw_text_box "Proposed version updates" "Pi         1.0.0 → 1.1.0" "Playwright 0.1.0 → 0.2.0"
+    ' _ "$repo_root" "$columns" | plain_screen)
+  sed -e 's/─/./g' -e 's/│/./g' -e 's/╭/./g' -e 's/╮/./g' -e 's/╰/./g' -e 's/╯/./g' -e 's/→/./g' -e 's/…/./g' <<<"$box" \
+    | awk -v width="$columns" 'length($0) != width { bad = 1 } END { exit bad || NR != 4 }' || {
+    printf 'bro test: a text box is not %s columns wide:\n%s\n' "$columns" "$box" >&2; exit 1; }
+done
+[ "$(head -n 1 <<<"$box")" = '╭─ Proposed version … ─╮' ] || {
+  printf 'bro test: a narrow text box did not cut its title with …:\n%s\n' "$box" >&2; exit 1; }
+
+echo 'bro test: PASSED (menu-only entry, apply identity, DNS retry, sync push boundary, accounts wrapper, Pi extensions, Pi + ext, Playwright, Jobs, styled prompts, Health, log box, Accounts table, Sync and Update steps, status card, boxed fetch and backing out)'

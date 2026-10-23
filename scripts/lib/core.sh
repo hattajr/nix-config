@@ -354,9 +354,27 @@ report_action() {
   [ -z "$shown" ] || printf '   %slog: %s%s\n' "$STYLE_DIM" "$shown" "$STYLE_UNDIM"
 }
 
+# An item that the user leaves, at a Back choice or with Esc, before it has
+# run anything returns BACKED_OUT: today Accounts' Back or Esc, and Jobs' Esc.
+# The menu then comes straight back, with no pause, since there is nothing on
+# screen worth keeping. Update's cancel comes after its sync has run, so it is
+# not one of these.
+readonly BACKED_OUT=117
+
+# Runs a program whose exit status an item passes on to the menu. A program
+# that happens to exit with BACKED_OUT has failed, not backed out, so that
+# status becomes 1. Only for a program: a shell function run this way would
+# run without set -e.
+pass_on_status() {
+  local status=0
+  "$@" || status=$?
+  [ "$status" != "$BACKED_OUT" ] || status=1
+  return "$status"
+}
+
 # Steps are boxed only inside an action, which owns the log, and only in
-# styled mode. Elsewhere, as in Sync until it runs steps of its own, a step
-# runs exactly as it did before steps were logged.
+# styled mode. Elsewhere, as in Apply run from Jobs, a step runs exactly as it
+# did before steps were logged.
 step_boxes() {
   [ -n "$ACTION_LOG" ] && styled_prompts
 }
@@ -544,5 +562,43 @@ draw_box_frame() {
   [ "$count" = 0 ] || label=" last $# of $count "
   box_rule "$((width - 3 - ${#label}))"
   frame_text+="$STYLE_DIM╰$BOX_RULE$label─╯$STYLE_UNDIM"$'\e[K\n'
+  printf '%s' "$frame_text"
+}
+
+# A result to read before the next prompt, such as Update's summary, in a box
+# of its own: the title on the top border, then each row cut with … to fit.
+# The title is cut too, keeping at least one column of border after it. An
+# arrow is one column wide, so it is measured and cut as a one-byte stand-in,
+# which counts as one column in any locale.
+draw_text_box() {
+  local title=$1 && shift
+  local accent=$'\e[3'"$STYLE_ACCENT"'m' unaccent=$'\e[39m' arrow=$'\032'
+  local width room title_room title_columns=${#title} text columns padding frame_text
+  width=$(styled_width)
+  room=$((width - 4))
+  title_room=$((width - 6))
+  if [ "$title_columns" -gt "$title_room" ]; then
+    if [ "$title_room" -ge 1 ]; then
+      title="${title:0:title_room-1}…"
+      title_columns=$title_room
+    else
+      title='' title_columns=0
+    fi
+  fi
+  box_rule "$((width - 5 - title_columns))"
+  frame_text="$STYLE_DIM╭─$STYLE_UNDIM $accent$title$unaccent $STYLE_DIM$BOX_RULE╮$STYLE_UNDIM"$'\n'
+  for text in "$@"; do
+    text=${text//→/$arrow}
+    columns=${#text}
+    if [ "$columns" -gt "$room" ]; then
+      text="${text:0:room-1}…"
+      columns=$room
+    fi
+    text=${text//$arrow/→}
+    printf -v padding '%*s' "$((room - columns))" ''
+    frame_text+="$STYLE_DIM│$STYLE_UNDIM $text$padding $STYLE_DIM│$STYLE_UNDIM"$'\n'
+  done
+  box_rule "$((width - 2))"
+  frame_text+="$STYLE_DIM╰$BOX_RULE╯$STYLE_UNDIM"$'\n'
   printf '%s' "$frame_text"
 }

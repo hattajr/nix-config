@@ -284,6 +284,7 @@ BRO_TEST_REPO_ROOT="$source_root" "$source_root/tests/bro/test-bro.sh"
 BOOTSTRAP_REPO_ROOT="$source_root" "$source_root/tests/proton-pass/test-pi-wrapper.sh"
 BOOTSTRAP_REPO_ROOT="$source_root" "$source_root/tests/proton-pass/test-session-wrapper.sh"
 BOOTSTRAP_REPO_ROOT="$source_root" "$source_root/tests/proton-pass/test-setup.sh"
+BOOTSTRAP_REPO_ROOT="$source_root" "$source_root/tests/proton-pass/test-setup-status.sh"
 
 printf '%s: checking repeatable activation generation\n' "$validation_name"
 second_drv=$(nix eval --impure --raw "$flake_ref.activationPackage.drvPath")
