@@ -406,139 +406,91 @@ output=$(run_menu "$jobs_home" '1\n7\n8\n' "${linux[@]}" 2>&1)
 
 # --- styled prompts -----------------------------------------------------------
 
-# The mock gum records every call and replays the next scripted answer, one per
-# line of MOCK_GUM_ANSWERS: esc and ctrl-c leave the prompt with gum's own exit
-# status, enter takes the default (the first row, the pre-ticked rows, or the
-# confirm default), yes and no answer a confirm, and "pick A|B" chooses the
-# rows whose text starts with A and B. It answers like real gum: a row is split
-# into shown text and answered value only when --label-delimiter names the
-# separator, the answer goes to stdout, and --selected is split on commas that
-# are not escaped as "\,". Running out of answers is an Esc, so a miscounted
-# script ends the menu instead of hanging the suite.
+# Styled mode needs gum on PATH, though bro draws its prompts itself and never
+# runs gum; this gum only records that it was run.
 gumbin="$work/gum-bin"
-gum_log="$work/gum-log"
-gum_state="$work/gum-state"
 mkdir -p "$gumbin"
 command cat >"$gumbin/gum" <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-{ printf 'gum'; printf ' [%s]' "$@"; printf '\n'; } >>"$MOCK_GUM_LOG"
-[ -t 0 ] && [ -t 2 ] || { printf 'gum was not given the terminal\n' >>"$MOCK_GUM_LOG"; exit 2; }
-call=$(( $(cat "$MOCK_GUM_STATE" 2>/dev/null || printf 0) + 1 ))
-printf '%s\n' "$call" >"$MOCK_GUM_STATE"
-answer=$(sed -n "${call}p" <<<"$MOCK_GUM_ANSWERS")
-command=$1 && shift
-# Marks on the terminal where a prompt was asked, so a case can assert what
-# was on screen before it.
-[ -z "${MOCK_GUM_MARK:-}" ] || printf '<gum %s>\n' "$command" >&2
-rows=() ticked=() default=true many=no delimiter=''
-
-# Splits a flag value on commas the way gum's flag parser does: "\," is a
-# literal comma, and any other backslash stays as it is.
-add_ticked() {
-  local value=$1 token='' char escaped=no i
-  for ((i = 0; i < ${#value}; i++)); do
-    char=${value:i:1}
-    if [ "$escaped" = yes ]; then
-      [ "$char" = , ] || token+='\'
-      token+=$char
-      escaped=no
-    elif [ "$char" = '\' ] && [ "$i" -lt $((${#value} - 1)) ]; then
-      escaped=yes
-    elif [ "$char" = , ]; then
-      ticked+=("$token")
-      token=''
-    else
-      token+=$char
-    fi
-  done
-  ticked+=("$token")
-}
-
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    --) shift; rows=("$@"); break ;;
-    --selected=*) add_ticked "${1#--selected=}" ;;
-    --default=*) default=${1#--default=} ;;
-    --label-delimiter=*) delimiter=${1#--label-delimiter=} ;;
-    --no-limit) many=yes ;;
-  esac
-  shift
-done
-
-shown() { if [ -n "$delimiter" ]; then printf '%s' "${1%"$delimiter"*}"; else printf '%s' "$1"; fi; }
-value() { if [ -n "$delimiter" ]; then printf '%s\n' "${1##*"$delimiter"}"; else printf '%s\n' "$1"; fi; }
-
-print_rows_starting() {
-  local wanted row
-  for wanted in "$@"; do
-    for row in "${rows[@]}"; do
-      case "$(shown "$row")" in "$wanted"*) value "$row" ;; esac
-    done
-  done
-}
-
-case "$command:${answer:-esc}" in
-  *:ctrl-c) exit 130 ;;
-  choose:esc) printf 'nothing selected\n' >&2; exit 1 ;;
-  confirm:esc | confirm:no) exit 1 ;;
-  confirm:yes) exit 0 ;;
-  confirm:enter) [ "$default" = true ] ;;
-  choose:enter)
-    if [ "$many" = yes ]; then
-      for row in "${rows[@]}"; do
-        for wanted in "${ticked[@]+"${ticked[@]}"}"; do
-          [ "$(shown "$row")" != "$wanted" ] || value "$row"
-        done
-      done
-    else
-      value "${rows[0]}"
-    fi
-    ;;
-  'choose:pick') ;;
-  choose:pick\ *) IFS='|' read -r -a picks <<<"${answer#pick }"; print_rows_starting "${picks[@]}" ;;
-  *) printf 'mock gum: no answer "%s" for %s\n' "$answer" "$command" >&2; exit 3 ;;
-esac
+#!/bin/sh
+printf 'gum %s\n' "$*" >>"$MOCK_LOG"
+exit 3
 EOF
 chmod +x "$gumbin/gum"
 
-# Styled mode needs no test switch, a terminal, and gum on PATH. Esc after the
-# scripted answers ends the menu, and plain-prompt end-of-file marks stop a
-# wrong fallback to the numbered menu from hanging the suite. The keys typed
-# first answer the pause after each action, which reads a single key and never
-# sees an end-of-file mark.
+# Keys typed at the styled prompts. Every key is typed before bro reads any,
+# and an Esc followed at once by anything but an escape sequence counts as one
+# Esc, so a lone Esc is typed as two. The pause after an action takes any key;
+# z is one that no prompt uses.
+enter=$'\r' esc=$'\e\e' pause=z
+
+# The keys that move the cursor COUNT rows down, then press Enter.
+row_keys() {
+  local index
+  for ((index = 0; index < $1; index++)); do printf j; done
+  printf '\r'
+}
+
+# The keys that pick ITEM in the main menu. Its items keep their order on every
+# platform up to Jobs, and Quit is always last.
+item_keys() {
+  local item index=0
+  if [ "$1" = Quit ]; then
+    printf 'G\r'
+    return
+  fi
+  for item in Apply Sync Update Accounts Health 'Clean up' Jobs; do
+    [ "$item" != "$1" ] || break
+    index=$((index + 1))
+  done
+  row_keys "$index"
+}
+
+# Styled mode needs no test switch, a terminal, and gum on PATH. KEYS are typed
+# at bro's prompts, then a q that quits from wherever a miscounted script left
+# bro. Should q itself be broken, Esc backs out of up to two prompts and then
+# leaves the menu, and plain-prompt end-of-file marks stop a wrong fallback to
+# the numbered menu, so neither hangs the suite.
 run_styled() {
-  local target_home=$1 answers=$2 && shift 2
-  : >"$gum_log"
-  rm -f "$gum_state"
-  printf 'kkkk\004\004\004' | "$pty_run" env -u XDG_STATE_HOME -u NIX_CONFIG_TEST_PLAIN \
-    HOME="$target_home" USER=apply-user PATH="$gumbin:$mockbin:$PATH" \
-    MOCK_GUM_LOG="$gum_log" MOCK_GUM_STATE="$gum_state" MOCK_GUM_ANSWERS="$answers" \
-    "$@" "$bro"
+  local target_home=$1 keys=$2 && shift 2
+  printf '%sq%s%s%s\004\004\004' "$keys" "$esc" "$esc" "$esc" | "$pty_run" env -u XDG_STATE_HOME -u NIX_CONFIG_TEST_PLAIN \
+    HOME="$target_home" USER=apply-user PATH="$gumbin:$mockbin:$PATH" "$@" "$bro"
 }
 
-gum_calls() {
-  grep -c '^gum ' "$gum_log" || true
+# What the terminal was sent, with colours, cursor moves and carriage returns
+# dropped, so frames read as plain lines.
+plain_screen() {
+  sed -e $'s/\e\\[[0-9;?]*[A-Za-z]//g' -e $'s/\r//g'
 }
 
-# The text gum showed for the first row starting with LABEL, without its colour
-# codes or answer value.
-gum_row() {
-  grep -o "\[$1 [^]]*\]" "$gum_log" | head -n 1 \
-    | sed -e $'s/\e\\[[0-9;]*m//g' -e 's/^\[//' -e $'s/\t[0-9]*]$//'
+# How many times OUTPUT shows a prompt whose title starts with TITLE. A picker
+# draws its title once, however often it redraws its rows.
+prompts_shown() {
+  plain_screen <<<"$1" | awk -v title="$2" 'index($0, title) == 1 { n++ } END { print n + 0 }'
+}
+menus_shown() {
+  prompts_shown "$1" 'nix-config  ('
 }
 
-# Asserts a gum row fits 60 columns after MARKS columns of gum's own cursor and
-# tick marks, and that its description is DESCRIPTION, either whole or cut to
-# the full width with an ellipsis that marks the cut.
-expect_gum_row() {
-  local label=$1 marks=$2 description=$3 row shown measured
-  row=$(gum_row "$label")
-  shown=${row#"$label"}
+# The first row a picker in OUTPUT drew for LABEL, with the cursor and tick
+# columns in front of it.
+picker_row() {
+  plain_screen <<<"$1" | grep -E "^(> |  )([✓•] )?$2 " | head -n 1
+}
+
+# Asserts a picker row fits 60 columns, cursor and tick marks included, and
+# that its description is DESCRIPTION, either whole or cut to the full width
+# with an ellipsis that marks the cut.
+expect_picker_row() {
+  local output=$1 label=$2 description=$3 row shown measured
+  row=$(picker_row "$output" "$label")
+  [ -n "$row" ] || { echo "bro test: no picker drew a $label row" >&2; exit 1; }
+  shown=${row#*"$label"}
   shown=${shown#"${shown%%[! ]*}"}
-  # A one-byte stand-in for the ellipsis keeps the width count right in any locale.
-  measured=${row/…/.}
-  [ $((marks + ${#measured})) -le 60 ] || {
+  # One-byte stand-ins for the one-column glyphs keep the count right in any locale.
+  measured=${row//…/.}
+  measured=${measured//✓/.}
+  measured=${measured//•/.}
+  [ "${#measured}" -le 60 ] || {
     echo "bro test: the styled $label row is wider than 60 columns: $row" >&2; exit 1; }
   case "$shown" in
     "$description") ;;
@@ -546,43 +498,60 @@ expect_gum_row() {
       [ "${description#"${shown%…}"}" != "$description" ] || {
         echo "bro test: the styled $label row cut its description to something else: $row" >&2; exit 1; }
       # A cut description uses all the room there is.
-      [ $((marks + ${#measured})) -eq 60 ] || {
+      [ "${#measured}" -eq 60 ] || {
         echo "bro test: the styled $label row was cut shorter than 60 columns: $row" >&2; exit 1; } ;;
     *) echo "bro test: the styled $label row cut its description without marking it: $row" >&2; exit 1 ;;
   esac
 }
 
-# The main menu goes through gum, keeps each description beside its label, and
-# the chosen item runs; Esc then quits with success.
+# The Yes and No buttons as a confirm first draws them, No picked.
+no_picked=$' \e[37;100m  Yes  \e[39;49m  \e[30;46m  No  \e[39;49m'
+
+# Asserts OUTPUT asked QUESTION as a confirm that starts on No.
+expect_confirm_defaulting_to_no() {
+  local output=$1 question=$2
+  [[ "$(tr -d '\r' <<<"$output")" == *"$question"$'\e[39m\n'"$no_picked"* ]] || {
+    echo "bro test: styled mode did not ask \"$question\" starting on No" >&2; exit 1; }
+}
+
+# The main menu is bro's own picker, keeps each description beside its label,
+# and the chosen item runs; Esc then quits with success.
 : >"$log"
 status=0
-output=$(run_styled "$apply_home" $'pick Apply\nesc' 2>&1) || status=$?
+output=$(run_styled "$apply_home" "$(item_keys Apply)$pause$esc" 2>&1) || status=$?
 [ "$status" = 0 ] || { echo "bro test: Esc at the styled main menu exited $status" >&2; exit 1; }
-grep -q '^activation$' "$log" || { echo 'bro test: Apply chosen through gum did not activate' >&2; exit 1; }
-! grep -Fq 'not given the terminal' "$gum_log" || {
-  echo 'bro test: gum did not read and draw on the terminal' >&2; exit 1; }
-grep -Fq '[choose]' "$gum_log" && grep -Fq '[--header=nix-config  (' "$gum_log" || {
-  echo 'bro test: the main menu did not go through gum choose' >&2; exit 1; }
-grep -Eq '\[Apply +.*activate this checkout' "$gum_log" || {
-  echo 'bro test: the styled main menu lost its descriptions' >&2; exit 1; }
+grep -q '^activation$' "$log" || { echo 'bro test: Apply chosen in the styled menu did not activate' >&2; exit 1; }
+! grep -q '^gum ' "$log" || { echo 'bro test: the styled menu ran gum' >&2; exit 1; }
+grep -Eq '^> Apply +activate this checkout' <<<"$(plain_screen <<<"$output")" || {
+  echo 'bro test: the styled main menu did not start on Apply with its description' >&2; exit 1; }
 # A description that fits stays whole; one that does not ends in an ellipsis.
-expect_gum_row Apply 2 'activate this checkout'
-expect_gum_row Update 2 'change pinned versions or update Pi extensions'
-case "$(gum_row Update)" in *…) ;; *)
-  echo "bro test: the long Update description was not visibly cut at 60 columns: $(gum_row Update)" >&2; exit 1 ;;
+expect_picker_row "$output" Apply 'activate this checkout'
+expect_picker_row "$output" Update 'change pinned versions or update Pi extensions'
+case "$(picker_row "$output" Update)" in *…) ;; *)
+  echo "bro test: the long Update description was not visibly cut at 60 columns: $(picker_row "$output" Update)" >&2; exit 1 ;;
 esac
+grep -Fxq 'enter picks, esc goes back, q quits' <<<"$(plain_screen <<<"$output")" || {
+  echo 'bro test: the styled menu did not say which keys it takes' >&2; exit 1; }
 ! grep -Fq 'choose [1-' <<<"$output" || { echo 'bro test: styled mode also drew the plain menu' >&2; exit 1; }
-[ "$(gum_calls)" = 2 ] || { echo 'bro test: the styled menu did not return after Apply' >&2; exit 1; }
+[ "$(menus_shown "$output")" = 2 ] || { echo 'bro test: the styled menu did not return after Apply' >&2; exit 1; }
+
+# The arrow keys move too, and the cursor wraps from the top to the bottom.
+: >"$log"
+run_styled "$apply_home" $'\e[B\e[A\r'"$pause$esc" >/dev/null 2>&1
+grep -q '^activation$' "$log" || { echo 'bro test: the arrow keys did not move the styled cursor' >&2; exit 1; }
+output=$(run_styled "$apply_home" $'k\r' 2>&1)
+[ "$(menus_shown "$output")" = 1 ] && ! grep -Fq 'press any key' <<<"$output" || {
+  echo 'bro test: moving up from the first item did not wrap to Quit' >&2; exit 1; }
 
 # Esc straight away runs nothing and still exits 0, as end-of-input does.
 : >"$log"
 status=0
-run_styled "$apply_home" esc >/dev/null 2>&1 || status=$?
+run_styled "$apply_home" "$esc" >/dev/null 2>&1 || status=$?
 [ "$status" = 0 ] || { echo "bro test: Esc at the first styled menu exited $status" >&2; exit 1; }
 ! grep -Eq '^nix |^activation$' "$log" || { echo 'bro test: Esc at the styled menu ran a step' >&2; exit 1; }
 
-# A submenu goes through gum and its answer runs; Esc there cancels back to the
-# main menu, which is asked again.
+# A submenu's answer runs; Esc there cancels back to the main menu, which is
+# asked again.
 mkdir -p "$extensions_home/.local/bin"
 command cat >"$extensions_home/.local/bin/pi" <<'EOF'
 #!/bin/sh
@@ -590,69 +559,73 @@ printf 'pi %s (skip=%s)\n' "$*" "${PI_SKIP_PROTON_PASS:-}" >>"$MOCK_LOG"
 EOF
 chmod +x "$extensions_home/.local/bin/pi"
 : >"$log"
-run_styled "$extensions_home" $'pick Update\npick Pi extensions\nesc' env MOCK_GIT_MODE=sync MOCK_GIT_AHEAD=0 >/dev/null 2>&1
-grep -Fq '[--header=What should be updated?' "$gum_log" && grep -Fq '[--no-limit]' "$gum_log" || {
-  echo 'bro test: the Update submenu was not a gum multi-select' >&2; exit 1; }
+output=$(run_styled "$extensions_home" "$(item_keys Update)jjx$enter$pause$esc" \
+  env MOCK_GIT_MODE=sync MOCK_GIT_AHEAD=0 2>&1)
+[ "$(prompts_shown "$output" 'What should be updated?')" = 1 ] \
+  && grep -Fxq 'x toggles, enter to update the ticked items' <<<"$(plain_screen <<<"$output")" || {
+  echo 'bro test: the Update submenu was not a styled multi-select' >&2; exit 1; }
 grep -Fq 'pi update --extensions (skip=1)' "$log" || {
-  echo 'bro test: the Update choice made through gum did not run' >&2; exit 1; }
+  echo 'bro test: the Update choice made in the styled submenu did not run' >&2; exit 1; }
 : >"$log"
-output=$(run_styled "$extensions_home" $'pick Update\nesc\nesc' env MOCK_GIT_MODE=sync MOCK_GIT_AHEAD=0 2>&1)
+output=$(run_styled "$extensions_home" "$(item_keys Update)$esc$pause$esc" env MOCK_GIT_MODE=sync MOCK_GIT_AHEAD=0 2>&1)
 ! grep -Eq '^(pi update|update-pi|update-playwright-cli) ' "$log" && ! grep -Fq 'nix flake update' "$log" || {
   echo 'bro test: Esc in the Update submenu still updated something' >&2; exit 1; }
-[ "$(gum_calls)" = 3 ] || { echo 'bro test: Esc in a submenu did not return to the main menu' >&2; exit 1; }
+[ "$(menus_shown "$output")" = 2 ] || { echo 'bro test: Esc in a submenu did not return to the main menu' >&2; exit 1; }
 grep -Fq 'nix-config: update cancelled' <<<"$output" || {
   echo 'bro test: Esc in the Update submenu did not say the update was cancelled' >&2; exit 1; }
 
-# confirm goes through gum with today's default, and Esc there is a cancel.
+# confirm starts on today's default, and Esc there is a cancel.
 : >"$log"
-run_styled "$apply_home" $'pick Sync\nyes\nesc' env MOCK_GIT_MODE=sync >/dev/null 2>&1
-grep -Fq '[confirm]' "$gum_log" && grep -Fq '[--default=false]' "$gum_log" || {
-  echo 'bro test: the push question did not go through gum confirm defaulting to No' >&2; exit 1; }
-grep -Eq '^git .* push($| )' "$log" || { echo 'bro test: Yes in gum confirm did not push' >&2; exit 1; }
-for answer in enter esc no; do
+output=$(run_styled "$apply_home" "$(item_keys Sync)y$pause$esc" env MOCK_GIT_MODE=sync 2>&1)
+expect_confirm_defaulting_to_no "$output" 'Push your local commits so other machines receive them?'
+grep -Eq '^git .* push($| )' "$log" || { echo 'bro test: y at a styled confirm did not push' >&2; exit 1; }
+: >"$log"
+run_styled "$apply_home" "$(item_keys Sync)l$enter$pause$esc" env MOCK_GIT_MODE=sync >/dev/null 2>&1
+grep -Eq '^git .* push($| )' "$log" || { echo 'bro test: Enter on Yes at a styled confirm did not push' >&2; exit 1; }
+for answer in "$enter" "$esc" n; do
   : >"$log"
-  run_styled "$apply_home" "pick Sync"$'\n'"$answer"$'\nesc' env MOCK_GIT_MODE=sync >/dev/null 2>&1
-  ! grep -Eq '^git .* push($| )' "$log" || { echo "bro test: $answer in gum confirm pushed" >&2; exit 1; }
-  [ "$(gum_calls)" = 3 ] || { echo "bro test: $answer in gum confirm did not return to the menu" >&2; exit 1; }
+  output=$(run_styled "$apply_home" "$(item_keys Sync)$answer$pause$esc" env MOCK_GIT_MODE=sync 2>&1)
+  ! grep -Eq '^git .* push($| )' "$log" || { echo "bro test: $(cat -v <<<"$answer") at a styled confirm pushed" >&2; exit 1; }
+  [ "$(menus_shown "$output")" = 2 ] || {
+    echo "bro test: $(cat -v <<<"$answer") at a styled confirm did not return to the menu" >&2; exit 1; }
 done
 
 # Styled Jobs is one multi-select with the saved jobs already ticked. Enter
 # saves exactly what is ticked and applies it; Esc saves and applies nothing.
 rm -f "$jobs_file"
 : >"$log"
-run_styled "$jobs_home" $'pick Jobs\nesc' "${linux[@]}" >/dev/null 2>&1
-grep -Fq '[--no-limit]' "$gum_log" && grep -Fq "[--header=Background jobs on $host" "$gum_log" || {
-  echo 'bro test: styled Jobs was not a gum multi-select naming this machine' >&2; exit 1; }
-grep -Eq '\[Board sync +.*hourly: add your open GitHub issues' "$gum_log" || {
-  echo 'bro test: styled Jobs did not list Board sync with its description' >&2; exit 1; }
-expect_gum_row 'Board sync' 4 'hourly: add your open GitHub issues to your boards'
-! grep -Fq -e '[--selected=' -e '[x]' -e '[ ]' -e '[Done' "$gum_log" || {
-  echo 'bro test: styled Jobs ticked a job no file asked for, or kept the plain toggle rows' >&2; exit 1; }
+output=$(run_styled "$jobs_home" "$(item_keys Jobs)$esc$esc" "${linux[@]}" 2>&1)
+[ "$(prompts_shown "$output" "Background jobs on $host")" = 1 ] \
+  && grep -Fxq 'x toggles, enter to apply and return' <<<"$(plain_screen <<<"$output")" || {
+  echo 'bro test: styled Jobs was not a multi-select naming this machine' >&2; exit 1; }
+expect_picker_row "$output" 'Board sync' 'hourly: add your open GitHub issues to your boards'
+[[ "$(picker_row "$output" 'Board sync')" == '> • Board sync '* ]] || {
+  echo "bro test: styled Jobs ticked a job no file asked for: $(picker_row "$output" 'Board sync')" >&2; exit 1; }
 [ ! -e "$jobs_file" ] && ! grep -Eq '^nix |^activation$' "$log" || {
   echo 'bro test: Esc in styled Jobs saved or applied' >&2; exit 1; }
-[ "$(gum_calls)" = 3 ] || { echo 'bro test: Esc in styled Jobs did not return to the menu' >&2; exit 1; }
+[ "$(menus_shown "$output")" = 2 ] || { echo 'bro test: Esc in styled Jobs did not return to the menu' >&2; exit 1; }
 
 : >"$log"
-run_styled "$jobs_home" $'pick Jobs\npick Board sync' "${linux[@]}" >/dev/null 2>&1
+run_styled "$jobs_home" "$(item_keys Jobs)x$enter$pause$esc" "${linux[@]}" >/dev/null 2>&1
 [ "$(cat "$jobs_file")" = board-sync ] || { echo 'bro test: ticking Board sync did not save it' >&2; exit 1; }
 grep -Fq 'jobs = [ "board-sync" ]; })' "$log" && grep -q '^activation$' "$log" || {
   echo 'bro test: ticking Board sync did not apply it' >&2; exit 1; }
 
 : >"$log"
-run_styled "$jobs_home" $'pick Jobs\nesc' "${linux[@]}" >/dev/null 2>&1
-grep -Eq '\[--selected=Board sync +.*hourly' "$gum_log" || {
-  echo 'bro test: styled Jobs did not show the saved job ticked' >&2; exit 1; }
+output=$(run_styled "$jobs_home" "$(item_keys Jobs)$esc$esc" "${linux[@]}" 2>&1)
+[[ "$(picker_row "$output" 'Board sync')" == '> ✓ Board sync '* ]] || {
+  echo "bro test: styled Jobs did not show the saved job ticked: $(picker_row "$output" 'Board sync')" >&2; exit 1; }
 [ "$(cat "$jobs_file")" = board-sync ] && ! grep -Eq '^nix |^activation$' "$log" || {
   echo 'bro test: Esc in styled Jobs changed the saved jobs' >&2; exit 1; }
 
 : >"$log"
-run_styled "$jobs_home" $'pick Jobs\nenter' "${linux[@]}" >/dev/null 2>&1
+run_styled "$jobs_home" "$(item_keys Jobs)$enter$pause$esc" "${linux[@]}" >/dev/null 2>&1
 [ "$(cat "$jobs_file")" = board-sync ] && grep -Fq 'jobs = [ "board-sync" ]; })' "$log" \
   && grep -q '^activation$' "$log" || {
   echo 'bro test: Enter on the ticked jobs did not keep and apply them' >&2; exit 1; }
 
 : >"$log"
-run_styled "$jobs_home" $'pick Jobs\npick' "${linux[@]}" >/dev/null 2>&1
+run_styled "$jobs_home" "$(item_keys Jobs)x$enter$pause$esc" "${linux[@]}" >/dev/null 2>&1
 [ -e "$jobs_file" ] && [ ! -s "$jobs_file" ] && grep -Fq 'jobs = [ ]; })' "$log" \
   && grep -q '^activation$' "$log" || {
   echo 'bro test: unticking every job did not save and apply an empty list' >&2; exit 1; }
@@ -660,34 +633,36 @@ run_styled "$jobs_home" $'pick Jobs\npick' "${linux[@]}" >/dev/null 2>&1
 # An unknown name is refused before the multi-select opens.
 printf '%s\n' weekly-backup >"$jobs_file"
 : >"$log"
-output=$(run_styled "$jobs_home" $'pick Jobs\nesc' "${linux[@]}" 2>&1)
+output=$(run_styled "$jobs_home" "$(item_keys Jobs)$pause$esc" "${linux[@]}" 2>&1)
 grep -Fq "unknown background job \"weekly-backup\" in $jobs_file" <<<"$output" \
-  && [ "$(gum_calls)" = 2 ] && [ "$(cat "$jobs_file")" = weekly-backup ] || {
+  && [ "$(prompts_shown "$output" 'Background jobs on')" = 0 ] && [ "$(cat "$jobs_file")" = weekly-backup ] || {
   echo 'bro test: styled Jobs did not refuse an unknown job before asking' >&2; exit 1; }
 
-# A pre-ticked label with a comma still starts ticked: gum splits --selected on
-# commas, so the comma has to reach it escaped. No job label has one yet, so
-# the prompt is driven directly.
-: >"$gum_log"
-rm -f "$gum_state"
-output=$(printf '\004' | "$pty_run" env -u NIX_CONFIG_TEST_PLAIN PATH="$gumbin:$PATH" \
-  MOCK_GUM_LOG="$gum_log" MOCK_GUM_STATE="$gum_state" MOCK_GUM_ANSWERS=enter \
-  bash -c '
-    set -euo pipefail
-    . "$1/scripts/lib/core.sh"
-    shift
-    CHOSEN_INDEXES=(2)
-    choose_many Title "apply and return" "$@"
-    printf "chosen=%s\n" "${CHOSEN_INDEXES[*]:-none}"
-  ' _ "$repo_root" $'Plain\tone job' $'Comma\tthis, that, and c:\\path' 2>&1)
-grep -Fq 'chosen=2' <<<"$output" || {
-  echo "bro test: a pre-ticked label with a comma did not start ticked: $output" >&2; exit 1; }
+# A pre-ticked option starts ticked whatever its label holds, and Esc keeps
+# the ticks as they were.
+for keys in "$enter" "x$enter" "$esc"; do
+  output=$(printf '%s' "$keys" | "$pty_run" env -u NIX_CONFIG_TEST_PLAIN PATH="$gumbin:$PATH" bash -c '
+      set -euo pipefail
+      . "$1/scripts/lib/core.sh"
+      shift
+      CHOSEN_INDEXES=(2)
+      choose_many Title "apply and return" "$@" || printf "left\n"
+      printf "chosen=%s\n" "${CHOSEN_INDEXES[*]:-none}"
+    ' _ "$repo_root" $'Plain\tone job' $'Comma\tthis, that, and c:\\path' 2>&1)
+  case "$keys" in
+    "$enter") expected='chosen=2' ;;
+    "$esc") expected=$'left\nchosen=2' ;;
+    *) expected='chosen=1 2' ;;
+  esac
+  [ "$(plain_screen <<<"$output" | grep -E '^(left|chosen=)')" = "$expected" ] || {
+    echo "bro test: the styled multi-select answered $(cat -v <<<"$keys") wrongly: $output" >&2; exit 1; }
+done
 
 # The switch and a missing gum both keep the plain numbered prompts, which
 # then work as usual.
 : >"$log"
 output=$(run_styled "$apply_home" '' NIX_CONFIG_TEST_PLAIN=1 2>&1)
-[ ! -s "$gum_log" ] && grep -Fq 'choose [1-' <<<"$output" || {
+grep -Fq 'choose [1-' <<<"$output" && ! grep -Fq 'enter picks, esc goes back' <<<"$output" || {
   echo 'bro test: the plain switch did not keep the plain prompts' >&2; exit 1; }
 # gum shares a directory with tools bro needs, such as ~/.nix-profile/bin, so
 # the host's tools are linked one by one, first on PATH winning, all but gum.
@@ -768,7 +743,7 @@ health_screen() {
 # The step still fails on the core and accounts failures and still offers the
 # review of the shadowed binaries.
 health_started=$(date +%s)
-output=$(run_styled "$health_home" $'pick Health\nno\nesc' \
+output=$(run_styled "$health_home" "$(item_keys Health)n$pause$esc" \
   env PATH="$health_bin:$gumbin:$mockbin:$PATH" "${health_env[@]}" 2>&1)
 expected=$(printf '%s\n' \
   'Health · checked HH:MM' \
@@ -800,7 +775,7 @@ health_screen "$output" | sed -e 's/✓/./g' -e 's/✗/./g' -e 's/→/./g' -e 's
   echo 'bro test: styled Health also printed the plain lines' >&2; exit 1; }
 grep -Fq 'returning to the menu' <<<"$output" || {
   echo 'bro test: styled Health no longer failed on a core failure' >&2; exit 1; }
-grep -Fq '[Review the shadowed binaries now?]' "$gum_log" || {
+[ "$(prompts_shown "$output" 'Review the shadowed binaries now?')" = 1 ] || {
   echo 'bro test: styled Health did not offer the shadowed binaries review' >&2; exit 1; }
 
 # Asserts FILE holds a "checked<TAB>epoch" line for a run started no earlier
@@ -840,7 +815,7 @@ for stub in zsh tmux; do
   printf '#!/bin/sh\nexit 0\n' >"$quiet_home/.nix-profile/bin/$stub"
   chmod +x "$quiet_home/.nix-profile/bin/$stub"
 done
-output=$(run_styled "$quiet_home" $'pick Health\nesc' env -u LC_ALL LANG=C MOCK_UNAME_S=Darwin MOCK_UNAME_M=arm64 2>&1)
+output=$(run_styled "$quiet_home" "$(item_keys Health)$pause$esc" env -u LC_ALL LANG=C MOCK_UNAME_S=Darwin MOCK_UNAME_M=arm64 2>&1)
 expected=$(printf '%s\n' \
   'Health · checked HH:MM' \
   'Core' \
@@ -952,13 +927,7 @@ new_box_home() {
 # Styled Apply with the box nix, then Esc at the menu it returns to.
 run_box_apply() {
   local target_home=$1 && shift
-  run_styled "$target_home" $'pick Apply\nesc' env PATH="$boxbin:$gumbin:$mockbin:$PATH" "$@"
-}
-
-# What the terminal was sent, with colours, cursor moves and carriage returns
-# dropped, so frames read as plain lines.
-plain_screen() {
-  sed -e $'s/\e\\[[0-9;?]*[A-Za-z]//g' -e $'s/\r//g'
+  run_styled "$target_home" "$(item_keys Apply)$pause$esc" env PATH="$boxbin:$gumbin:$mockbin:$PATH" "$@"
 }
 
 box_log_file() {
@@ -997,7 +966,7 @@ expected_summary=$(printf '%s\n' ' ✓ build  Ns' ' ✓ activate  Ns' ' ✓ relo
   printf 'bro test: styled Apply did not end in its step and finish lines:\n%s\n' "$summary" >&2; exit 1; }
 ! grep -Fq 'nix-config: building' <<<"$screen" || {
   echo 'bro test: styled Apply still printed the plain progress lines' >&2; exit 1; }
-[ "$(gum_calls)" = 2 ] || { echo 'bro test: the menu did not return after a boxed Apply' >&2; exit 1; }
+[ "$(menus_shown "$raw")" = 2 ] || { echo 'bro test: the menu did not return after a boxed Apply' >&2; exit 1; }
 # The cursor is hidden while a box is drawn and always shown again.
 [ "$(grep -o $'\e\\[?25[lh]' <<<"$raw" | tail -n 1)" = $'\e[?25h' ] || {
   echo 'bro test: a box left the cursor hidden' >&2; exit 1; }
@@ -1038,8 +1007,10 @@ new_box_home
 status=0
 raw=$(run_box_apply "$box_home" MOCK_BOX_LINES=40 MOCK_BOX_FAIL=1 2>&1) || status=$?
 [ "$status" = 0 ] || { echo "bro test: a failed boxed build ended bro with $status" >&2; exit 1; }
-# What stays on screen starts where the box was last cleared.
-tail_screen=$(plain_screen <<<"${raw##*$'\e[J'}")
+# What stays on screen starts where the box was last cleared, before the
+# pause that brings the menu back.
+before_pause=${raw%%'press any key'*}
+tail_screen=$(plain_screen <<<"${before_pause##*$'\e[J'}")
 expected_tail=$(for line in $(seq 12 40); do
     printf "copying path '/nix/store/box-%d' from 'https://cache.nixos.org'...\n" "$line"
   done
@@ -1052,7 +1023,7 @@ for expected in 'nix-config: ERROR: Home Manager activation package build failed
     echo "bro test: a failed boxed build did not report: $expected" >&2; exit 1; }
 done
 ! grep -q '^activation$' "$log" || { echo 'bro test: Apply activated after a failed build' >&2; exit 1; }
-[ "$(gum_calls)" = 2 ] || { echo 'bro test: the menu did not return after a failed boxed build' >&2; exit 1; }
+[ "$(menus_shown "$raw")" = 2 ] || { echo 'bro test: the menu did not return after a failed boxed build' >&2; exit 1; }
 grep -Fxq 'error: builder for box failed' "$(box_log_file)" || {
   echo 'bro test: the Apply log lost the build error' >&2; exit 1; }
 
@@ -1060,8 +1031,8 @@ grep -Fxq 'error: builder for box failed' "$(box_log_file)" || {
 # answers were typed ahead and echoed then, so the first line of Apply's output
 # follows the menu prompt, and the menu's blank line ends it.
 plain_apply_output() {
-  printf '%s\n' "${1//$'\r'/}" | sed -n '/^  choose \[1-[0-9]*\]: ./,/^$/p' \
-    | sed -e '1s/^  choose \[1-[0-9]*\]: //'
+  printf '%s\n' "${1//$'\r'/}" | sed -n '/^  choose \[1-[0-9]*, q quits\]: ./,/^$/p' \
+    | sed -e '1s/^  choose \[1-[0-9]*, q quits\]: //'
 }
 new_box_home
 output=$(run_menu "$box_home" "1\n${quit}\n" env PATH="$boxbin:$mockbin:$PATH" MOCK_BOX_LINES=3 MOCK_BOX_ACTIVATE_LINES=2 2>&1)
@@ -1109,7 +1080,7 @@ before_report=${screen%%' ✗ Apply failed'*}
 grep -Fxq 'activation broke' <<<"${before_report##*╯}" || {
   echo 'bro test: a failed styled activation did not show its last lines' >&2; exit 1; }
 ! grep -q '^tmux ' "$log" || { echo 'bro test: Apply reloaded tmux after a failed activation' >&2; exit 1; }
-[ "$(gum_calls)" = 2 ] || { echo 'bro test: the menu did not return after a failed activation' >&2; exit 1; }
+[ "$(menus_shown "$raw")" = 2 ] || { echo 'bro test: the menu did not return after a failed activation' >&2; exit 1; }
 
 # Plain, the activation's own output is followed by the new error.
 new_box_home
@@ -1209,7 +1180,7 @@ accounts_check_table=$(printf '%s\n' '== Current setup status ==' \
 # the screen. The failing row still fails the step, as --check does.
 : >"$log"
 health_started=$(date +%s)
-output=$(run_styled "$accounts_home" $'pick Health\nesc' "${accounts_env[@]}" 2>&1)
+output=$(run_styled "$accounts_home" "$(item_keys Health)$pause$esc" "${accounts_env[@]}" 2>&1)
 expected=$(printf '%s\n' \
   'Health · checked HH:MM' \
   'Core' \
@@ -1244,7 +1215,7 @@ expect_saved_health "$accounts_home/.local/state/bro/health" "$health_started" \
   $'fail\taccounts\tGemini API key: does not resolve; choose Accounts from the menu' \
   $'optional\taccounts\tGitHub CLI: unavailable; GitHub CLI is not installed' \
   $'ok\taccounts\tGit identity: Test User <test@example.com>'
-output=$(run_styled "$accounts_home" $'pick Health\nesc' "${accounts_env[@]}" MOCK_ACCOUNTS_READY=1 2>&1)
+output=$(run_styled "$accounts_home" "$(item_keys Health)$pause$esc" "${accounts_env[@]}" MOCK_ACCOUNTS_READY=1 2>&1)
 ! grep -Fq 'returning to the menu' <<<"$output" || {
   echo 'bro test: styled Health failed without a failing account row' >&2; exit 1; }
 # The status card drawn before Health still shows the previous, failing run,
@@ -1267,14 +1238,14 @@ EOF
 chmod +x "$work/old-setup"
 mv "$accounts_home/.local/bin/nix-config-setup" "$work/accounts-setup"
 cp "$work/old-setup" "$accounts_home/.local/bin/nix-config-setup"
-output=$(run_styled "$accounts_home" $'pick Health\nesc' "${accounts_env[@]}" 2>&1)
+output=$(run_styled "$accounts_home" "$(item_keys Health)$pause$esc" "${accounts_env[@]}" 2>&1)
 grep -Fxq '  ✗ configured account setup has errors → Accounts' <<<"$(health_screen "$output")" || {
   echo "bro test: styled Health did not fall back to --check for an older setup tool: $output" >&2; exit 1; }
 ! grep -Fq 'some table' <<<"$output" || {
   echo 'bro test: the fallback to --check printed its table on the styled screen' >&2; exit 1; }
 grep -Fq 'returning to the menu' <<<"$output" || {
   echo 'bro test: the fallback to --check did not fail styled Health' >&2; exit 1; }
-output=$(run_styled "$accounts_home" $'pick Accounts\npick Back\nesc' "${accounts_env[@]}" 2>&1)
+output=$(run_styled "$accounts_home" "$(item_keys Accounts)j$enter$esc" "${accounts_env[@]}" 2>&1)
 grep -Fq 'some table' <<<"$output" || {
   echo "bro test: styled Accounts did not show --check for an older setup tool: $output" >&2; exit 1; }
 ! grep -Fq 'Usage:' <<<"$output" || {
@@ -1316,7 +1287,7 @@ expected_accounts_screen=$(printf '%s\n' \
 # Styled Accounts shows the table first, then offers Run setup or Back. Run
 # setup hands the terminal to the wizard, on Linux inside the keyring session.
 : >"$log"
-output=$(run_styled "$accounts_home" $'pick Accounts\npick Run setup\nesc' env MOCK_UNAME_S=Linux 2>&1)
+output=$(run_styled "$accounts_home" "$(item_keys Accounts)$enter$pause$esc" env MOCK_UNAME_S=Linux 2>&1)
 [ "$(accounts_screen "$output")" = "$expected_accounts_screen" ] || {
   echo "bro test: styled Accounts did not show the account table: $output" >&2; exit 1; }
 accounts_screen "$output" | sed -e 's/✓/./g' -e 's/✗/./g' -e 's/·/./g' \
@@ -1324,27 +1295,27 @@ accounts_screen "$output" | sed -e 's/✓/./g' -e 's/✗/./g' -e 's/·/./g' \
   echo "bro test: a styled Accounts line is wider than 60 columns: $output" >&2; exit 1; }
 grep -Fq $'\e[31m✗\e[39m Gemini API key' <<<"$output" || {
   echo 'bro test: styled Accounts did not mark the failing row' >&2; exit 1; }
-grep -Eq '\[Run setup +.*\]' "$gum_log" || {
-  echo 'bro test: styled Accounts did not offer Run setup' >&2; exit 1; }
-grep -Eq '\[Back +.*\]' "$gum_log" || {
-  echo 'bro test: styled Accounts did not offer Back' >&2; exit 1; }
+[ "$(prompts_shown "$output" 'Run the setup wizard now?')" = 1 ] \
+  && grep -Eq '^> Run setup +connect Proton Pass' <<<"$(plain_screen <<<"$output")" \
+  && grep -Eq '^  Back +return to the menu' <<<"$(plain_screen <<<"$output")" || {
+  echo 'bro test: styled Accounts did not offer Run setup, then Back' >&2; exit 1; }
 [ "$(account_calls)" = "$(printf '%s\n' 'setup --status' "proton $accounts_home/.local/bin/nix-config-setup")" ] || {
   echo "bro test: Run setup did not start the wizard in the keyring session: $(account_calls)" >&2; exit 1; }
 ! grep -Fq 'returning to the menu' <<<"$output" || {
   echo 'bro test: a failing account row failed the Accounts step before setup' >&2; exit 1; }
 : >"$log"
-run_styled "$accounts_home" $'pick Accounts\npick Run setup\nesc' env MOCK_UNAME_S=Darwin MOCK_UNAME_M=arm64 >/dev/null 2>&1
+run_styled "$accounts_home" "$(item_keys Accounts)$enter$pause$esc" env MOCK_UNAME_S=Darwin MOCK_UNAME_M=arm64 >/dev/null 2>&1
 [ "$(account_calls)" = "$(printf '%s\n' 'setup --status' 'setup ')" ] || {
   echo "bro test: styled Run setup on macOS did not run the wizard directly: $(account_calls)" >&2; exit 1; }
 
 # Back, or Esc, returns to the menu without starting the wizard.
-for answer in 'pick Back' esc; do
+for answer in "j$enter" "$esc"; do
   : >"$log"
-  run_styled "$accounts_home" "pick Accounts"$'\n'"$answer"$'\nesc' env MOCK_UNAME_S=Linux >/dev/null 2>&1
+  output=$(run_styled "$accounts_home" "$(item_keys Accounts)$answer$esc" env MOCK_UNAME_S=Linux 2>&1)
   [ "$(account_calls)" = 'setup --status' ] || {
-    echo "bro test: $answer at Accounts started the wizard: $(account_calls)" >&2; exit 1; }
-  [ "$(gum_calls)" = 3 ] && [ "$(grep -c '\[--header=nix-config  (' "$gum_log")" = 2 ] || {
-    echo "bro test: $answer at Accounts did not return to the menu" >&2; exit 1; }
+    echo "bro test: $(cat -v <<<"$answer") at Accounts started the wizard: $(account_calls)" >&2; exit 1; }
+  [ "$(prompts_shown "$output" 'Run the setup wizard now?')" = 1 ] && [ "$(menus_shown "$output")" = 2 ] || {
+    echo "bro test: $(cat -v <<<"$answer") at Accounts did not return to the menu" >&2; exit 1; }
 done
 
 # Plain Accounts goes straight to the wizard, as before.
@@ -1356,8 +1327,9 @@ run_menu "$accounts_home" '4\n8\n' env MOCK_UNAME_S=Linux >/dev/null
 # A missing setup tool still says to apply the configuration first, in both modes.
 for mode in styled plain; do
   if [ "$mode" = styled ]; then
-    output=$(run_styled "$apply_home" $'pick Accounts\nesc' 2>&1)
-    [ "$(gum_calls)" = 2 ] || { echo 'bro test: styled Accounts without the setup tool still asked' >&2; exit 1; }
+    output=$(run_styled "$apply_home" "$(item_keys Accounts)$pause$esc" 2>&1)
+    [ "$(prompts_shown "$output" 'Run the setup wizard now?')" = 0 ] || {
+      echo 'bro test: styled Accounts without the setup tool still asked' >&2; exit 1; }
   else
     output=$(run_menu "$apply_home" "4\n${quit}\n" 2>&1)
   fi
@@ -1367,12 +1339,14 @@ done
 
 # --- Sync and Update steps ----------------------------------------------------
 
-# What the terminal showed, cut down to finished steps, prompts (marked by the
-# mock gum), bro's own messages, and the top of a summary box, with durations
-# made constant.
+# What the terminal showed, cut down to finished steps, the titles of the
+# prompts asked (the main menu's as <menu>), bro's own messages, and the top of
+# a summary box, with durations made constant.
 step_lines() {
-  plain_screen | grep -E '^ (✓|✗) |^   log: |^<gum |^nix-config: |^╭─ Proposed' \
-    | sed -E -e 's/ [0-9]+s$/ Ns/' -e 's/ finished in [0-9]+s$/ finished in Ns/' -e 's/ ─+╮$//'
+  plain_screen \
+    | grep -E '^ (✓|✗) |^   log: |^nix-config(:|  \()|^(What should|Push |Commit these)|^╭─ Proposed' \
+    | sed -E -e 's/ [0-9]+s$/ Ns/' -e 's/ finished in [0-9]+s$/ finished in Ns/' -e 's/ ─+╮$//' \
+      -e 's/^nix-config  \(.*/<menu>/'
 }
 
 # The one log an action left in a home's log directory.
@@ -1387,16 +1361,16 @@ action_log_name() {
 # to ✓ lines, followed by Apply's steps. Nothing is ahead, so nothing is asked.
 new_box_home
 : >"$log"
-raw=$(run_styled "$box_home" $'pick Sync\nesc' \
-  env MOCK_GIT_MODE=sync MOCK_GIT_AHEAD=0 MOCK_GIT_BEHIND=2 MOCK_GUM_MARK=1 2>&1)
+raw=$(run_styled "$box_home" "$(item_keys Sync)$pause$esc" \
+  env MOCK_GIT_MODE=sync MOCK_GIT_AHEAD=0 MOCK_GIT_BEHIND=2 2>&1)
 screen=$(plain_screen <<<"$raw")
 for step in fetch fast-forward; do
   grep -Eq "^╭─ . $step ─+ 0:0[0-9] ─╮\$" <<<"$screen" || {
     echo "bro test: styled Sync did not run $step in a box" >&2; exit 1; }
 done
-expected=$(printf '%s\n' '<gum choose>' ' ✓ fetch  Ns' ' ✓ fast-forward  Ns' ' ✓ build  Ns' \
+expected=$(printf '%s\n' '<menu>' ' ✓ fetch  Ns' ' ✓ fast-forward  Ns' ' ✓ build  Ns' \
   ' ✓ activate  Ns' ' ✓ reloaded active tmux configuration' ' ✓ Sync finished in Ns' \
-  "   log: ~/.local/state/bro/logs/$(action_log_name "$box_home" sync)" '<gum choose>')
+  "   log: ~/.local/state/bro/logs/$(action_log_name "$box_home" sync)" '<menu>')
 [ "$(step_lines <<<"$raw")" = "$expected" ] || {
   printf 'bro test: styled Sync did not show its boxed steps:\n%s\n' "$(step_lines <<<"$raw")" >&2; exit 1; }
 grep -Eq '^git .* fetch --prune$' "$log" && grep -Eq '^git .* merge --ff-only origin/main$' "$log" \
@@ -1407,15 +1381,14 @@ grep -Eq '^git .* fetch --prune$' "$log" && grep -Eq '^git .* merge --ff-only or
 # own, and the push question comes only after every step has finished.
 new_box_home
 : >"$log"
-raw=$(run_styled "$box_home" $'pick Sync\nno\nesc' env MOCK_GIT_MODE=sync MOCK_GIT_AHEAD=1 MOCK_GUM_MARK=1 2>&1)
-expected=$(printf '%s\n' '<gum choose>' ' ✓ fetch  Ns' ' ✓ already up to date with origin/main' ' ✓ build  Ns' \
-  ' ✓ activate  Ns' ' ✓ reloaded active tmux configuration' '<gum confirm>' ' ✓ Sync finished in Ns' \
-  "   log: ~/.local/state/bro/logs/$(action_log_name "$box_home" sync)" '<gum choose>')
+raw=$(run_styled "$box_home" "$(item_keys Sync)n$pause$esc" env MOCK_GIT_MODE=sync MOCK_GIT_AHEAD=1 2>&1)
+expected=$(printf '%s\n' '<menu>' ' ✓ fetch  Ns' ' ✓ already up to date with origin/main' ' ✓ build  Ns' \
+  ' ✓ activate  Ns' ' ✓ reloaded active tmux configuration' 'Push your local commits so other machines receive them?' ' ✓ Sync finished in Ns' \
+  "   log: ~/.local/state/bro/logs/$(action_log_name "$box_home" sync)" '<menu>')
 [ "$(step_lines <<<"$raw")" = "$expected" ] || {
   printf 'bro test: an up-to-date styled Sync did not show its steps, then the push question:\n%s\n' "$(step_lines <<<"$raw")" >&2; exit 1; }
-grep -Fq '[Push your local commits so other machines receive them?]' "$gum_log" || {
-  echo 'bro test: styled Sync did not ask to push' >&2; exit 1; }
-! grep -Fq 'fast-forward' <<<"$(plain_screen <<<"$raw")" && ! grep -Eq '^git .* merge' "$log" || {
+expect_confirm_defaulting_to_no "$raw" 'Push your local commits so other machines receive them?'
+! grep -Eq '^(╭─ . | ✓ )fast-forward' <<<"$(plain_screen <<<"$raw")" && ! grep -Eq '^git .* merge' "$log" || {
   echo 'bro test: an up-to-date styled Sync still fast-forwarded' >&2; exit 1; }
 ! grep -Eq '^git .* push($| )' "$log" || { echo 'bro test: declining the styled push still pushed' >&2; exit 1; }
 
@@ -1437,11 +1410,11 @@ grep -Eq '^git .* merge --ff-only origin/main$' "$log" || {
 # anything is merged or built, in either mode.
 new_box_home
 : >"$log"
-raw=$(run_styled "$box_home" $'pick Sync\nesc' env MOCK_GIT_MODE=sync MOCK_GIT_AHEAD=1 MOCK_GIT_BEHIND=1 MOCK_GUM_MARK=1 2>&1)
-expected=$(printf '%s\n' '<gum choose>' ' ✓ fetch  Ns' \
+raw=$(run_styled "$box_home" "$(item_keys Sync)$pause$esc" env MOCK_GIT_MODE=sync MOCK_GIT_AHEAD=1 MOCK_GIT_BEHIND=1 2>&1)
+expected=$(printf '%s\n' '<menu>' ' ✓ fetch  Ns' \
   'nix-config: ERROR: this branch is 1 ahead and 1 behind origin/main; merge or rebase it yourself first' \
   ' ✗ Sync failed' "   log: ~/.local/state/bro/logs/$(action_log_name "$box_home" sync)" \
-  'nix-config: returning to the menu' '<gum choose>')
+  'nix-config: returning to the menu' '<menu>')
 [ "$(step_lines <<<"$raw")" = "$expected" ] || {
   printf 'bro test: a diverged styled Sync was not refused as before:\n%s\n' "$(step_lines <<<"$raw")" >&2; exit 1; }
 output=$(run_menu "$box_home" "2\n${quit}\n" env MOCK_GIT_MODE=sync MOCK_GIT_AHEAD=1 MOCK_GIT_BEHIND=1 2>&1)
@@ -1453,9 +1426,8 @@ expected_output=$(printf '%s\n' \
 ! grep -Eq '^git .* merge|^nix |^activation$' "$log" || {
   echo 'bro test: a diverged Sync merged or built' >&2; exit 1; }
 
-# The mock gum picks rows by how their text starts, and the Pi row's label is
-# padded past the one space that "Pi extensions" has, so "Pi  " is Pi alone.
-# Update runs against a checkout of its own with real commits, so the summary,
+# Update offers Nixpkgs, Pi, Pi extensions and Playwright, in that order, so
+# "jx" ticks Pi and "jxjjx" Pi and Playwright. Update runs against a checkout of its own with real commits, so the summary,
 # diff, discard and commit act on real files. Its updaters move the Pi pin and
 # generate Pi's untracked lockfile, and move both playwright-cli files; with
 # MOCK_PINS_CURRENT set they change nothing. Only fetch, merge, and push are
@@ -1498,7 +1470,7 @@ EOF
   rm -rf "$update_home/.local/state/bro/logs"
   : >"$log"
 }
-update_env=(env MOCK_GIT_MODE=sync MOCK_GIT_AHEAD=0 GIT_PAGER=cat MOCK_GUM_MARK=1)
+update_env=(env MOCK_GIT_MODE=sync MOCK_GIT_AHEAD=0 GIT_PAGER=cat)
 update_plain_env=(env MOCK_GIT_MODE=sync MOCK_GIT_AHEAD=0 GIT_PAGER=cat)
 
 # Asserts the checkout is exactly as the sync left it: the fixture's commit,
@@ -1509,23 +1481,23 @@ expect_untouched_checkout() {
     echo "bro test: $1 left the checkout changed: $(git -C "$update_checkout" status --porcelain)" >&2; exit 1; }
 }
 
-# The one gum choose header asking what to do with the moved pins.
-review_question='[--header=What should happen to these changes?]'
+# The title of the choice of what to do with the moved pins.
+review_question='What should happen to these changes?'
 
 # Styled: the selected updaters run as boxes, the summary is a box, and Show
 # diff shows every change, the new lockfile included, then asks again. Discard
 # then leaves the checkout as the sync left it.
 new_update_checkout
-raw=$(run_styled "$update_home" $'pick Update\npick Pi  |Playwright\npick Show diff\npick Discard\nesc' "${update_env[@]}" 2>&1)
+raw=$(run_styled "$update_home" "$(item_keys Update)jxjjx$enter$(row_keys 1)$(row_keys 2)$pause$esc" "${update_env[@]}" 2>&1)
 screen=$(plain_screen <<<"$raw")
 for step in 'update Pi' 'update Playwright'; do
   grep -Eq "^╭─ . $step ─+ 0:0[0-9] ─╮\$" <<<"$screen" || {
     echo "bro test: styled Update did not run $step in a box" >&2; exit 1; }
 done
-expected=$(printf '%s\n' '<gum choose>' ' ✓ fetch  Ns' ' ✓ already up to date with origin/main' \
-  ' ✓ build  Ns' ' ✓ activate  Ns' '<gum choose>' ' ✓ update Pi  Ns' ' ✓ update Playwright  Ns' \
-  '╭─ Proposed version updates' '<gum choose>' '<gum choose>' 'nix-config: update discarded' \
-  ' ✓ Update finished in Ns' "   log: ~/.local/state/bro/logs/$(action_log_name "$update_home" update)" '<gum choose>')
+expected=$(printf '%s\n' '<menu>' ' ✓ fetch  Ns' ' ✓ already up to date with origin/main' \
+  ' ✓ build  Ns' ' ✓ activate  Ns' 'What should be updated?' ' ✓ update Pi  Ns' ' ✓ update Playwright  Ns' \
+  '╭─ Proposed version updates' "$review_question" "$review_question" 'nix-config: update discarded' \
+  ' ✓ Update finished in Ns' "   log: ~/.local/state/bro/logs/$(action_log_name "$update_home" update)" '<menu>')
 [ "$(step_lines <<<"$raw")" = "$expected" ] || {
   printf 'bro test: styled Update did not run its steps, summary and choice in order:\n%s\n' "$(step_lines <<<"$raw")" >&2; exit 1; }
 summary_box=$(grep -A 3 '^╭─ Proposed version updates' <<<"$screen")
@@ -1537,14 +1509,14 @@ grep -Eq '^│ Pi +1\.0\.0 → 1\.1\.0 +│$' <<<"$summary_box" \
 sed -e 's/─/./g' -e 's/│/./g' -e 's/╭/./g' -e 's/╮/./g' -e 's/╰/./g' -e 's/╯/./g' -e 's/→/./g' <<<"$summary_box" \
   | awk 'length($0) != 60 { bad = 1 } END { exit bad }' || {
   printf 'bro test: the styled summary box is not 60 columns wide:\n%s\n' "$summary_box" >&2; exit 1; }
-diff_shown=$(sed -n '/^<gum choose>$/,$p' <<<"$screen" | sed -n '/^+  version = "1.1.0";$/,/^<gum choose>$/p')
+diff_shown=$(sed -n "/^$review_question\$/,\$p" <<<"$screen" | sed -n "/^+  version = \"1.1.0\";\$/,/^$review_question\$/p")
 grep -Fxq '+  version = "0.2.0";' <<<"$diff_shown" && grep -Fxq '+updated playwright lock' <<<"$diff_shown" \
   && grep -Fxq '+generated pi lock' <<<"$diff_shown" || {
   printf 'bro test: Show diff did not show the complete diff, new lockfile included:\n%s\n' "$screen" >&2; exit 1; }
-[ "$(grep -cF "$review_question" "$gum_log")" = 2 ] || {
+[ "$(prompts_shown "$raw" "$review_question")" = 2 ] || {
   echo 'bro test: Show diff did not return to the same choice' >&2; exit 1; }
-grep -Eq '\[Apply +.*activate them' "$gum_log" || {
-  echo 'bro test: the review choice did not offer Apply' >&2; exit 1; }
+grep -Eq '^> Apply +activate them' <<<"$screen" || {
+  echo 'bro test: the review choice did not start on Apply' >&2; exit 1; }
 expect_untouched_checkout 'a styled Discard'
 [ "$(grep -c '^activation$' "$log")" = 1 ] && ! grep -Eq '^git .* (add|commit|push)( |$)' "$log" || {
   echo 'bro test: a styled Discard applied or committed the pins' >&2; exit 1; }
@@ -1582,14 +1554,13 @@ expect_committed_update() {
     echo "bro test: $1 did not commit every moved pin" >&2; exit 1; }
 }
 new_update_checkout
-raw=$(run_styled "$update_home" $'pick Update\npick Pi  |Playwright\npick Apply\nyes\nyes\nesc' "${update_env[@]}" 2>&1)
-expected=$(printf '%s\n' '╭─ Proposed version updates' '<gum choose>' ' ✓ build  Ns' ' ✓ activate  Ns' \
-  '<gum confirm>' '<gum confirm>' ' ✓ Update finished in Ns')
+raw=$(run_styled "$update_home" "$(item_keys Update)jxjjx$enter${enter}yy$pause$esc" "${update_env[@]}" 2>&1)
+expected=$(printf '%s\n' '╭─ Proposed version updates' "$review_question" ' ✓ build  Ns' ' ✓ activate  Ns' \
+  'Commit these version-pin changes?' 'Push the commit so other machines can sync it?' ' ✓ Update finished in Ns')
 [ "$(step_lines <<<"$raw" | sed -n '/^╭─ Proposed/,/ finished in /p')" = "$expected" ] || {
   printf 'bro test: styled Apply did not activate in boxed steps before asking to commit and push:\n%s\n' "$(step_lines <<<"$raw")" >&2; exit 1; }
 for question in 'Commit these version-pin changes?' 'Push the commit so other machines can sync it?'; do
-  grep -Fq "[--default=false] [--no-show-help] [--prompt.foreground=6] [--selected.foreground=0] [--selected.background=6] [--unselected.foreground=7] [--unselected.background=8] [--] [$question]" "$gum_log" || {
-    echo "bro test: styled Update did not ask \"$question\" defaulting to No" >&2; exit 1; }
+  expect_confirm_defaulting_to_no "$raw" "$question"
 done
 [ "$(grep -c '^activation$' "$log")" = 2 ] || { echo 'bro test: styled Apply did not activate the pins' >&2; exit 1; }
 expect_committed_update 'styled Apply, Commit, Push'
@@ -1608,17 +1579,17 @@ grep -Fq 'nix-config: changes applied locally but left uncommitted' <<<"$output"
 
 # Leaving the choice keeps nothing, as declining to apply always has.
 new_update_checkout
-output=$(run_styled "$update_home" $'pick Update\npick Pi  \nesc\nesc' "${update_env[@]}" 2>&1)
+output=$(run_styled "$update_home" "$(item_keys Update)jx$enter$esc$pause$esc" "${update_env[@]}" 2>&1)
 grep -Fq 'nix-config: update discarded' <<<"$output" || {
   echo 'bro test: Esc at the review choice did not discard' >&2; exit 1; }
 expect_untouched_checkout 'Esc at the review choice'
 
 # Pins that are already current say so, and there is nothing to review.
 new_update_checkout
-raw=$(run_styled "$update_home" $'pick Update\npick Pi  |Playwright\nesc' "${update_env[@]}" MOCK_PINS_CURRENT=1 2>&1)
+raw=$(run_styled "$update_home" "$(item_keys Update)jxjjx$enter$pause$esc" "${update_env[@]}" MOCK_PINS_CURRENT=1 2>&1)
 grep -Fxq ' ✓ all selected pins are already current' <<<"$(step_lines <<<"$raw")" || {
   echo 'bro test: styled Update did not say the pins are already current' >&2; exit 1; }
-[ "$(gum_calls)" = 3 ] && ! grep -Fq "$review_question" "$gum_log" || {
+[ "$(prompts_shown "$raw" "$review_question")" = 0 ] && [ "$(menus_shown "$raw")" = 2 ] || {
   echo 'bro test: already-current pins still offered the review choice' >&2; exit 1; }
 output=$(run_menu "$update_home" "3\n2\n5\n${quit}\n" "${update_plain_env[@]}" MOCK_PINS_CURRENT=1 2>&1)
 grep -Fq 'nix-config: all selected pins are already current' <<<"$output" \
@@ -1627,7 +1598,7 @@ grep -Fq 'nix-config: all selected pins are already current' <<<"$output" \
 expect_untouched_checkout 'already-current pins'
 
 # Ticking nothing, or Esc, cancels: no updater runs and nothing changes.
-for answers in $'pick Update\npick\nesc' $'pick Update\nesc\nesc'; do
+for answers in "$(item_keys Update)$enter$pause$esc" "$(item_keys Update)$esc$pause$esc"; do
   new_update_checkout
   output=$(run_styled "$update_home" "$answers" "${update_env[@]}" 2>&1)
   grep -Fq 'nix-config: update cancelled' <<<"$output" && ! grep -Eq '^update-|^pi update' "$log" || {
@@ -1642,7 +1613,7 @@ expect_untouched_checkout 'a cancelled plain Update'
 
 # Pi extensions update after the pins are settled, in a box of their own.
 new_update_checkout
-raw=$(run_styled "$update_home" $'pick Update\npick Pi  |Pi extensions\npick Discard\nesc' "${update_env[@]}" 2>&1)
+raw=$(run_styled "$update_home" "$(item_keys Update)jxjx$enter$(row_keys 2)$pause$esc" "${update_env[@]}" 2>&1)
 grep -Eqx ' ✓ update Pi extensions  Ns' <<<"$(step_lines <<<"$raw" | grep -A 1 -Fx 'nix-config: update discarded')" || {
   printf 'bro test: Pi extensions did not update after the pins as a boxed step:\n%s\n' "$(step_lines <<<"$raw")" >&2; exit 1; }
 grep -Fq 'pi update --extensions (skip=1)' "$log" || {
@@ -1865,7 +1836,7 @@ grep -q '^git ' "$log" && [ -z "$other_git" ] || {
 # In the styled menu, each time the menu appears the screen is cleared and the
 # card drawn above it, without Nix or a fetch, and Esc leaves without a pause.
 : >"$log"
-output=$(run_styled "$apply_home" esc env PATH="$card_bin:$gumbin:$mockbin:$PATH" 2>&1)
+output=$(run_styled "$apply_home" "$esc" env PATH="$card_bin:$gumbin:$mockbin:$PATH" 2>&1)
 screen=$(plain_screen <<<"${output#*$'\e[H\e[2J'}")
 [ "$output" != "${output#*$'\e[H\e[2J'}" ] && grep -Eq '^│ bro · nix-config +[a-z0-9_]+-(linux|darwin) │$' <<<"$screen" || {
   printf 'bro test: the styled menu was not drawn on a cleared screen under the card:\n%s\n' "$output" >&2; exit 1; }
@@ -1875,33 +1846,29 @@ screen=$(plain_screen <<<"${output#*$'\e[H\e[2J'}")
 
 # After an action, the styled menu waits for a key before it clears the
 # screen; choosing Quit does not.
-output=$(run_styled "$apply_home" $'pick Apply\nesc' 2>&1)
+output=$(run_styled "$apply_home" "$(item_keys Apply)$pause$esc" 2>&1)
 after_apply=${output#*'Apply finished in'}
 [ "$after_apply" != "$output" ] && grep -Fq 'press any key to return' <<<"${after_apply%%$'\e[H\e[2J'*}" \
   && [ "${after_apply%%$'\e[H\e[2J'*}" != "$after_apply" ] || {
   printf 'bro test: styled Apply did not ask for a key before the menu came back:\n%s\n' "$output" >&2; exit 1; }
-output=$(run_styled "$apply_home" 'pick Quit' 2>&1)
+output=$(run_styled "$apply_home" "$(item_keys Quit)" 2>&1)
 ! grep -Fq 'press any key' <<<"$output" || { echo 'bro test: Quit paused' >&2; exit 1; }
 
 # The pause really waits: a second after it appears, the menu has not come
 # back, and one key brings it back.
-: >"$gum_log"
-rm -f "$gum_state"
-pause=$(python3 - "$gum_log" env -u XDG_STATE_HOME -u NIX_CONFIG_TEST_PLAIN \
-  HOME="$apply_home" USER=apply-user PATH="$gumbin:$mockbin:$PATH" \
-  MOCK_GUM_LOG="$gum_log" MOCK_GUM_STATE="$gum_state" MOCK_GUM_ANSWERS=$'pick Apply\nesc' "$bro" <<'PY'
+pause_result=$(python3 - env -u XDG_STATE_HOME -u NIX_CONFIG_TEST_PLAIN \
+  HOME="$apply_home" USER=apply-user PATH="$gumbin:$mockbin:$PATH" "$bro" <<'PY'
 import os, pty, select, sys, time
 
-gum_log = sys.argv[1]
 pid, terminal = pty.fork()
 if pid == 0:
-    os.execvp(sys.argv[2], sys.argv[2:])
+    os.execvp(sys.argv[1], sys.argv[1:])
 output = bytearray()
 
-def read_for(seconds, until=None):
+def read_for(seconds, until=lambda: False):
     deadline = time.monotonic() + seconds
     while time.monotonic() < deadline:
-        if until is not None and until in output:
+        if until():
             return True
         ready, _, _ = select.select([terminal], [], [], 0.05)
         if not ready:
@@ -1913,20 +1880,27 @@ def read_for(seconds, until=None):
         if not chunk:
             return False
         output.extend(chunk)
-    return until is None or until in output
+    return until()
 
 def menus():
-    with open(gum_log) as log:
-        return sum(1 for line in log if line.startswith("gum "))
+    return output.count(b"nix-config  (")
 
-paused = read_for(60, b"press any key to return")
+def type_keys(keys):
+    try:
+        os.write(terminal, keys)
+    except OSError:
+        pass
+
+read_for(60, menus)
+type_keys(b"\r")
+paused = read_for(60, lambda: b"press any key to return" in output)
 read_for(1)
 waiting = menus()
-try:
-    os.write(terminal, b"k")
-except OSError:
-    pass
-read_for(30, b"\x00never")
+type_keys(b"k")
+read_for(30, lambda: menus() == 2)
+after_key = menus()
+type_keys(b"\x1b\x1b")
+read_for(30)
 # A bro still running here is stuck, so it is stopped rather than awaited.
 finished, raw_status = os.waitpid(pid, os.WNOHANG)
 if finished == 0:
@@ -1935,14 +1909,14 @@ if finished == 0:
     status = "stuck"
 else:
     status = os.waitstatus_to_exitcode(raw_status)
-print(f"paused={paused} menus-while-paused={waiting} menus-after-key={menus()} status={status}")
+print(f"paused={paused} menus-while-paused={waiting} menus-after-key={after_key} status={status}")
 PY
 )
-[ "$pause" = 'paused=True menus-while-paused=1 menus-after-key=2 status=0' ] || {
-  echo "bro test: the styled pause did not wait for exactly one key: $pause" >&2; exit 1; }
+[ "$pause_result" = 'paused=True menus-while-paused=1 menus-after-key=2 status=0' ] || {
+  echo "bro test: the styled pause did not wait for exactly one key: $pause_result" >&2; exit 1; }
 
 # The card follows a narrow terminal.
-output=$(run_styled "$apply_home" esc bash -c 'stty cols 40 </dev/tty && exec "$0"' 2>&1)
+output=$(run_styled "$apply_home" "$esc" bash -c 'stty cols 40 </dev/tty && exec "$0"' 2>&1)
 expect_card_width "$(plain_screen <<<"${output#*$'\e[H\e[2J'}" | grep -E '^[╭│╰]')" 40 'the styled menu at 40 columns'
 
 # Plain mode draws no card, clears nothing, and waits for nothing: Apply's
@@ -1990,7 +1964,7 @@ expect_ssh_call() {
 # prompt is off, so a missing key fails at once, the box shows Git's error,
 # and the failure stays on screen until a key is pressed.
 : >"$ssh_log"
-raw=$(run_styled "$ssh_home" $'pick Sync\nesc' "${ssh_env[@]}" 2>&1)
+raw=$(run_styled "$ssh_home" "$(item_keys Sync)$pause$esc" "${ssh_env[@]}" 2>&1)
 screen=$(plain_screen <<<"$raw")
 expect_ssh_call '-o BatchMode=yes' 0 'a boxed fetch'
 for expected in 'git@github.com: Permission denied (publickey).' 'Could not read from remote repository' \
@@ -2001,16 +1975,16 @@ done
 
 # The user's own ssh command is extended, never replaced, whichever way it is set.
 : >"$ssh_log"
-run_styled "$ssh_home" $'pick Sync\nesc' "${ssh_env[@]}" GIT_SSH_COMMAND='ssh -i /keys/mine' >/dev/null 2>&1
+run_styled "$ssh_home" "$(item_keys Sync)$pause$esc" "${ssh_env[@]}" GIT_SSH_COMMAND='ssh -i /keys/mine' >/dev/null 2>&1
 expect_ssh_call '-i /keys/mine -o BatchMode=yes' 0 'a boxed fetch with GIT_SSH_COMMAND'
 git -C "$ssh_checkout" config core.sshCommand 'ssh -F /config/mine'
 : >"$ssh_log"
-run_styled "$ssh_home" $'pick Sync\nesc' "${ssh_env[@]}" >/dev/null 2>&1
+run_styled "$ssh_home" "$(item_keys Sync)$pause$esc" "${ssh_env[@]}" >/dev/null 2>&1
 expect_ssh_call '-F /config/mine -o BatchMode=yes' 0 'a boxed fetch with core.sshCommand'
 git -C "$ssh_checkout" config --unset core.sshCommand
 # A GIT_SSH program need not take ssh options, so it is started as it is.
 : >"$ssh_log"
-run_styled "$ssh_home" $'pick Sync\nesc' "${ssh_env[@]}" GIT_SSH="$ssh_bin/ssh" >/dev/null 2>&1
+run_styled "$ssh_home" "$(item_keys Sync)$pause$esc" "${ssh_env[@]}" GIT_SSH="$ssh_bin/ssh" >/dev/null 2>&1
 grep -Fq '(GIT_TERMINAL_PROMPT=0)' "$ssh_log" && ! grep -Fq 'BatchMode' "$ssh_log" || {
   printf 'bro test: a boxed fetch changed how a GIT_SSH program is started:\n%s\n' "$(cat "$ssh_log")" >&2; exit 1; }
 
@@ -2033,11 +2007,11 @@ expect_pause() {
   grep -Fq 'press any key to return' <<<"$1" || {
     printf 'bro test: %s did not wait for a key:\n%s\n' "$2" "$1" >&2; exit 1; }
 }
-for answer in 'pick Back' esc; do
-  output=$(run_styled "$accounts_home" "pick Accounts"$'\n'"$answer"$'\nesc' env MOCK_UNAME_S=Linux 2>&1)
-  expect_no_pause "$output" "$answer at Accounts"
+for answer in "j$enter" "$esc"; do
+  output=$(run_styled "$accounts_home" "$(item_keys Accounts)$answer$esc" env MOCK_UNAME_S=Linux 2>&1)
+  expect_no_pause "$output" "$(cat -v <<<"$answer") at Accounts"
 done
-expect_pause "$(run_styled "$accounts_home" $'pick Accounts\npick Run setup\nesc' env MOCK_UNAME_S=Linux 2>&1)" \
+expect_pause "$(run_styled "$accounts_home" "$(item_keys Accounts)$enter$pause$esc" env MOCK_UNAME_S=Linux 2>&1)" \
   'Run setup at Accounts'
 
 # A wizard that happens to exit with the back-out status has still failed: the
@@ -2049,7 +2023,7 @@ command cat >"$accounts_home/.local/bin/nix-config-setup" <<'EOF'
 exit 117
 EOF
 chmod +x "$accounts_home/.local/bin/nix-config-setup"
-output=$(run_styled "$accounts_home" $'pick Accounts\npick Run setup\nesc' "${accounts_env[@]}" 2>&1)
+output=$(run_styled "$accounts_home" "$(item_keys Accounts)$enter$pause$esc" "${accounts_env[@]}" 2>&1)
 grep -Fq 'nix-config: returning to the menu' <<<"$output" || {
   printf 'bro test: a styled wizard exiting 117 was taken for backing out:\n%s\n' "$output" >&2; exit 1; }
 expect_pause "$output" 'a styled wizard exiting 117'
@@ -2059,26 +2033,26 @@ grep -Fq 'nix-config: returning to the menu' <<<"$output" || {
 mv "$work/accounts-setup" "$accounts_home/.local/bin/nix-config-setup"
 
 rm -f "$jobs_file"
-expect_no_pause "$(run_styled "$jobs_home" $'pick Jobs\nesc' "${linux[@]}" 2>&1)" 'Esc at Jobs'
-expect_pause "$(run_styled "$jobs_home" $'pick Jobs\npick Board sync' "${linux[@]}" 2>&1)" 'saving Jobs'
+expect_no_pause "$(run_styled "$jobs_home" "$(item_keys Jobs)$esc$esc" "${linux[@]}" 2>&1)" 'Esc at Jobs'
+expect_pause "$(run_styled "$jobs_home" "$(item_keys Jobs)x$enter$pause" "${linux[@]}" 2>&1)" 'saving Jobs'
 rm -f "$jobs_file"
 
 # Update's sync has run before its choice, so a cancel there still finishes,
 # reports its log, and waits for a key.
-for answers in $'pick Update\npick\nesc' $'pick Update\nesc\nesc'; do
+for answers in "$(item_keys Update)$enter$pause$esc" "$(item_keys Update)$esc$pause$esc"; do
   new_update_checkout
   output=$(run_styled "$update_home" "$answers" "${update_env[@]}" 2>&1)
   screen=$(plain_screen <<<"$output")
   for expected in 'nix-config: update cancelled' ' ✓ Update finished in ' '   log: ~/.local/state/bro/logs/update-'; do
     grep -Fq -- "$expected" <<<"$screen" || {
-      printf 'bro test: a cancelled styled Update (%s) did not report: %s\n%s\n' "$answers" "$expected" "$screen" >&2; exit 1; }
+      printf 'bro test: a cancelled styled Update (%s) did not report: %s\n%s\n' "$(cat -v <<<"$answers")" "$expected" "$screen" >&2; exit 1; }
   done
   ! grep -Fq 'returning to the menu' <<<"$screen" || {
-    echo "bro test: a cancelled styled Update failed: $answers" >&2; exit 1; }
-  expect_pause "$output" "a cancelled styled Update ($answers)"
+    echo "bro test: a cancelled styled Update failed: $(cat -v <<<"$answers")" >&2; exit 1; }
+  expect_pause "$output" "a cancelled styled Update ($(cat -v <<<"$answers"))"
 done
 new_update_checkout
-expect_pause "$(run_styled "$update_home" $'pick Update\npick Pi  \npick Discard\nesc' "${update_env[@]}" 2>&1)" \
+expect_pause "$(run_styled "$update_home" "$(item_keys Update)jx$enter$(row_keys 2)$pause$esc" "${update_env[@]}" 2>&1)" \
   'Discard at the Update summary'
 # Plain mode never pauses, and a cancelled Update is no failure there either.
 new_update_checkout
@@ -2094,7 +2068,7 @@ update_head=$(git -C "$update_checkout" rev-parse HEAD)
 output=$(run_menu "$update_home" "3\n2\n5\n3\n${quit}\n" "${update_plain_env[@]}" 2>&1)
 grep -Fxq "$(printf '  %-10s%s -> %s' 'Pi:' '' '1.1.0')" <<<"$(tr -d '\r' <<<"$output")" || {
   printf 'bro test: a plain summary row with no old version shifted its columns:\n%s\n' "$output" >&2; exit 1; }
-raw=$(run_styled "$update_home" $'pick Update\npick Pi  \npick Discard\nesc' "${update_env[@]}" 2>&1)
+raw=$(run_styled "$update_home" "$(item_keys Update)jx$enter$(row_keys 2)$pause$esc" "${update_env[@]}" 2>&1)
 grep -Eq '^│ Pi {10}→ 1\.1\.0 +│$' <<<"$(plain_screen <<<"$raw")" || {
   printf 'bro test: a styled summary row with no old version shifted its columns:\n%s\n' "$(plain_screen <<<"$raw")" >&2; exit 1; }
 expect_untouched_checkout 'a summary with no old version'
@@ -2123,4 +2097,116 @@ done
 [ "$(head -n 1 <<<"$box")" = '╭─ Proposed version … ─╮' ] || {
   printf 'bro test: a narrow text box did not cut its title with …:\n%s\n' "$box" >&2; exit 1; }
 
-echo 'bro test: PASSED (menu-only entry, apply identity, DNS retry, sync push boundary, accounts wrapper, Pi extensions, Pi + ext, Playwright, Jobs, styled prompts, Health, log box, Accounts table, Sync and Update steps, status card, boxed fetch and backing out)'
+# --- q quits ------------------------------------------------------------------
+
+# q quits bro at once with success, from the main menu or from any prompt
+# inside an action: the menu is not shown again, nothing pauses, and nothing
+# fails. Each script goes on past its q with keys that would show the menu
+# again, so a q that did not quit fails here rather than reaching the last q.
+expect_quit() {
+  local status=$1 output=$2 what=$3
+  [ "$status" = 0 ] && [ "$(menus_shown "$output")" = 1 ] \
+    && ! grep -Fq -e 'press any key' -e 'returning to the menu' -e ' failed' <<<"$output" || {
+    printf 'bro test: q %s did not quit at once (exit %s):\n%s\n' "$what" "$status" "$output" >&2; exit 1; }
+}
+
+: >"$log"
+status=0
+output=$(run_styled "$apply_home" "q$(item_keys Apply)" 2>&1) || status=$?
+expect_quit "$status" "$output" 'at the main menu'
+! grep -Eq '^nix |^activation$' "$log" || { echo 'bro test: q at the main menu still ran Apply' >&2; exit 1; }
+
+: >"$log"
+status=0
+output=$(run_styled "$accounts_home" "$(item_keys Accounts)q$esc" env MOCK_UNAME_S=Linux 2>&1) || status=$?
+expect_quit "$status" "$output" 'at the Accounts choice'
+[ "$(account_calls)" = 'setup --status' ] || {
+  echo "bro test: q at the Accounts choice started the wizard: $(account_calls)" >&2; exit 1; }
+
+: >"$log"
+status=0
+output=$(run_styled "$apply_home" "$(item_keys Sync)q$esc" env MOCK_GIT_MODE=sync 2>&1) || status=$?
+expect_quit "$status" "$output" 'at the push question'
+! grep -Eq '^git .* push($| )' "$log" && ! grep -Fq 'Sync finished' <<<"$output" || {
+  echo 'bro test: q at the push question pushed or finished Sync' >&2; exit 1; }
+
+rm -f "$jobs_file"
+: >"$log"
+status=0
+output=$(run_styled "$jobs_home" "$(item_keys Jobs)xq$esc" "${linux[@]}" 2>&1) || status=$?
+expect_quit "$status" "$output" 'at the Jobs multi-select'
+[ ! -e "$jobs_file" ] && ! grep -Eq '^nix |^activation$' "$log" || {
+  echo 'bro test: q at the Jobs multi-select saved or applied the ticked job' >&2; exit 1; }
+
+status=0
+output=$(run_styled "$health_home" "$(item_keys Health)q$esc" \
+  env PATH="$health_bin:$gumbin:$mockbin:$PATH" "${health_env[@]}" 2>&1) || status=$?
+[ "$status" = 0 ] && [ "$(prompts_shown "$output" 'Review the shadowed binaries now?')" = 1 ] \
+  && [ "$(menus_shown "$output")" = 1 ] && ! grep -Fq 'press any key' <<<"$output" || {
+  printf 'bro test: q at the review question after Health did not quit at once:\n%s\n' "$output" >&2; exit 1; }
+
+: >"$log"
+status=0
+output=$(run_styled "$apply_home" "$(item_keys Apply)q$esc" 2>&1) || status=$?
+[ "$status" = 0 ] && grep -q '^activation$' "$log" && grep -Fq 'press any key to return, q to quit' <<<"$output" \
+  && [ "$(menus_shown "$output")" = 1 ] || {
+  printf 'bro test: q at the pause after Apply did not quit at once:\n%s\n' "$output" >&2; exit 1; }
+
+# Quitting at the review choice leaves nothing behind, as leaving it does.
+new_update_checkout
+status=0
+output=$(run_styled "$update_home" "$(item_keys Update)jx${enter}q$esc" "${update_env[@]}" 2>&1) || status=$?
+expect_quit "$status" "$output" 'at the review choice'
+grep -Fq 'nix-config: update discarded' <<<"$output" || {
+  echo 'bro test: q at the review choice did not discard the moved pins' >&2; exit 1; }
+expect_untouched_checkout 'q at the review choice'
+# Apply clears that, so quitting at the commit question keeps the applied
+# pins uncommitted, as declining the commit does.
+new_update_checkout
+status=0
+output=$(run_styled "$update_home" "$(item_keys Update)jx$enter${enter}q$esc" "${update_env[@]}" 2>&1) || status=$?
+expect_quit "$status" "$output" 'at the commit question'
+! grep -Fq 'nix-config: update discarded' <<<"$output" \
+  && [ -n "$(git -C "$update_checkout" status --porcelain)" ] && [ "$(git -C "$update_checkout" rev-parse HEAD)" = "$update_head" ] || {
+  echo 'bro test: q at the commit question discarded or committed the applied pins' >&2; exit 1; }
+
+# The numbered prompts take q too, at the menu, inside an item, and at a question.
+plain_quits() {
+  local status=$1 output=$2 what=$3
+  [ "$status" = 0 ] && [ "$(grep -c 'choose \[1-[0-9]*, q quits\]' <<<"$output")" = "$4" ] \
+    && ! grep -Fq 'returning to the menu' <<<"$output" || {
+    printf 'bro test: q %s at the numbered prompts did not quit at once (exit %s):\n%s\n' "$what" "$status" "$output" >&2; exit 1; }
+}
+: >"$log"
+status=0
+output=$(run_menu "$apply_home" 'q\n1\n' 2>&1) || status=$?
+plain_quits "$status" "$output" 'at the menu' 1
+! grep -Eq '^nix |^activation$' "$log" || { echo 'bro test: plain q at the menu still ran Apply' >&2; exit 1; }
+new_update_checkout
+status=0
+output=$(run_menu "$update_home" "3\nq\n${quit}\n" "${update_plain_env[@]}" 2>&1) || status=$?
+plain_quits "$status" "$output" 'in the Update multi-select' 2
+! grep -Fq 'update cancelled' <<<"$output" || { echo 'bro test: plain q in Update cancelled instead of quitting' >&2; exit 1; }
+status=0
+output=$(run_menu "$health_home" "5\nq\n${quit}\n" env PATH="$health_bin:$mockbin:$PATH" "${health_env[@]}" 2>&1) || status=$?
+[ "$status" = 0 ] && [ "$(grep -c 'choose \[1-' <<<"$output")" = 1 ] \
+  && grep -Fq 'Review the shadowed binaries now? [y/N]' <<<"$output" || {
+  printf 'bro test: plain q at the review question did not quit at once:\n%s\n' "$output" >&2; exit 1; }
+
+# A wizard that happens to exit with the quit status has failed; bro carries on.
+mv "$accounts_home/.local/bin/nix-config-setup" "$work/accounts-setup"
+command cat >"$accounts_home/.local/bin/nix-config-setup" <<'EOF'
+#!/bin/sh
+[ "${1:-}" != --status ] || { printf 'ok\tProton Pass\tready\n'; exit 0; }
+exit 118
+EOF
+chmod +x "$accounts_home/.local/bin/nix-config-setup"
+output=$(run_styled "$accounts_home" "$(item_keys Accounts)$enter$pause$esc" "${accounts_env[@]}" 2>&1)
+grep -Fq 'nix-config: returning to the menu' <<<"$output" && [ "$(menus_shown "$output")" = 2 ] || {
+  printf 'bro test: a styled wizard exiting 118 was taken for quitting:\n%s\n' "$output" >&2; exit 1; }
+output=$(run_menu "$accounts_home" '4\n7\n' "${accounts_env[@]}" 2>&1)
+grep -Fq 'nix-config: returning to the menu' <<<"$output" || {
+  printf 'bro test: a plain wizard exiting 118 was taken for quitting:\n%s\n' "$output" >&2; exit 1; }
+mv "$work/accounts-setup" "$accounts_home/.local/bin/nix-config-setup"
+
+echo 'bro test: PASSED (menu-only entry, apply identity, DNS retry, sync push boundary, accounts wrapper, Pi extensions, Pi + ext, Playwright, Jobs, styled prompts, Health, log box, Accounts table, Sync and Update steps, status card, boxed fetch and backing out, q quits)'

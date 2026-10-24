@@ -23,9 +23,12 @@ require_tty() {
 }
 
 # Styled prompts need a terminal and gum; without either, the plain prompts
-# below keep working. NIX_CONFIG_TEST_PLAIN pins the plain prompts so the suite
-# can assert their exact text on a host that has gum; it is a harness seam and
-# never part of the user surface.
+# below keep working. bro draws its styled prompts itself, because gum cannot
+# be taught a key such as q; gum on PATH still marks a machine Home Manager has
+# set up, and before that a first install shows the plain prompts.
+# NIX_CONFIG_TEST_PLAIN pins the plain prompts so the suite can assert their
+# exact text on a host that has gum; it is a harness seam and never part of the
+# user surface.
 styled_prompts() {
   [ -z "${NIX_CONFIG_TEST_PLAIN:-}" ] && has_tty && command -v gum >/dev/null 2>&1
 }
@@ -56,17 +59,17 @@ styled_width() {
   printf '%s\n' "$columns"
 }
 
-# gum exits 130 on ctrl-c and 1 on Esc or No, which count as leaving the
-# prompt, as end-of-input does at a plain prompt. gum also exits 1 for its own
-# usage errors, which no status can tell apart; it reports those on the
-# terminal itself. Any other status is a failure that must not pass for an
-# answer.
-gum_answered() {
-  case "$1" in
-    0) return 0 ;;
-    1 | 130) return 1 ;;
-    *) fail "gum $2 failed with exit status $1" ;;
-  esac
+# q at any prompt quits at once, from the menu or from deep inside an action,
+# while Esc only leaves the prompt. Actions run in subshells, so quitting
+# leaves each one with QUIT, its caller quits in turn, and the outermost shell
+# exits with success. QUIT_CLEANUP, when set, is a command that must run
+# before quitting from the prompts it guards.
+readonly QUIT=118
+QUIT_CLEANUP=()
+quit_now() {
+  [ "${#QUIT_CLEANUP[@]}" = 0 ] || "${QUIT_CLEANUP[@]}"
+  [ "$BASH_SUBSHELL" = 0 ] || exit "$QUIT"
+  exit 0
 }
 
 # Answer defaults to the capitalised letter so a bare Return is always safe.
@@ -92,22 +95,16 @@ confirm_plain() {
     case "$answer" in
       y | Y | yes | YES) return 0 ;;
       n | N | no | NO) return 1 ;;
-      *) warn 'Please answer y or n.' ;;
+      q | Q) quit_now ;;
+      *) warn 'Please answer y or n, or q to quit.' ;;
     esac
   done
 }
 
-# gum draws on stderr, so both it and its keys go to the terminal; callers may
-# be capturing stdout.
 confirm_styled() {
-  local question=$1 default=false status=0
-  [ "$2" != yes ] || default=true
-  gum confirm --default="$default" --no-show-help \
-    --prompt.foreground="$STYLE_ACCENT" \
-    --selected.foreground=0 --selected.background="$STYLE_ACCENT" \
-    --unselected.foreground=7 --unselected.background=8 \
-    -- "$question" </dev/tty >/dev/tty 2>/dev/tty || status=$?
-  gum_answered "$status" confirm
+  local status=0
+  pick_yes_or_no "$1" "$2" || status=$?
+  picker_answered "$status" confirm
 }
 
 # A label longer than the usual column widens it so descriptions stay aligned.
@@ -148,24 +145,24 @@ choose_plain() {
         printf '  %d) %-*s %s\n' "$((index + 1))" "$width" "$label" "$description" >/dev/tty
       fi
     done
-    printf '\n  choose [1-%d]: ' "$count" >/dev/tty
+    printf '\n  choose [1-%d, q quits]: ' "$count" >/dev/tty
     IFS= read -r answer </dev/tty || { printf '\n' >/dev/tty; return 1; }
     case "$answer" in
-      '' | *[!0-9]*) warn "Enter a number from 1 to $count." ; continue ;;
+      q | Q) quit_now ;;
+      '' | *[!0-9]*) warn "Enter a number from 1 to $count, or q to quit." ; continue ;;
     esac
     if [ "$answer" -ge 1 ] && [ "$answer" -le "$count" ]; then
       CHOICE_INDEX=$answer
       return 0
     fi
-    warn "Enter a number from 1 to $count."
+    warn "Enter a number from 1 to $count, or q to quit."
   done
 }
 
-# Prints one gum row per option: the aligned label and dimmed description, a
-# tab, then the option's index. gum shows the text and answers with the index,
-# so the answer never depends on what a label says. gum draws MARKS columns
-# before each row (its cursor, and in a multi-select a tick mark), and a
-# description too long for what is left ends in an ellipsis so the cut shows.
+# Prints one styled row per option: the aligned label and dimmed description.
+# The picker draws MARKS columns before each row (its cursor, and in a
+# multi-select a tick mark), and a description too long for what is left ends
+# in an ellipsis so the cut shows.
 styled_rows() {
   local marks=$1 && shift
   local options=("$@") index label description width room
@@ -175,31 +172,18 @@ styled_rows() {
     label=${options[index]%%$'\t'*}
     description=${options[index]#*$'\t'}
     if [ "$label" = "$description" ] || [ "$room" -le 0 ]; then
-      printf '%s\t%d\n' "$label" "$((index + 1))"
+      printf '%s\n' "$label"
       continue
     fi
     [ "${#description}" -le "$room" ] || description="${description:0:room-1}…"
-    printf '%-*s %s%s%s\t%d\n' "$width" "$label" \
-      "$STYLE_DIM" "$description" "$STYLE_UNDIM" "$((index + 1))"
+    printf '%-*s %s%s%s\n' "$width" "$label" "$STYLE_DIM" "$description" "$STYLE_UNDIM"
   done
 }
 
-is_option_index() {
-  case "$1" in '' | *[!0-9]*) return 1 ;; esac
-  [ "$1" -ge 1 ] && [ "$1" -le "$2" ]
-}
-
 choose_styled() {
-  local title=$1 && shift
-  local count=$# rows=() row answer status=0
-  while IFS= read -r row; do
-    rows+=("$row")
-  done < <(styled_rows 2 "$@")
-  answer=$(gum choose --header="$title" --label-delimiter=$'\t' --no-show-help \
-    --header.foreground="$STYLE_ACCENT" --cursor.foreground="$STYLE_ACCENT" \
-    -- "${rows[@]}" </dev/tty 2>/dev/tty) || status=$?
-  gum_answered "$status" choose || return 1
-  is_option_index "$answer" "$count" || fail "gum choose answered with an unknown option: $answer"
+  local answer status=0
+  answer=$(pick_one "$@") || status=$?
+  picker_answered "$status" choose || return 1
   CHOICE_INDEX=$answer
 }
 
@@ -225,8 +209,8 @@ choose_many() {
   fi
 }
 
-# The ticked set is kept in option order whatever order gum or the toggles
-# produced it in.
+# The ticked set is kept in option order whatever order the toggles produced
+# it in.
 set_chosen_indexes() {
   local count=$1 index chosen=() && shift
   for ((index = 1; index <= count; index++)); do
@@ -262,35 +246,276 @@ choose_many_plain() {
   set_chosen_indexes "$count" "${ticked[@]+"${ticked[@]}"}"
 }
 
-# gum ticks rows by their text and splits --selected on commas unless one is
-# escaped as "\,". Its parser has no escape for a backslash, so a row holding
-# a literal backslash-comma cannot be ticked, and is refused rather than shown
-# unticked.
 choose_many_styled() {
+  local count=$(($# - 2)) answer index answers=() status=0
+  answer=$(pick_many "$@") || status=$?
+  picker_answered "$status" choose || return 1
+  for index in $answer; do
+    answers+=("$index")
+  done
+  set_chosen_indexes "$count" "${answers[@]+"${answers[@]}"}"
+}
+
+# --- styled pickers -----------------------------------------------------------
+
+# A picker answers 0, leaves with 1 on Esc or a lost terminal and with 130 on
+# ctrl-c, both of which count as leaving the prompt, as end-of-input does at a
+# plain prompt, and returns QUIT on q. Any other status is a failure that must
+# not pass for an answer.
+picker_answered() {
+  case "$1" in
+    0) return 0 ;;
+    1 | 130) return 1 ;;
+    "$QUIT") quit_now ;;
+    *) fail "the $2 prompt failed with exit status $1" ;;
+  esac
+}
+
+# A lone Esc and the start of an arrow key's escape sequence begin with the
+# same byte, so after an Esc the reader waits briefly for more. Bash before 4
+# waits only in whole seconds.
+if [ "${BASH_VERSINFO[0]}" -ge 4 ]; then
+  readonly ESCAPE_WAIT=0.05
+else
+  readonly ESCAPE_WAIT=1
+fi
+
+# Sets KEY to the next key pressed: up, down, left, right, home, end, enter,
+# tab, esc, the character typed, or eof once the terminal is gone. An escape
+# sequence for any other key is ''. Alt with a key arrives as Esc followed at
+# once by that key, and no prompt uses one, so it counts as Esc.
+KEY=''
+read_key() {
+  local char
+  IFS= read -rsn1 char </dev/tty || { KEY=eof; return 0; }
+  case "$char" in
+    '' | $'\r' | $'\n') KEY=enter ;;
+    $'\t') KEY=tab ;;
+    $'\e') read_escape_key ;;
+    *) KEY=$char ;;
+  esac
+}
+
+read_escape_key() {
+  local char sequence=''
+  if ! IFS= read -rsn1 -t "$ESCAPE_WAIT" char </dev/tty; then
+    KEY=esc
+    return 0
+  fi
+  case "$char" in
+    '[' | O) ;;
+    *) KEY=esc; return 0 ;;
+  esac
+  # A sequence ends at its first letter or tilde.
+  while IFS= read -rsn1 -t "$ESCAPE_WAIT" char </dev/tty; do
+    sequence+=$char
+    case "$char" in [[:alpha:]] | '~') break ;; esac
+  done
+  case "$sequence" in
+    A) KEY=up ;;
+    B) KEY=down ;;
+    C) KEY=right ;;
+    D) KEY=left ;;
+    H | 1~ | 7~) KEY=home ;;
+    F | 4~ | 8~) KEY=end ;;
+    *) KEY='' ;;
+  esac
+}
+
+# Sets FIT_TEXT to TEXT cut to the styled width with an ellipsis. Prompt text
+# is plain ASCII, so its length is its width.
+FIT_TEXT=''
+fit_text() {
+  local text=$1 columns
+  columns=$(styled_width)
+  [ "${#text}" -le "$columns" ] || text="${text:0:columns-1}…"
+  FIT_TEXT=$text
+}
+
+# A picker runs in a subshell of its own, so its traps put the terminal back
+# however it ends: echo and line editing stay off while it reads single keys,
+# and the cursor stays hidden while it draws. Every line a picker draws fits
+# the styled width, so the lines it drew are the rows it moves back over.
+PICKER_LINES=0
+open_picker() {
+  local saved
+  saved=$(stty -g </dev/tty)
+  trap 'stty "'"$saved"'" </dev/tty 2>/dev/null; printf "\e[?25h" >/dev/tty' EXIT
+  trap 'exit 130' INT TERM HUP
+  stty -echo -icanon </dev/tty
+  printf '\e[?25l' >/dev/tty
+  PICKER_LINES=0
+}
+
+# The title is drawn once, above the lines the picker redraws, so the prompts
+# a session showed can be counted in what the terminal was sent.
+draw_picker_title() {
+  fit_text "$1"
+  printf '\e[3%sm%s\e[39m\n' "$STYLE_ACCENT" "$FIT_TEXT" >/dev/tty
+}
+
+# Draws LINES over the ones the picker drew last, in a single write.
+draw_picker() {
+  local line frame=''
+  [ "$PICKER_LINES" = 0 ] || printf -v frame '\r\e[%dA' "$PICKER_LINES"
+  for line in "$@"; do
+    frame+="$line"$'\e[K\n'
+  done
+  printf '%s\e[J' "$frame" >/dev/tty
+  PICKER_LINES=$#
+}
+
+# A finished picker leaves nothing behind: its lines and its title go.
+close_picker() {
+  printf '\r\e[%dA\e[J' "$((PICKER_LINES + 1))" >/dev/tty
+}
+
+# Sets PICKER_HELP to the dimmed line of keys under a picker.
+PICKER_HELP=''
+picker_help() {
+  fit_text "$1"
+  PICKER_HELP="$STYLE_DIM$FIT_TEXT$STYLE_UNDIM"
+}
+
+# Moves PICKER_CURSOR through COUNT rows for KEY, wrapping at either end, and
+# returns 1 for a key that moves nothing.
+PICKER_CURSOR=0
+move_picker_cursor() {
+  local count=$1
+  case "$KEY" in
+    up | k) PICKER_CURSOR=$(((PICKER_CURSOR + count - 1) % count)) ;;
+    down | j) PICKER_CURSOR=$(((PICKER_CURSOR + 1) % count)) ;;
+    home | g) PICKER_CURSOR=0 ;;
+    end | G) PICKER_CURSOR=$((count - 1)) ;;
+    *) return 1 ;;
+  esac
+}
+
+# Prints the 1-based index of the row picked.
+pick_one() (
+  local title=$1 && shift
+  local count=$# rows=() lines=() row index
+  local accent=$'\e[3'"$STYLE_ACCENT"'m' unaccent=$'\e[39m'
+  while IFS= read -r row; do
+    rows+=("$row")
+  done < <(styled_rows 2 "$@")
+  picker_help 'enter picks, esc goes back, q quits'
+  PICKER_CURSOR=0
+  open_picker
+  draw_picker_title "$title"
+  while true; do
+    lines=()
+    for index in "${!rows[@]}"; do
+      if [ "$index" = "$PICKER_CURSOR" ]; then
+        lines+=("$accent> ${rows[index]}$unaccent")
+      else
+        lines+=("  ${rows[index]}")
+      fi
+    done
+    draw_picker "${lines[@]}" "$PICKER_HELP"
+    read_key
+    if move_picker_cursor "$count"; then
+      continue
+    fi
+    case "$KEY" in
+      enter) close_picker; printf '%s\n' "$((PICKER_CURSOR + 1))"; return 0 ;;
+      esc | eof) close_picker; return 1 ;;
+      q | Q) close_picker; return "$QUIT" ;;
+    esac
+  done
+)
+
+# Prints the 1-based indexes ticked when Enter is pressed, one per line,
+# starting from the ones CHOSEN_INDEXES holds.
+pick_many() (
   local title=$1 done=$2 && shift 2
-  local count=$# rows=() selected=() answers=() row index answer status=0 escaped_comma='\,'
+  local count=$# rows=() ticked=() lines=() row index cursor instructions
+  local accent=$'\e[3'"$STYLE_ACCENT"'m' unaccent=$'\e[39m'
   while IFS= read -r row; do
     rows+=("$row")
   done < <(styled_rows 4 "$@")
-  for index in "${CHOSEN_INDEXES[@]+"${CHOSEN_INDEXES[@]}"}"; do
-    is_option_index "$index" "$count" || continue
-    row=${rows[index - 1]%$'\t'*}
-    case "$row" in *'\,'*) fail "cannot pre-tick an option containing a backslash-comma: ${row%%"$STYLE_DIM"*}" ;; esac
-    selected+=("--selected=${row//,/"$escaped_comma"}")
+  for index in "${!rows[@]}"; do
+    ticked[index]=no
+    ! list_contains "$((index + 1))" "${CHOSEN_INDEXES[@]+"${CHOSEN_INDEXES[@]}"}" || ticked[index]=yes
   done
-  answer=$(gum choose --no-limit --label-delimiter=$'\t' --no-show-help \
-    --header="$title"$'\n'"${STYLE_DIM}x toggles, enter to $done, esc to cancel$STYLE_UNDIM" \
-    --header.foreground="$STYLE_ACCENT" --cursor.foreground="$STYLE_ACCENT" \
-    --selected.foreground="$STYLE_ACCENT" \
-    "${selected[@]+"${selected[@]}"}" -- "${rows[@]}" </dev/tty 2>/dev/tty) || status=$?
-  gum_answered "$status" choose || return 1
-  while IFS= read -r index; do
-    [ -n "$index" ] || continue
-    is_option_index "$index" "$count" || fail "gum choose answered with an unknown option: $index"
-    answers+=("$index")
-  done <<<"$answer"
-  set_chosen_indexes "$count" "${answers[@]+"${answers[@]}"}"
+  fit_text "x toggles, enter to $done"
+  instructions="$STYLE_DIM$FIT_TEXT$STYLE_UNDIM"
+  picker_help 'esc cancels, q quits'
+  PICKER_CURSOR=0
+  open_picker
+  draw_picker_title "$title"
+  while true; do
+    lines=("$instructions")
+    for index in "${!rows[@]}"; do
+      cursor='  '
+      [ "$index" != "$PICKER_CURSOR" ] || cursor="$accent>$unaccent "
+      if [ "${ticked[index]}" = yes ]; then
+        lines+=("$cursor$accent✓ ${rows[index]}$unaccent")
+      else
+        lines+=("$cursor• ${rows[index]}")
+      fi
+    done
+    draw_picker "${lines[@]}" "$PICKER_HELP"
+    read_key
+    if move_picker_cursor "$count"; then
+      continue
+    fi
+    case "$KEY" in
+      x | ' ' | tab)
+        if [ "${ticked[PICKER_CURSOR]}" = yes ]; then
+          ticked[PICKER_CURSOR]=no
+        else
+          ticked[PICKER_CURSOR]=yes
+        fi
+        ;;
+      enter)
+        close_picker
+        for index in "${!ticked[@]}"; do
+          [ "${ticked[index]}" = no ] || printf '%s\n' "$((index + 1))"
+        done
+        return 0
+        ;;
+      esc | eof) close_picker; return 1 ;;
+      q | Q) close_picker; return "$QUIT" ;;
+    esac
+  done
+)
+
+# Yes and No side by side, the picked one in the accent colour.
+confirm_buttons() {
+  local on=$'\e[30;4'"$STYLE_ACCENT"'m' off=$'\e[37;100m' reset=$'\e[39;49m'
+  if [ "$1" = yes ]; then
+    printf ' %s  Yes  %s  %s  No  %s' "$on" "$reset" "$off" "$reset"
+  else
+    printf ' %s  Yes  %s  %s  No  %s' "$off" "$reset" "$on" "$reset"
+  fi
 }
+
+# Returns 0 for Yes and 1 for No, starting on the DEFAULT button; y and n
+# answer at once.
+pick_yes_or_no() (
+  local question=$1 picked=no
+  [ "$2" != yes ] || picked=yes
+  picker_help 'enter answers, esc cancels, q quits'
+  open_picker
+  draw_picker_title "$question"
+  while true; do
+    draw_picker "$(confirm_buttons "$picked")" "$PICKER_HELP"
+    read_key
+    case "$KEY" in
+      left | right | h | l | tab)
+        if [ "$picked" = yes ]; then picked=no; else picked=yes; fi
+        ;;
+      y | Y) picked=yes; break ;;
+      n | N) picked=no; break ;;
+      enter) break ;;
+      esc | eof) close_picker; return 1 ;;
+      q | Q) close_picker; return "$QUIT" ;;
+    esac
+  done
+  close_picker
+  [ "$picked" = yes ]
+)
 
 # An action that runs logged steps keeps all their output in a log of its own.
 # Only the newest logs are kept, so the directory never grows without bound.
@@ -362,13 +587,13 @@ report_action() {
 readonly BACKED_OUT=117
 
 # Runs a program whose exit status an item passes on to the menu. A program
-# that happens to exit with BACKED_OUT has failed, not backed out, so that
-# status becomes 1. Only for a program: a shell function run this way would
-# run without set -e.
+# that happens to exit with BACKED_OUT or QUIT has failed, not backed out or
+# quit, so that status becomes 1. Only for a program: a shell function run
+# this way would run without set -e.
 pass_on_status() {
   local status=0
   "$@" || status=$?
-  [ "$status" != "$BACKED_OUT" ] || status=1
+  case "$status" in "$BACKED_OUT" | "$QUIT") status=1 ;; esac
   return "$status"
 }
 

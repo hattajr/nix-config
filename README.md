@@ -46,10 +46,14 @@ bro
 `Jobs` appears on Linux only; on macOS `Quit` is 7.
 
 Home Manager installs [gum](https://github.com/charmbracelet/gum), and once it
-is on `PATH` the menu and every prompt in it use gum: the arrow keys or `j`/`k`
-move, Enter picks, questions are Yes/No buttons, and Esc leaves the menu or
-cancels the current prompt. Without gum, as on a first install before the
-first apply, the same menu and prompts are the numbered ones shown above.
+is on `PATH` the menu and every prompt in it are styled pickers in gum's look:
+the arrow keys or `j`/`k` move, Enter picks, questions are Yes/No buttons (`y`
+and `n` answer at once), and Esc goes back one step, cancelling the current
+prompt or, at the menu itself, leaving bro. `q` quits bro at once from
+anywhere: the menu, a prompt inside an item, or the pause after an item. bro
+draws these pickers itself, because gum cannot be given a quit key. Without
+gum, as on a first install before the first apply, the same menu and prompts
+are the numbered ones shown above, where typing `q` quits too.
 
 With gum, the menu starts on a cleared screen under a status card:
 
@@ -96,7 +100,8 @@ summary. One choice then decides what happens to the moved pins:
 - **Apply** activates them in steps, then asks before committing and pushing.
 - **Show diff** shows the complete diff, newly generated lockfiles included,
   and asks again.
-- **Discard**, or leaving the choice, puts every pin back as the sync left it.
+- **Discard**, or leaving the choice with Esc or `q`, puts every pin back as
+  the sync left it.
 
 Other machines receive the result with `Sync`.
 
