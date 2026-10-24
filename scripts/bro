@@ -27,6 +27,7 @@ run_step() {
   case "$status" in
     0) ITEM_OUTCOME=ran ;;
     "$BACKED_OUT") ITEM_OUTCOME=backed-out ;;
+    "$QUIT") quit_now ;;
     *)
       ITEM_OUTCOME=failed
       warn 'returning to the menu'
@@ -48,6 +49,8 @@ run_action() {
       ;;
     # The menu comes straight back, so there is nothing to report.
     "$BACKED_OUT") ITEM_OUTCOME=backed-out ;;
+    # q was pressed inside the action, so bro leaves without a word.
+    "$QUIT") quit_now ;;
     *)
       ITEM_OUTCOME=failed
       report_action fail "$name" "$((SECONDS - started))"

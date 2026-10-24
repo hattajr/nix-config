@@ -251,19 +251,25 @@ apply_pin_updates() {
 
 # One choice decides what happens to the moved pins. Seeing the diff comes
 # back to the same choice; leaving the choice keeps nothing, as declining to
-# apply always has.
+# apply always has, and neither does quitting at it.
 review_pin_updates() {
   local repo=$1 target=$2
+  QUIT_CLEANUP=(discard_pin_updates "$repo")
   while choose 'What should happen to these changes?' \
     $'Apply\tactivate them, then offer to commit and push' \
     $'Show diff\tthe complete generated diff' \
     $'Discard\tput every pin back as it was'; do
     case "$CHOICE_INDEX" in
-      1) apply_pin_updates "$repo" "$target"; return ;;
+      1)
+        QUIT_CLEANUP=()
+        apply_pin_updates "$repo" "$target"
+        return
+        ;;
       2) show_pin_diff "$repo" ;;
       3) break ;;
     esac
   done
+  QUIT_CLEANUP=()
   discard_pin_updates "$repo"
 }
 

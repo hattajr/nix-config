@@ -304,10 +304,10 @@ grep -Eq '^managed-tty=/dev/.+ stdin-mode=read-write$' "$shell_log" || {
 
 # With gum on PATH, a yes to configuring accounts goes straight to the wizard,
 # inside the keyring session on Linux, without the menu's own second question.
-# This gum answers yes to every question but entering the managed shell, and
-# leaves any choice unanswered.
+# The styled questions are bro's own, so they are answered with keys: yes to
+# applying and to configuring accounts, and no to entering the managed shell.
+# The gum on PATH only marks styled mode and records being run.
 gum_bin="$workdir/gum-bin"
-gum_log="$workdir/gum.log"
 mkdir -p "$gum_bin" "$home/.local/bin"
 for command_name in fold stty tr wc head; do
   command_path=$(command -v "$command_name" 2>/dev/null || true)
@@ -315,13 +315,8 @@ for command_name in fold stty tr wc head; do
 done
 command cat >"$gum_bin/gum" <<'EOF_GUM'
 #!/usr/bin/env bash
-{ printf 'gum'; printf ' [%s]' "$@"; printf '\n'; } >>"$MOCK_GUM_LOG"
-for question; do :; done
-case "$1:$question" in
-  'confirm:Enter the managed zsh login shell now?') exit 1 ;;
-  confirm:*) exit 0 ;;
-  *) exit 1 ;;
-esac
+printf 'gum %s\n' "$*" >>"$MOCK_LOG"
+exit 3
 EOF_GUM
 command cat >"$home/.local/bin/nix-config-setup" <<'EOF_SETUP'
 #!/usr/bin/env bash
@@ -334,12 +329,16 @@ printf 'proton %s\n' "$*" >>"$MOCK_LOG"
 EOF_SESSION
 chmod +x "$gum_bin/gum" "$home/.local/bin/nix-config-setup" "$home/.local/bin/proton-pass-session"
 : >"$logfile"
-: >"$gum_log"
-printf '' | "$pty_run" env PATH="$gum_bin:$mockbin" MOCK_GUM_LOG="$gum_log" "$bootstrap" "$repo_root" >/dev/null
-[ "$(grep -c '\[Configure accounts and API keys now?\]' "$gum_log")" = 1 ] || {
-  printf 'bootstrap test: styled bootstrap did not ask once to configure accounts:\n%s\n' "$(cat "$gum_log")" >&2; exit 1; }
-! grep -Fq -e '[choose]' -e 'Run the setup wizard now?' "$gum_log" || {
-  printf 'bootstrap test: styled bootstrap asked again before the account wizard:\n%s\n' "$(cat "$gum_log")" >&2; exit 1; }
+# A lone n after the last question stays unread, so a question this case does
+# not expect, such as reviewing shadowed binaries, is declined instead of hanging.
+styled_output=$(printf 'yynn' | "$pty_run" env PATH="$gum_bin:$mockbin" "$bootstrap" "$repo_root" \
+  | sed -e $'s/\e\\[[0-9;?]*[A-Za-z]//g' -e $'s/\r//g')
+[ "$(grep -cFx 'Configure accounts and API keys now?' <<<"$styled_output")" = 1 ] || {
+  printf 'bootstrap test: styled bootstrap did not ask once to configure accounts:\n%s\n' "$styled_output" >&2; exit 1; }
+! grep -Fq 'Run the setup wizard now?' <<<"$styled_output" && ! grep -q '^gum ' "$logfile" || {
+  printf 'bootstrap test: styled bootstrap asked again before the account wizard:\n%s\n' "$styled_output" >&2; exit 1; }
+grep -Fq 'Start it later with: exec' <<<"$styled_output" || {
+  printf 'bootstrap test: no to the styled managed-shell question still entered it:\n%s\n' "$styled_output" >&2; exit 1; }
 grep -Fxq "proton $home/.local/bin/nix-config-setup" "$logfile" || {
   printf 'bootstrap test: styled bootstrap did not start the wizard in the keyring session:\n%s\n' "$(cat "$logfile")" >&2; exit 1; }
 rm -f "$home/.local/bin/nix-config-setup" "$home/.local/bin/proton-pass-session"

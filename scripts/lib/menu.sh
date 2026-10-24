@@ -251,9 +251,12 @@ show_status_card() {
 }
 
 # The next menu clears the screen, so what an action printed stays up until
-# the user has read it. A closed terminal ends the wait as a key would.
+# the user has read it. A closed terminal ends the wait as a key would, and q
+# quits instead, as it does at every prompt.
 wait_for_key() {
-  printf '\n %spress any key to return%s' "$STYLE_DIM" "$STYLE_UNDIM" >/dev/tty
-  IFS= read -rsn1 </dev/tty || true
+  local key=''
+  printf '\n %spress any key to return, q to quit%s' "$STYLE_DIM" "$STYLE_UNDIM" >/dev/tty
+  IFS= read -rsn1 key </dev/tty || true
   printf '\n' >/dev/tty
+  case "$key" in q | Q) quit_now ;; esac
 }
